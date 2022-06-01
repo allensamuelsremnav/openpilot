@@ -73,6 +73,12 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
       tr("When enabled, pressing the accelerator pedal will disengage openpilot."),
       "../assets/offroad/icon_disengage_on_accelerator.svg",
     },
+    {
+      "CruiseOverride",
+      "\U0001f96c Override Cruise Controls\U0001f96c",
+      "In this mode cruise control speeds at the low end are enabled.",
+      "../assets/offroad/icon_road.png",
+    },
 #ifdef ENABLE_MAPS
     {
       "NavSettingTime24h",
