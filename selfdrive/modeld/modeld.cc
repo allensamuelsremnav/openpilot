@@ -171,6 +171,10 @@ void run_model(ModelState &model, VisionIpcClient &vipc_client_main, VisionIpcCl
 }
 
 int main(int argc, char **argv) {
+
+  extern int dorkitUnitTest(int argc, char **argv);
+  dorkitUnitTest(argc, argv);
+
   if (!Hardware::PC()) {
     int ret;
     ret = util::set_realtime_priority(54);

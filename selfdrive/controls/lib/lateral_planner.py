@@ -133,4 +133,7 @@ class LateralPlanner:
     lateralPlan.laneChangeDirection = self.DH.lane_change_direction
     
     self.hijacker.convert_message(lateralPlan, self.v_ego) # REMNAV
+
+    lateralPlan.modelMonoTime =  sm.logMonoTime['modelV2'] # remnav
+
     pm.send('lateralPlan', plan_send)

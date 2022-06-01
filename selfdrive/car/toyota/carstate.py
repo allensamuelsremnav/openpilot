@@ -5,6 +5,7 @@ from common.conversions import Conversions as CV
 from common.numpy_fast import mean
 from common.filter_simple import FirstOrderFilter
 from common.realtime import DT_CTRL
+# from common.params import Params
 from opendbc.can.can_define import CANDefine
 from opendbc.can.parser import CANParser
 from selfdrive.car.interfaces import CarStateBase
@@ -150,6 +151,11 @@ class CarState(CarStateBase):
     if self.CP.carFingerprint in (TSS2_CAR | RADAR_ACC_CAR):
       self.acc_type = cp_acc.vl["ACC_CONTROL"]["ACC_TYPE"]
       ret.stockFcw = bool(cp_acc.vl["ACC_HUD"]["FCW"])
+
+    # Adjust Low Speed Cruise Control
+    v_cruise_kph = ret.cruiseState.speed / CV.KPH_TO_MS
+    self.set_speed_offset = _calculate_set_speed_offset_kph(v_cruise_kph) * CV.KPH_TO_MS
+    ret.cruiseState.speed = ret.cruiseState.speed - self.set_speed_offset
 
     # some TSS2 cars have low speed lockout permanently set, so ignore on those cars
     # these cars are identified by an ACC_TYPE value of 2.
