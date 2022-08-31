@@ -15,6 +15,6 @@ endif()
 
 find_package(CapnProto CONFIG REQUIRED)
 
-include_directories(logger/include)
+include_directories(${Remnav_SOURCE_DIR}logger/include)
 add_subdirectory(logger)
 add_subdirectory(audio)
