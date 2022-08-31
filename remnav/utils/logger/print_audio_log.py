@@ -2,7 +2,7 @@ import sys
 import capnp
 import json
 
-sys.path.append("../logger")
+sys.path.append("../../logger/include")
 import log_capnp
 
 print(sys.argv[1])

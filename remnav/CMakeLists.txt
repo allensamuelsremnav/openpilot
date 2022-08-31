@@ -15,6 +15,6 @@ endif()
 
 find_package(CapnProto CONFIG REQUIRED)
 
-include_directories(logger)
+include_directories(logger/include)
 add_subdirectory(logger)
 add_subdirectory(audio)
