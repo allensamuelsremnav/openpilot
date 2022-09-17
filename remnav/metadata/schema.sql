@@ -111,22 +111,24 @@ CREATE TABLE  carrier_usage_metric (
     REFERENCES(cellular_carrier, id)
 )
 
-CREATE TABLE complexity_metric (
+-- scene metrics, such as complexity
+CREATE TABLE scene_metric (
   metric TEXT,
   description TEXT
   PRIMARY KEY(metric)
 )
--- scene complexity
-CREATE TABLE scene_complexity (
+
+-- scene metrics, such as complexity
+CREATE TABLE scene_metric (
   video_session VARCHAR(32),
   transmit TIMESTAMP WITH TIME ZONE,
-  complexity REAL,
+  metric_value REAL,
   metric TEXT,
   PRIMARY KEY(video_session, transmit),
   FOREIGN KEY(video_session)
     REFERENCES (video_session, id),
   FOREIGN KEY(metric)
-    REFERENCES(complexity_metric, metricz)
+    REFERENCES(scene_metric, metric)
 )
 
 -- video session file information
