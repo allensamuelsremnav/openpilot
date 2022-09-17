@@ -167,7 +167,8 @@ CREATE TABLE gnss_track (
 CREATE TABLE gnss_point (
    track VARCHAR(32),
    measured TIMESTAMP WITH TIME ZONE,
-   // https://medium.com/coord/postgis-performance-showdown-geometry-vs-geography-ec99967da4f0
+   -- https://medium.com/coord/postgis-performance-showdown-geometry-vs-geography-ec99967da4f0
+   -- https://gis.stackexchange.com/questions/6681/what-are-the-pros-and-cons-of-postgis-geography-and-geometry-types
    point GEOGRAPHY(POINTZ),
    PRIMARY KEY (track, measured)
    FOREIGN KEY(track)
