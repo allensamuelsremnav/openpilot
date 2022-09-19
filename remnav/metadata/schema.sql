@@ -1,5 +1,3 @@
--- This has not be checked with the Postgres, so there are SQL errors.
-
 -- The data model has two parts:
 
 -- 1. Video data points are uniquely identified by (video_session.id,
@@ -13,7 +11,7 @@
 -- can be used for approximate alignment.  A single drive can comprise
 -- multiple sessions.
 
--- The basic objects comprise comm sources and receivers, GNSS
+-- The basic objects comprise comm senders and destination, GNSS
 -- receivers, video sessions, and GNSS sessions.
 
 -- Timestamps are stored to millisecond precision or better.
@@ -21,30 +19,30 @@
 -- This table describes sources (normally vehicles). A new row with a
 -- new id should be entered whenever we change the configuration of
 -- the vehicle software or hardware should create a new row
-CREATE TABLE comm_source (
+CREATE TABLE comm_sender (
   id VARCHAR(32),
   -- other attributes TBD, e.g. modem configuration
   PRIMARY KEY(id)
-)
+);
 
--- This table describes receivers (normally operator stations). A new
+-- This table describes destinations (normally operator stations). A new
 -- row with a new id should be entered whenever we change the
 -- configuration of the vehicle software or hardware should create a
 -- new row
-CREATE TABLE comm_receiver (
-  id VARCHAR(32)
+CREATE TABLE comm_destination (
+  id VARCHAR(32),
   -- other attributes TBD, e.g. station identifier
   PRIMARY KEY(id)
-)
+);
 
 -- This table describes GiNSS receivers. A new row with
 -- a new id should be entered whenever we change the configuration of
 -- the GNSS, i.e. from one chip set to another, changing antenna.
 CREATE TABLE gnss_receiver (
-  id VARCHAR(32)
+  id VARCHAR(32),
   -- other attributes TBD, e.g. chipset or breakout board, antenna
   PRIMARY KEY(id)
-)
+);
 
 -- This table describes a video session.  A session models the video
 -- data from a real-world trajectory.  There may be many video clips
@@ -52,16 +50,16 @@ CREATE TABLE gnss_receiver (
 CREATE TABLE video_session (
   id VARCHAR(32) NOT NULL, -- e.g UUID
   sender VARCHAR(32),
-  receiver VARCHAR(32),
+  destination VARCHAR(32),
   -- Informal description, such as "low-speed urban experiment #1"
   description TEXT,
   -- other attribues TBD
   PRIMARY KEY(id),
   FOREIGN KEY(sender)
-    REFERENCES comm_source(id),
-  FOREIGN KEY(receiver)
-    REFERENCES comm_receiver(id)
-)
+    REFERENCES comm_sender(id),
+  FOREIGN KEY(destination)
+    REFERENCES comm_destination(id)
+);
 
 --  This table describes a GNSS session.  A session models the
 --  coordinates of part of all of a real-world trajectory.  There may
@@ -74,9 +72,9 @@ CREATE TABLE gnss_session (
    description TEXT,
    -- other attributes TBD
    PRIMARY KEY(id),
-   FOREIGN KEY(sender)
+   FOREIGN KEY(receiver)
      REFERENCES gnss_receiver(id)
-)
+);
 
 -- format for files with video metrics
 --
@@ -84,20 +82,20 @@ CREATE TABLE gnss_session (
 -- the file reader will know, for example, that the data is in CSV
 -- format, whether there is a header, and the data types and units.
 CREATE TABLE video_measurement_format (
-  id VARCHAR(32)
+  id VARCHAR(32),
   -- informal description, such as "sequence, skip, tx epoch ms, rx epoch m"
   description TEXT,
   PRIMARY KEY(id)
-)
+);
 
 -- files with video transfer measurements, such as epoch + latency
 -- or epoch + carrier kbps
 CREATE TABLE video_measurements (
   video_session VARCHAR(32),
   file_name TEXT,
-  -- [start, end)
-  start TIMESTAMP WITH TIME ZONE,
-  end TIMESTAMP WITH TIME ZONE,
+  -- [start_time, end_time)
+  start_time TIMESTAMP WITH TIME ZONE,
+  end_time TIMESTAMP WITH TIME ZONE,
   format VARCHAR(32),
   -- other attribues TBD, e.g. encoding or resolution.
   PRIMARY KEY(video_session, file_name),
@@ -105,7 +103,7 @@ CREATE TABLE video_measurements (
     REFERENCES video_session(id),
   FOREIGN KEY(format)
     REFERENCES video_measurement_format(id)
-)
+);
 
 -- video session file information
 CREATE TABLE video_clip (
@@ -115,14 +113,14 @@ CREATE TABLE video_clip (
   -- e.g. /mnt/4TB/video_clips/experimental/ + file_name
   file_name TEXT,
   -- format is conventionally encoded in file extension
-  -- [start, end)
-  start TIMESTAMP WITH TIME ZONE,
-  end TIMESTAMP WITH TIME ZONE,
+  -- [start_time, end_time)
+  start_time TIMESTAMP WITH TIME ZONE,
+  end_time TIMESTAMP WITH TIME ZONE,
   -- other attribues TBD, e.g. encoding or resolution.
   PRIMARY KEY(video_session, file_name),
   FOREIGN KEY(video_session)
    REFERENCES video_session(id)
-)
+);
 
 -- format for files with GNSS tracks
 --
@@ -131,11 +129,11 @@ CREATE TABLE video_clip (
 -- NMEA format, which NMEA sentences are present, and the time
 -- representation -- UTC, GPS clock, etc.
 CREATE TABLE gnss_track_format (
-  id VARCHAR(32)
+  id VARCHAR(32),
   -- informal description, such as "gpx schema https://blah-blah/bl"
   description TEXT,
   PRIMARY KEY(id)
-)
+);
 
 -- GNSS session file information
 CREATE TABLE gnss_track (
@@ -146,9 +144,9 @@ CREATE TABLE gnss_track (
   -- rn1:/mnt/4TB/gnss_tracks/experimental/ + file_name
   file_name VARCHAR,
   format VARCHAR(32),
-  -- [start, end)
-  start TIMESTAMP WITH TIME ZONE,
-  end TIMESTAMP WITH TIME ZONE,
+  -- [start_time, end_time)
+  start_time TIMESTAMP WITH TIME ZONE,
+  end_time TIMESTAMP WITH TIME ZONE,
   -- other attribues TBD, e.g. device or encoding
   PRIMARY KEY(gnss_session, file_name),
   FOREIGN KEY(gnss_session)
@@ -156,7 +154,7 @@ CREATE TABLE gnss_track (
   FOREIGN KEY(format)
     REFERENCES gnss_track_format(id),
   UNIQUE(gnss_session, file_name)
-)
+);
 
 -- These are not part of the core data model.  They are premature
 -- optimizations to select files.
@@ -166,20 +164,21 @@ CREATE TABLE gnss_track_attributes(
   gnss_session VARCHAR(32),
   file_name TEXT,
   max_curvature_rate REAL, -- radians/m/s
-  max_velocity REAL  -- m/s
+  max_velocity REAL,  -- m/s
   PRIMARY KEY(gnss_session, file_name),
   FOREIGN KEY(gnss_session, file_name)
     REFERENCES gnss_track(gnss_session, file_name)
-)
+);
+
 -- video clip attributes.
 CREATE TABLE video_clip_attributes(
   video_session VARCHAR(32),
   file_name TEXT,
   max_latency INTEGER, -- ms
-  min_bitrate INTEGER  -- kbps
+  min_bitrate INTEGER,  -- kbps
   PRIMARY KEY(video_session, file_name),
   FOREIGN KEY(video_session, file_name)
     REFERENCES video_clip(video_session, file_name)
   
-)
+);
 
