@@ -19,7 +19,7 @@
 -- This table describes sources (normally vehicles). A new row with a
 -- new id should be entered whenever we change the configuration of
 -- the vehicle software or hardware should create a new row
-CREATE TABLE video_sender (
+CREATE TABLE video_source (
   id VARCHAR(32),
   -- other attributes TBD, e.g. modem configuration
   PRIMARY KEY(id)
@@ -61,7 +61,7 @@ CREATE TABLE gnss_receiver (
 -- that belong to a single video_session id.
 CREATE TABLE video_session (
   id VARCHAR(32) NOT NULL, -- e.g UUID
-  sender VARCHAR(32) REFERENCES video_sender(id),
+  source VARCHAR(32) REFERENCES video_source(id),
   destination VARCHAR(32) REFERENCES video_destination(id),
   -- Informal description, such as "low-speed urban experiment #1"
   description TEXT,
