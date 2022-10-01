@@ -111,7 +111,7 @@ CREATE TABLE video_metadata (
   file_name TEXT,
   -- [start_time, end_time)
   start_time TIMESTAMP WITH TIME ZONE,
-  end_time TIMESTAMP WITH TIME ZONE,
+  cellular VARCHAR(32) REFERENCES cellular(id),
   format VARCHAR(32) REFERENCES video_metadata_format(id),
   -- other attribues TBD, e.g. encoding or resolution.
   PRIMARY KEY(video_session, file_name)
@@ -124,10 +124,10 @@ CREATE TABLE video_packet (
   -- this is the part that is independent of the physical storage.
   -- e.g. /mnt/4TB/video_clips/experimental/ + file_name
   file_name TEXT,
-  -- format is conventionally encoded in file extension
-  -- [start_time, end_time)
+  -- start_time is encoded in the filename
   start_time TIMESTAMP WITH TIME ZONE,
-  end_time TIMESTAMP WITH TIME ZONE,
+  cellular VARCHAR(32) REFERENCES cellular(id),
+  -- format is conventionally encoded in file name
   format VARCHAR(32) REFERENCES video_packet_format(id),
   -- other attribues TBD, e.g. encoding or resolution.
   PRIMARY KEY(video_session, file_name)
