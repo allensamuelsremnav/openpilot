@@ -19,7 +19,7 @@
 -- This table describes sources (normally vehicles). A new row with a
 -- new id should be entered whenever we change the configuration of
 -- the vehicle software or hardware should create a new row
-CREATE TABLE comm_sender (
+CREATE TABLE video_sender (
   id VARCHAR(32),
   -- other attributes TBD, e.g. modem configuration
   PRIMARY KEY(id)
@@ -29,13 +29,25 @@ CREATE TABLE comm_sender (
 -- row with a new id should be entered whenever we change the
 -- configuration of the vehicle software or hardware should create a
 -- new row
-CREATE TABLE comm_destination (
+CREATE TABLE video_destination (
   id VARCHAR(32),
   -- other attributes TBD, e.g. station identifier
   PRIMARY KEY(id)
 );
 
--- This table describes GiNSS receivers. A new row with
+-- This table defines cellular connfigurations.
+-- A video session using three modems will use
+-- three values from this table.
+CREATE TABLE cellular (
+  id VARCHAR(32),
+  -- Informal description, such as
+  -- "ATT sim, IMSI 869710030002905, TN 14088165141"
+  description TEXT,
+  -- other attributes TBD, e.g. station identifier
+  PRIMARY KEY(id)
+);
+
+-- This table describes GNSS receivers. A new row with
 -- a new id should be entered whenever we change the configuration of
 -- the GNSS, i.e. from one chip set to another, changing antenna.
 CREATE TABLE gnss_receiver (
@@ -49,16 +61,12 @@ CREATE TABLE gnss_receiver (
 -- that belong to a single video_session id.
 CREATE TABLE video_session (
   id VARCHAR(32) NOT NULL, -- e.g UUID
-  sender VARCHAR(32),
-  destination VARCHAR(32),
+  sender VARCHAR(32) REFERENCES video_sender(id),
+  destination VARCHAR(32) REFERENCES video_destination(id),
   -- Informal description, such as "low-speed urban experiment #1"
   description TEXT,
   -- other attribues TBD
-  PRIMARY KEY(id),
-  FOREIGN KEY(sender)
-    REFERENCES comm_sender(id),
-  FOREIGN KEY(destination)
-    REFERENCES comm_destination(id)
+  PRIMARY KEY(id)
 );
 
 --  This table describes a GNSS session.  A session models the
@@ -67,21 +75,29 @@ CREATE TABLE video_session (
 --  gnss_session id.
 CREATE TABLE gnss_session (
    id VARCHAR(32) NOT NULL, -- e.g UUID
-   receiver VARCHAR(32),
+   receiver VARCHAR(32) REFERENCES gnss_receiver(id),
    -- Informal description, such as "low-speed urban experiment #1"
    description TEXT,
    -- other attributes TBD
-   PRIMARY KEY(id),
-   FOREIGN KEY(receiver)
-     REFERENCES gnss_receiver(id)
+   PRIMARY KEY(id)
 );
 
--- format for files with video metrics
+-- format for files with video packets
 --
+-- the id is used to choose file readers in analysis languages.
+-- the file reader will know, for example, that the data is in binary
+-- format, whether there is a header, and the data types and units.
+CREATE TABLE video_packet_format (
+  id VARCHAR(32),
+  -- informal description"
+  description TEXT,
+  PRIMARY KEY(id)
+);
+
 -- the id is used to choose file readers in analysis languages.
 -- the file reader will know, for example, that the data is in CSV
 -- format, whether there is a header, and the data types and units.
-CREATE TABLE video_measurement_format (
+CREATE TABLE video_metadata_format (
   id VARCHAR(32),
   -- informal description, such as "sequence, skip, tx epoch ms, rx epoch m"
   description TEXT,
@@ -90,24 +106,20 @@ CREATE TABLE video_measurement_format (
 
 -- files with video transfer measurements, such as epoch + latency
 -- or epoch + carrier kbps
-CREATE TABLE video_measurements (
-  video_session VARCHAR(32),
+CREATE TABLE video_metadata (
+  video_session VARCHAR(32) REFERENCES video_session(id),
   file_name TEXT,
   -- [start_time, end_time)
   start_time TIMESTAMP WITH TIME ZONE,
   end_time TIMESTAMP WITH TIME ZONE,
-  format VARCHAR(32),
+  format VARCHAR(32) REFERENCES video_metadata_format(id),
   -- other attribues TBD, e.g. encoding or resolution.
-  PRIMARY KEY(video_session, file_name),
-  FOREIGN KEY(video_session)
-    REFERENCES video_session(id),
-  FOREIGN KEY(format)
-    REFERENCES video_measurement_format(id)
+  PRIMARY KEY(video_session, file_name)
 );
 
 -- video session file information
-CREATE TABLE video_clip (
-  video_session VARCHAR(32),
+CREATE TABLE video_packet (
+  video_session VARCHAR(32) REFERENCES video_session(id),
   -- partial path to file.
   -- this is the part that is independent of the physical storage.
   -- e.g. /mnt/4TB/video_clips/experimental/ + file_name
@@ -116,10 +128,9 @@ CREATE TABLE video_clip (
   -- [start_time, end_time)
   start_time TIMESTAMP WITH TIME ZONE,
   end_time TIMESTAMP WITH TIME ZONE,
+  format VARCHAR(32) REFERENCES video_packet_format(id),
   -- other attribues TBD, e.g. encoding or resolution.
-  PRIMARY KEY(video_session, file_name),
-  FOREIGN KEY(video_session)
-   REFERENCES video_session(id)
+  PRIMARY KEY(video_session, file_name)
 );
 
 -- format for files with GNSS tracks
@@ -137,22 +148,18 @@ CREATE TABLE gnss_track_format (
 
 -- GNSS session file information
 CREATE TABLE gnss_track (
-  gnss_session VARCHAR(32),
+  gnss_session VARCHAR(32) REFERENCES gnss_session(id),
   -- partial path to file.
   -- this is the part that is independent of the physical storage.
   -- e.g. the file is stored at
-  -- rn1:/mnt/4TB/gnss_tracks/experimental/ + file_name
+  -- rn1:/mnt/4TB/gnss_tracks/experimental/ + <gnss_session>/file_name
   file_name VARCHAR,
-  format VARCHAR(32),
+  format VARCHAR(32) REFERENCES gnss_track_format(id),
   -- [start_time, end_time)
   start_time TIMESTAMP WITH TIME ZONE,
   end_time TIMESTAMP WITH TIME ZONE,
   -- other attribues TBD, e.g. device or encoding
   PRIMARY KEY(gnss_session, file_name),
-  FOREIGN KEY(gnss_session)
-    REFERENCES gnss_session(id),
-  FOREIGN KEY(format)
-    REFERENCES gnss_track_format(id),
   UNIQUE(gnss_session, file_name)
 );
 
@@ -160,7 +167,7 @@ CREATE TABLE gnss_track (
 -- optimizations to select files.
 
 -- GNSS track attributes.
-CREATE TABLE gnss_track_attributes(
+CREATE TABLE gnss_track_attributes (
   gnss_session VARCHAR(32),
   file_name TEXT,
   max_curvature_rate REAL, -- radians/m/s
@@ -171,14 +178,14 @@ CREATE TABLE gnss_track_attributes(
 );
 
 -- video clip attributes.
-CREATE TABLE video_clip_attributes(
+CREATE TABLE video_packet_attributes (
   video_session VARCHAR(32),
   file_name TEXT,
   max_latency INTEGER, -- ms
   min_bitrate INTEGER,  -- kbps
   PRIMARY KEY(video_session, file_name),
   FOREIGN KEY(video_session, file_name)
-    REFERENCES video_clip(video_session, file_name)
+    REFERENCES video_packet(video_session, file_name)
   
 );
 
