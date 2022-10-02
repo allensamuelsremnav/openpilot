@@ -35,12 +35,20 @@ func main() {
 	var config experiment.Config
 	json.Unmarshal([]byte(byteValue), &config)
 
+	if len(config.Description) > 0 {
+		log.Println(config.Description)
+	}
+
 	// Look for executables
 	videoSender := config.Video.VideoSender
-	log.Println("video_sender", videoSender)
+	if len(videoSender) > 0 {
+		log.Println("video_sender", videoSender)
+	}
 
 	GNSSClient := config.GNSS.GNSSClient
-	log.Println("gnss_client", GNSSClient)
+	if len(GNSSClient) > 0 {
+		log.Println("gnss_client", GNSSClient)
+	}
 
 	var sessionId string
 	if len(*sessionIdFlag) > 0 {

@@ -43,6 +43,7 @@ type GNSSConfig struct {
 
 // Top-level JSON
 type Config struct {
+        Description string `json:"description"`
 	Video VideoConfig
 	GNSS  GNSSConfig
 }

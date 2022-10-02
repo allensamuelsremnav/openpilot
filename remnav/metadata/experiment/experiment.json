@@ -1,4 +1,5 @@
 {
+    "description" : "experiment 000",
     "video": {
 	"video_source": "proto000",
 	"video_destination": "rn3_000",
