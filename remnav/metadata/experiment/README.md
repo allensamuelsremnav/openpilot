@@ -1,0 +1,1 @@
+See `experiment.go` for comments about the JSON experiment configuration.
