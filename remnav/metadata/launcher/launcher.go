@@ -3,11 +3,11 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"github.com/google/uuid"
 	"io/ioutil"
 	"log"
 	"os"
-	"github.com/google/uuid"
-	experimentconfig "remnav/metadata/experimentconfig"
+	experiment "remnav/metadata/experiment"
 )
 
 func main() {
@@ -17,28 +17,28 @@ func main() {
 		log.Fatalln("expected one positional argument, got", flag.Args())
 	}
 	// Read config file.
-	config_filename := flag.Args()[0]
-	log.Println("config file", config_filename)
-	config_file, err := os.Open(config_filename)
+	configFilename := flag.Args()[0]
+	log.Println("config file", configFilename)
+	configFile, err := os.Open(configFilename)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	defer config_file.Close()
-	byteValue, err := ioutil.ReadAll(config_file)
+	defer configFile.Close()
+	byteValue, err := ioutil.ReadAll(configFile)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	// Make it JSON.
-	var config experimentconfig.Config
+	// Interpret as JSON.
+	var config experiment.Config
 	json.Unmarshal([]byte(byteValue), &config)
 
 	// Look for executables
-	video_sender := config.Video.VideoSender
-	log.Println("video_sender", video_sender)
+	videoSender := config.Video.VideoSender
+	log.Println("video_sender", videoSender)
 
-	gnss_client := config.GNSS.GNSSClient
-	log.Println("gnss_client", gnss_client)
+	GNSSClient := config.GNSS.GNSSClient
+	log.Println("gnss_client", GNSSClient)
 
 	UUID := uuid.NewString()
 	log.Println("UUID", UUID)
