@@ -1,1 +1,1 @@
-See `experiment.go` for comments about the JSON experiment configuration.
+See `experiment.go` for comments about the experiment-configuration JSON.
