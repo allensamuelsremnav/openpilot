@@ -21,6 +21,9 @@
 -- the vehicle software or hardware should create a new row
 CREATE TABLE video_source (
   id VARCHAR(32),
+  -- Informal description, such as
+  -- "video pipeline, 1 camera"
+  description TEXT,
   -- other attributes TBD, e.g. modem configuration
   PRIMARY KEY(id)
 );
@@ -31,6 +34,9 @@ CREATE TABLE video_source (
 -- new row
 CREATE TABLE video_destination (
   id VARCHAR(32),
+  -- Informal description, such as
+  -- "no error concealment"
+  description TEXT,
   -- other attributes TBD, e.g. station identifier
   PRIMARY KEY(id)
 );
@@ -52,6 +58,9 @@ CREATE TABLE cellular (
 -- the GNSS, i.e. from one chip set to another, changing antenna.
 CREATE TABLE gnss_receiver (
   id VARCHAR(32),
+  -- Informal description, such as
+  -- "Amazon M6"
+  description TEXT,
   -- other attributes TBD, e.g. chipset or breakout board, antenna
   PRIMARY KEY(id)
 );
