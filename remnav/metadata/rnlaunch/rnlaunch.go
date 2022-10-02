@@ -12,10 +12,10 @@ import (
 
 func main() {
 	flag.Parse()
-	log.Println("arguments", flag.Args())
 	if len(flag.Args()) != 1 {
-		log.Fatalln("expected one positional argument, got", flag.Args())
+		log.Fatalln("expected experiment configuration, got", flag.Args())
 	}
+
 	// Read config file.
 	configFilename := flag.Args()[0]
 	log.Println("config file", configFilename)

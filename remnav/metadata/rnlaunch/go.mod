@@ -1,4 +1,4 @@
-module remnav/metadata/launcher
+module remnav/metadata/rnlaunch
 
 go 1.19
 
