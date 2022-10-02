@@ -10,7 +10,8 @@
             "request": "launch",
             "mode": "auto",
             "program": "rnlaunch.go",
-            "args": ["../experiment/experiment.json"]
+            "args": [ // "--session_id". "session000",
+                     "../experiment/experiment.json"]
         }
     ]
 }

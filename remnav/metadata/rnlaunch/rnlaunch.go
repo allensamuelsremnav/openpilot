@@ -3,14 +3,16 @@ package main
 import (
 	"encoding/json"
 	"flag"
-	"github.com/google/uuid"
 	"io/ioutil"
 	"log"
 	"os"
 	experiment "remnav/metadata/experiment"
+
+	"github.com/google/uuid"
 )
 
 func main() {
+	sessionIdFlag := flag.String("session_id", "", "session id")
 	flag.Parse()
 	if len(flag.Args()) != 1 {
 		log.Fatalln("expected experiment configuration, got", flag.Args())
@@ -40,6 +42,11 @@ func main() {
 	GNSSClient := config.GNSS.GNSSClient
 	log.Println("gnss_client", GNSSClient)
 
-	UUID := uuid.NewString()
-	log.Println("UUID", UUID)
+	var sessionId string
+	if len(*sessionIdFlag) > 0 {
+		sessionId = *sessionIdFlag
+	} else {
+		sessionId = uuid.NewString()
+	}
+	log.Printf("session_id %s (len %d)", sessionId, len(sessionId))
 }
