@@ -21,7 +21,7 @@ var wg sync.WaitGroup
 func run(prog string, args []string) {
 	defer wg.Done()
 
-	log.Printf("run %s %v", prog, args)
+	log.Printf("exec %s %v", prog, args)
 	cmd := exec.Command(prog, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -31,7 +31,7 @@ func run(prog string, args []string) {
 		log.Fatal(err)
 	}
 	err = cmd.Wait()
-	log.Printf("%s finished with %v", prog, err)
+	log.Printf("%s finished with error status %v", prog, err)
 }
 
 func main() {
