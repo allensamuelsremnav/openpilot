@@ -5,7 +5,7 @@ package experimentconfig
 type VideoStorage struct {
 	// Root directory for archive storage at operator station,
 	// e.g. /home/user/6TB/remconnect/video
-	Root string `json:"root"`
+	ArchiveRoot string `json:"archive_root"`
 }
 
 type VideoConfig struct {
