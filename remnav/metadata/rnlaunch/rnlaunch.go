@@ -3,12 +3,15 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	experiment "remnav/metadata/experiment"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -40,9 +43,10 @@ func main() {
 	}
 
 	// Read config file.
-	configFilename := flag.Args()[0]
-	log.Println("config file", configFilename)
-	configFile, err := os.Open(configFilename)
+	configPath, err := filepath.Abs(flag.Args()[0])
+	log.Println("config file", configPath)
+
+	configFile, err := os.Open(configPath)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -58,7 +62,7 @@ func main() {
 
 	if len(config.Description) > 0 {
 		log.Printf("configuration description \"%s\"",
-		 config.Description)
+			config.Description)
 	}
 
 	// Look for executables
@@ -80,14 +84,20 @@ func main() {
 	if len(*sessionIdFlag) > 0 {
 		sessionId = *sessionIdFlag
 	} else {
-		sessionId = uuid.NewString()
+		sessionId = fmt.Sprintf("%s_%s",
+			time.Now().UTC().Format("20060102T150405Z"),
+			uuid.NewString())
 	}
 	log.Printf("session_id %s (len %d)", sessionId, len(sessionId))
+
+	log.Printf("vehicle_root %s", config.Storage.VehicleRoot)
+	log.Printf("archive_server %s", config.Storage.ArchiveServer)
+	log.Printf("archive_root %s", config.Storage.ArchiveRoot)
 
 	// Run only video sender until GNSS client is working.
 	wg.Add(1)
 	go run(videoSender,
-		[]string{"--session_id", sessionId, "--config", configFilename})
+		[]string{"--session_id", sessionId, "--config", configPath})
 
 	wg.Wait()
 }

@@ -19,14 +19,16 @@ var cids = []string{"att000", "att001", "tmobile000", "verizon000"}
 
 func video(archiveRoot string, nDirectories int) {
 	// mock output files from video receiver
-	timestamp := time.Now()
+	timestamp := time.Now().UTC()
 	// mock does not create archive root
 	if _, err := os.Stat(archiveRoot); os.IsNotExist(err) {
 		log.Fatalln(err)
 	}
 
 	for i := 0; i < nDirectories; i++ {
-		sessionId := uuid.NewString()
+		sessionId := fmt.Sprintf("%s_%s",
+			timestamp.Format("20060102T150405Z"),
+			uuid.NewString())
 		sessionPath := filepath.Join(
 			archiveRoot,
 			sessionId)
@@ -99,8 +101,10 @@ func main() {
 	json.Unmarshal([]byte(byteValue), &config)
 
 	log.Printf("configuration description \"%s\"", config.Description)
-	log.Println("gnss archive_root", config.GNSS.Storage.ArchiveRoot)
-	log.Println("video archive_root", config.Video.Storage.ArchiveRoot)
+	log.Printf("vehicle_root %s", config.Storage.VehicleRoot)
+	log.Printf("archive_server %s", config.Storage.ArchiveServer)
+	log.Printf("archive_root %s", config.Storage.ArchiveRoot)
+
 	log.Println("sessions", *sessions)
-	video(config.Video.Storage.ArchiveRoot, *sessions)
+	video(config.Storage.ArchiveRoot, *sessions)
 }

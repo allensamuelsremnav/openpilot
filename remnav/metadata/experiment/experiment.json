@@ -1,24 +1,18 @@
 {
     "description" : "experiment 000",
+    "storage": {
+	"archive_server": "96.64.247.70",
+	"archive_root": "/home/user/6TB/remconnect",
+	"vehicle_root": "/home/user/vehicle/remconnect"
+    },
     "video": {
 	"video_source": "proto000",
 	"video_destination": "rn3_000",
+	"video_sender": "/home/user/vehicle/bin/video_pipeline"
 
-	"video_sender": "/home/user/vehicle/bin/video_pipeline",
-
-	"storage": {
-	    "archive_root": "/home/user/6TB/remconnect"
-	}
     },
     "gnss": {
 	"gnss_receiver": "NEO-6M",
-
-	"gnss_client": "/home/user/vehicle/bin/gnss_client",
-
-	"storage": {
-	    "vehicle_root": "/home/user/vehicle/gnss",
-	    "archive_user": "gnss_storage@192.168.1.113",
-	    "archive_root": "/home/user/6TB/remconnect"
-	}
+	"gnss_client": "/home/user/vehicle/bin/gnss_client"
     }
 }
