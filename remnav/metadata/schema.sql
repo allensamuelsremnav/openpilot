@@ -162,7 +162,7 @@ CREATE TABLE gnss_track (
   -- this is the part that is independent of the physical storage.
   -- e.g. the file is stored at
   -- rn1:/mnt/4TB/gnss_tracks/experimental/ + <gnss_session>/file_name
-  file_name VARCHAR,
+  file_name TEXT,
   format VARCHAR(32) REFERENCES gnss_track_format(id),
   -- [start_time, end_time)
   start_time TIMESTAMP WITH TIME ZONE,
