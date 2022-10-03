@@ -26,13 +26,21 @@ func video(archiveRoot string, nDirectories int) {
 	}
 
 	for i := 0; i < nDirectories; i++ {
-		sequenceId := uuid.NewString()
-		directoryPath := filepath.Join(
+		sessionId := uuid.NewString()
+		sessionPath := filepath.Join(
 			archiveRoot,
-			sequenceId)
-		fmt.Println(directoryPath)
-		// umask modifies the group permission.
-		err := os.Mkdir(directoryPath, 0775)
+			sessionId)
+
+		videoPath := filepath.Join(sessionPath, "video")
+		err := os.MkdirAll(videoPath, 0775)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		fmt.Println(videoPath)
+
+		// umask modifies the group permission; fix it
+		// so we can also write GNSS data here.
+		err = os.Chmod(sessionPath, 0775)
 		if err != nil {
 			log.Fatalln(err)
 		}
@@ -50,11 +58,11 @@ func video(archiveRoot string, nDirectories int) {
 				cid)
 			fmt.Println(packetFilename)
 			fmt.Println(metadataFilename)
-			_, err := os.Create(filepath.Join(directoryPath, packetFilename))
+			_, err := os.Create(filepath.Join(videoPath, packetFilename))
 			if err != nil {
 				log.Fatalln(err)
 			}
-			_, err = os.Create(filepath.Join(directoryPath, metadataFilename))
+			_, err = os.Create(filepath.Join(videoPath, metadataFilename))
 			if err != nil {
 				log.Fatalln(err)
 			}

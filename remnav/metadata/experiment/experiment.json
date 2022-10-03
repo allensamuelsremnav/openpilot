@@ -7,7 +7,7 @@
 	"video_sender": "/home/user/vehicle/bin/video_pipeline",
 
 	"storage": {
-	    "archive_root": "/home/user/6TB/remconnect/video"
+	    "archive_root": "/home/user/6TB/remconnect"
 	}
     },
     "gnss": {
@@ -18,7 +18,7 @@
 	"storage": {
 	    "vehicle_root": "/home/user/vehicle/gnss",
 	    "archive_user": "gnss_storage@192.168.1.113",
-	    "archive_root": "/home/user/6TB/remconnect/gnss"
+	    "archive_root": "/home/user/6TB/remconnect"
 	}
     }
 }
