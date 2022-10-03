@@ -57,7 +57,8 @@ func main() {
 	json.Unmarshal([]byte(byteValue), &config)
 
 	if len(config.Description) > 0 {
-		log.Println(config.Description)
+		log.Printf("configuration description \"%s\"",
+		 config.Description)
 	}
 
 	// Look for executables
