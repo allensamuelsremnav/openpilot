@@ -129,12 +129,12 @@ CREATE TABLE video_metadata_format (
 -- or epoch + carrier kbps
 CREATE TABLE video_metadata (
   video_session VARCHAR(128) REFERENCES video_session(id),
-  file_name TEXT,
+  filename TEXT,
   start_time TIMESTAMP WITH TIME ZONE,
   cellular VARCHAR(32) REFERENCES cellular(id),
   format VARCHAR(32) REFERENCES video_metadata_format(id),
   -- other attribues TBD, e.g. encoding or resolution.
-  PRIMARY KEY(video_session, file_name)
+  PRIMARY KEY(video_session, filename)
 );
 `,
 	`
@@ -143,15 +143,15 @@ CREATE TABLE video_packets (
   video_session VARCHAR(128) REFERENCES video_session(id),
   -- partial path to file.
   -- this is the part that is independent of the physical storage.
-  -- e.g. /mnt/4TB/video_clips/experimental/ + file_name
-  file_name TEXT,
+  -- e.g. /mnt/4TB/video_clips/experimental/ + filename
+  filename TEXT,
   -- start_time is encoded in the filename
   start_time TIMESTAMP WITH TIME ZONE,
   cellular VARCHAR(32) REFERENCES cellular(id),
   -- format is conventionally encoded in file name
   format VARCHAR(32) REFERENCES video_packets_format(id),
   -- other attribues TBD, e.g. encoding or resolution.
-  PRIMARY KEY(video_session, file_name)
+  PRIMARY KEY(video_session, filename)
 );
 `,
 	`
@@ -175,13 +175,12 @@ CREATE TABLE gnss_track (
   -- partial path to file.
   -- this is the part that is independent of the physical storage.
   -- e.g. the file is stored at
-  -- rn1:/mnt/4TB/gnss_tracks/experimental/ + <gnss_session>/file_name
-  file_name TEXT,
+  -- rn1:/mnt/4TB/gnss_tracks/experimental/ + <gnss_session>/filename
+  filename TEXT,
   format VARCHAR(32) REFERENCES gnss_track_format(id),
   start_time TIMESTAMP WITH TIME ZONE,
   -- other attribues TBD, e.g. device or encoding
-  PRIMARY KEY(gnss_session, file_name),
-  UNIQUE(gnss_session, file_name)
+  PRIMARY KEY(gnss_session, filename)
 );
 `}
 
