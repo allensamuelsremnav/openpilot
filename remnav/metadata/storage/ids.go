@@ -19,21 +19,21 @@ type IdsInit struct {
 var idsJSON = `{
     "video_source": [
 	{"id": "vehicle000",
-	 "description": "uncontrolled state"}
+	 "description": "undefined configuration"}
     ],
 
     "video_destination": [
-	{"id": "operator000",
-	 "description": "uncontrolled state"}
+	{"id": "archive000",
+	 "description": "undefined configuration"}
     ],
 
     "cellular": [
 	{"id": "att000",
-	 "description": "ATT sim, IMSI 869710030002905, TN 14088165141"},
+	 "description": "undefined configuration"},
 	{"id": "tmobile000",
-	 "description": "TMobile"},
+	 "description": "undefined configuration"},
 	{"id": "verizon000",
-	 "description": "Verizon sim"}
+	 "description": "undefined configuration"}
     ],
     
     "gnss_receiver": [
@@ -59,6 +59,8 @@ var idsJSON = `{
 }`
 
 func InitialIds() IdsInit {
+	// Return the documented ids.  The database generator will
+	// add information for undocumented ids.
 	if !json.Valid([]byte(idsJSON)) {
 		log.Fatal("programming error, invalid idsJSON")
 	}
