@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	experiment "remnav/metadata/experiment"
 	"sync"
+	"text/template"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,6 +33,31 @@ func run(prog string, args []string) {
 	}
 	err = cmd.Wait()
 	log.Printf("%s finished with error status %v", prog, err)
+}
+
+func fileTransfer(configPath, archiveServer, archiveRoot, sessionId string) {
+	m := map[string]interface{}{"configPath": configPath,
+		"archiveServer": archiveServer,
+		"archiveRoot":   archiveRoot,
+		"sessionId":     sessionId}
+
+	t := `#!/bin/bash
+# Run this script after session is complete
+# and a reliable TCP connection is available.
+#    bash filetransfer.sh hjeng
+if [ "$#" -ne 1 ]; then
+  echo "archive user id required, e.g. hjeng"
+  exit 1
+fi
+ARCHIVE_USER="$1"
+ARCHIVE_SERVER="{{.archiveServer}}"
+ARCHIVE_ROOT="{{.archiveRoot}}"
+SESSION_ID="{{.sessionId}}"
+CONFIG_PATH="{{.configPath}}"
+rsync -av ${CONFIG_PATH} ${ARCHIVE_USER}@${ARCHIVE_SERVER}:${ARCHIVE_ROOT}/${SESSION_ID}/
+`
+	t_ := template.Must(template.New("").Parse(t))
+	t_.Execute(os.Stdout, m)
 }
 
 func main() {
@@ -93,6 +119,9 @@ func main() {
 	log.Printf("vehicle_root %s", config.Storage.VehicleRoot)
 	log.Printf("archive_server %s", config.Storage.ArchiveServer)
 	log.Printf("archive_root %s", config.Storage.ArchiveRoot)
+
+	fileTransfer(configPath, config.Storage.ArchiveServer, config.Storage.ArchiveRoot,
+		sessionId)
 
 	// Run only video sender until GNSS client is working.
 	wg.Add(1)
