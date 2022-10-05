@@ -3,7 +3,7 @@
     "storage": {
 	"archive_server": "96.64.247.70",
 	"archive_root": "/home/user/6TB/remconnect",
-	"vehicle_root": "/home/user/vehicle/remconnect"
+	"vehicle_root": "/home/user/6TB/vehicle/remconnect"
     },
     "video": {
 	"video_source": "proto000",

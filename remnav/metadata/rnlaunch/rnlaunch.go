@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -35,8 +36,9 @@ func run(prog string, args []string) {
 	log.Printf("%s finished with error status %v", prog, err)
 }
 
-func fileTransfer(configPath, archiveServer, archiveRoot, sessionId string) {
+func fileTransfer(localRoot, configPath, archiveServer, archiveRoot, sessionId string, script io.Writer) {
 	m := map[string]interface{}{"configPath": configPath,
+		"localRoot":     localRoot,
 		"archiveServer": archiveServer,
 		"archiveRoot":   archiveRoot,
 		"sessionId":     sessionId}
@@ -54,10 +56,13 @@ ARCHIVE_SERVER="{{.archiveServer}}"
 ARCHIVE_ROOT="{{.archiveRoot}}"
 SESSION_ID="{{.sessionId}}"
 CONFIG_PATH="{{.configPath}}"
-rsync -av ${CONFIG_PATH} ${ARCHIVE_USER}@${ARCHIVE_SERVER}:${ARCHIVE_ROOT}/${SESSION_ID}/
+LOCAL_ROOT="{{.localRoot}}"
+cp ${CONFIG_PATH} ${LOCAL_ROOT}/${SESSION_ID}/experiment.json
+rsync -arv ${LOCAL_ROOT}/${SESSION_ID} ${ARCHIVE_USER}@${ARCHIVE_SERVER}:${ARCHIVE_ROOT}
+
 `
 	t_ := template.Must(template.New("").Parse(t))
-	t_.Execute(os.Stdout, m)
+	t_.Execute(script, m)
 }
 
 func main() {
@@ -120,8 +125,23 @@ func main() {
 	log.Printf("archive_server %s", config.Storage.ArchiveServer)
 	log.Printf("archive_root %s", config.Storage.ArchiveRoot)
 
-	fileTransfer(configPath, config.Storage.ArchiveServer, config.Storage.ArchiveRoot,
-		sessionId)
+	localSessionDir := filepath.Join(config.Storage.VehicleRoot, sessionId)
+	err = os.Mkdir(localSessionDir, 0775)
+	if err != nil && !os.IsExist(err) {
+		log.Fatal(err)
+	}
+
+	scriptFilepath := filepath.Join(localSessionDir, "filetransfer.sh")
+	scriptFile, err := os.Create(scriptFilepath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer scriptFile.Close()
+	fileTransfer(config.Storage.VehicleRoot, configPath,
+		config.Storage.ArchiveServer, config.Storage.ArchiveRoot,
+		sessionId, scriptFile)
+	log.Printf("run this script when session is finished and a reliable WiFi or Ethernet connection is available: %s",
+		scriptFilepath)
 
 	// Run only video sender until GNSS client is working.
 	wg.Add(1)
