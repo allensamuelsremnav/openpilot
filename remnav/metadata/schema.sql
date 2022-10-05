@@ -5,7 +5,7 @@
 -- by (gnss_session.id, measurement timestamp).
 
 -- 2. The real-world correspondence between video data and GNSS data
--- is expressed as a relation (video_session.id, gnss_session.id),
+-- is expressed as a share video_and gnss session id,
 -- which asserts that video and GNSS data with these ids were
 -- collected on the same real-world trajectory and that the timestamps
 -- can be used for approximate alignment.  A single drive can comprise
@@ -14,7 +14,7 @@
 -- The basic objects comprise comm senders and destination, GNSS
 -- receivers, video sessions, and GNSS sessions.
 
--- Timestamps are stored to millisecond precision or better.
+-- Timestamps are stored to second precision or better.
 
 -- This table describes sources (normally vehicles). A new row with a
 -- new id should be entered whenever we change the configuration of
@@ -118,7 +118,6 @@ CREATE TABLE video_metadata_format (
 CREATE TABLE video_metadata (
   video_session VARCHAR(128) REFERENCES video_session(id),
   file_name TEXT,
-  -- [start_time, end_time)
   start_time TIMESTAMP WITH TIME ZONE,
   cellular VARCHAR(32) REFERENCES cellular(id),
   format VARCHAR(32) REFERENCES video_metadata_format(id),
@@ -162,11 +161,9 @@ CREATE TABLE gnss_track (
   -- this is the part that is independent of the physical storage.
   -- e.g. the file is stored at
   -- rn1:/mnt/4TB/gnss_tracks/experimental/ + <gnss_session>/file_name
-  file_name VARCHAR,
+  file_name TEXT,
   format VARCHAR(32) REFERENCES gnss_track_format(id),
-  -- [start_time, end_time)
   start_time TIMESTAMP WITH TIME ZONE,
-  end_time TIMESTAMP WITH TIME ZONE,
   -- other attribues TBD, e.g. device or encoding
   PRIMARY KEY(gnss_session, file_name),
   UNIQUE(gnss_session, file_name)

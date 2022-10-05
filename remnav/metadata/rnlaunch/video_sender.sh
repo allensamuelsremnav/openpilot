@@ -3,6 +3,6 @@
 echo "video_sender $@"
 for i in {1..10}
 do	 
-  echo "video_sender $i"
+  echo "video_sender iteration $i"
   sleep 5
 done

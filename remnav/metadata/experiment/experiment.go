@@ -1,11 +1,14 @@
-package experimentconfig
+package experiment
 
 // Structs for experiment-configuration JSON.
 
-type VideoStorage struct {
-	// Root directory for archive storage at operator station,
-	// e.g. /home/user/6TB/remconnect/video
-	Root string `json:"root"`
+type StorageConfig struct {
+	// Server and root directory for archive storage at operator station,
+	// e.g. 96.64.247.70 and /home/user/6TB/remconnect
+	ArchiveServer string `json:"archive_server"`
+	ArchiveRoot   string `json:"archive_root"`
+	// Root directory for local storage
+	VehicleRoot string `json:"vehicle_root"`
 }
 
 type VideoConfig struct {
@@ -16,19 +19,6 @@ type VideoConfig struct {
 
 	// Full path to executable
 	VideoSender string `json:"video_sender"`
-
-	Storage     VideoStorage
-}
-
-type GNSSStorage struct {
-	// Root directories for GNSS log storage on vehicle
-	VehicleRoot string `json:"vehicle_root"`
-
-	// These credentials will be used to rsync from the VehicleRoot
-	// to ArchiveRoot on rn3
-	ArchiveUser string `json:"archive_user"`
-	// E.g. /home/user/6TB/remconnect/gnss
-	ArchiveRoot string `json:"archive_root"`
 }
 
 type GNSSConfig struct {
@@ -37,13 +27,12 @@ type GNSSConfig struct {
 
 	// Full path to executable
 	GNSSClient string `json:"gnss_client"`
-
-	Storage    GNSSStorage
 }
 
 // Top-level JSON
 type Config struct {
-        Description string `json:"description"`
-	Video VideoConfig
-	GNSS  GNSSConfig
+	Description string `json:"description"`
+	Storage     StorageConfig
+	Video       VideoConfig
+	GNSS        GNSSConfig
 }
