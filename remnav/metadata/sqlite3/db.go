@@ -1,3 +1,4 @@
+// Package main generates a sqlite3 database for the files at the archive root.
 package main
 
 import (

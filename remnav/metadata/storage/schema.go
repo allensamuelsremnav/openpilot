@@ -1,3 +1,5 @@
+// Package storage implements a file walker for the files stored in the archive
+// file system and defines a database schema for metadata about those file.
 package storage
 
 var schema = []string{
