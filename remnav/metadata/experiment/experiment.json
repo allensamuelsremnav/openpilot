@@ -6,7 +6,7 @@
 	"vehicle_root": "/home/user/6TB/vehicle/remconnect"
     },
     "video": {
-	"video_source": "proto000",
+	"video_source": "vehicle_000",
 	"video_destination": "rn3_000",
 	"video_sender": "/home/user/vehicle/bin/video_pipeline"
 
