@@ -36,8 +36,9 @@ func run(prog string, args []string) {
 	log.Printf("%s finished with error status %v", prog, err)
 }
 
-func fileTransfer(localRoot, configPath, archiveServer, archiveRoot, sessionId string, script io.Writer) {
-	m := map[string]interface{}{"configPath": configPath,
+func fileTransfer(localRoot, archiveServer, archiveRoot, sessionId string, script io.Writer) {
+	// Write bash script to copy local session storage.
+	m := map[string]interface{}{
 		"localRoot":     localRoot,
 		"archiveServer": archiveServer,
 		"archiveRoot":   archiveRoot,
@@ -55,9 +56,7 @@ ARCHIVE_USER="$1"
 ARCHIVE_SERVER="{{.archiveServer}}"
 ARCHIVE_ROOT="{{.archiveRoot}}"
 SESSION_ID="{{.sessionId}}"
-CONFIG_PATH="{{.configPath}}"
 LOCAL_ROOT="{{.localRoot}}"
-cp ${CONFIG_PATH} ${LOCAL_ROOT}/${SESSION_ID}/experiment.json
 rsync -arv ${LOCAL_ROOT}/${SESSION_ID} ${ARCHIVE_USER}@${ARCHIVE_SERVER}:${ARCHIVE_ROOT}
 
 `
@@ -82,14 +81,14 @@ func main() {
 		log.Fatalln(err)
 	}
 	defer configFile.Close()
-	byteValue, err := ioutil.ReadAll(configFile)
+	configBytes, err := ioutil.ReadAll(configFile)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
 	// Interpret as JSON.
 	var config experiment.Config
-	json.Unmarshal([]byte(byteValue), &config)
+	json.Unmarshal([]byte(configBytes), &config)
 
 	if len(config.Description) > 0 {
 		log.Printf("configuration description \"%s\"",
@@ -125,22 +124,35 @@ func main() {
 	log.Printf("archive_server %s", config.Storage.ArchiveServer)
 	log.Printf("archive_root %s", config.Storage.ArchiveRoot)
 
+	if _, err := os.Stat(config.Storage.VehicleRoot); os.IsNotExist(err) {
+		log.Fatal(err)
+	}
+
 	localSessionDir := filepath.Join(config.Storage.VehicleRoot, sessionId)
 	err = os.Mkdir(localSessionDir, 0775)
 	if err != nil && !os.IsExist(err) {
 		log.Fatal(err)
 	}
 
+	// Copy the config file to the local session dir.
+	err = ioutil.WriteFile(filepath.Join(localSessionDir, "experiment.json"),
+		configBytes, 0664)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Write script to transfer local session files.
 	scriptFilepath := filepath.Join(localSessionDir, "filetransfer.sh")
 	scriptFile, err := os.Create(scriptFilepath)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer scriptFile.Close()
-	fileTransfer(config.Storage.VehicleRoot, configPath,
+	fileTransfer(config.Storage.VehicleRoot,
 		config.Storage.ArchiveServer, config.Storage.ArchiveRoot,
 		sessionId, scriptFile)
-	log.Printf("run this script when session is finished and a reliable WiFi or Ethernet connection is available: %s",
+	os.Chmod(scriptFilepath, 0775)
+	log.Printf("run this script on vehicle when session is finished and a reliable WiFi or Ethernet connection is available: %s",
 		scriptFilepath)
 
 	// Run only video sender until GNSS client is working.
