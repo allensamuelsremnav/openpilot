@@ -9,7 +9,7 @@ import (
 	"log"
 	"os"
 
-	storage "remnav.com/metadata/storage"
+	storage "remnav.com/remnav/metadata/storage"
 
 	_ "github.com/mattn/go-sqlite3"
 )

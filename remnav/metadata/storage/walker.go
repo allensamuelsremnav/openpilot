@@ -8,7 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	experiment "remnav.com/metadata/experiment"
+	experiment "remnav.com/remnav/metadata/experiment"
 	"strings"
 )
 

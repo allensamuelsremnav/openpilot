@@ -9,7 +9,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
-	experiment "remnav.com/metadata/experiment"
+	experiment "remnav.com/remnav/metadata/experiment"
 	"time"
 
 	"github.com/google/uuid"
@@ -76,7 +76,6 @@ func video(archiveRoot string, nDirectories int) {
 }
 
 func main() {
-	fmt.Println("hello,world")
 	sessions := flag.Int("sessions", 10, "number of sessions")
 	flag.Parse()
 	if len(flag.Args()) == 0 {

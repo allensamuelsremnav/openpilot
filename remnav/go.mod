@@ -1,4 +1,4 @@
-module remnav.com
+module remnav.com/remnav
 
 go 1.19
 
