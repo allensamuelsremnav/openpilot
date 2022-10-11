@@ -13,7 +13,7 @@ type StorageConfig struct {
 
 type VideoConfig struct {
 	// Identifiers for source and destination configurations,
-	// e.g. "proto000" and "rn3_000"
+	// e.g. "rn5_000" and "rn3_000"
 	VideoSource      string `json:"video_source"`
 	VideoDestination string `json:"video_destination"`
 
