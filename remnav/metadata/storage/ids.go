@@ -18,7 +18,7 @@ type IdsInit struct {
 // This a JSON string for easy updates by non-golang users.
 var idsJSON = `{
     "video_source": [
-	{"id": "vehicle_000",
+	{"id": "rn5_000",
 	 "description": "undefined configuration"}
     ],
 
