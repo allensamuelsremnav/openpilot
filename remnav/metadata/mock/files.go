@@ -9,7 +9,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
-	experiment "remnav/metadata/experiment"
+	experiment "remnav.com/metadata/experiment"
 	"time"
 
 	"github.com/google/uuid"

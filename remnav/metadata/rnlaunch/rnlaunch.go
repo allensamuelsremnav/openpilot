@@ -10,7 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	experiment "remnav/metadata/experiment"
+	experiment "remnav.com/metadata/experiment"
 	"sync"
 	"text/template"
 	"time"

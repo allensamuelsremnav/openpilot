@@ -9,7 +9,7 @@ import (
 	"log"
 	"os"
 
-	storage "remnav/metadata/storage"
+	storage "remnav.com/metadata/storage"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -80,21 +80,6 @@ func sessionPass1(sessions []storage.Session, db *sql.DB) {
 		log.Printf("pass1: session %s, packet files %d, gnss files %d",
 			s.Id, len(s.Video.PacketFiles), len(s.GNSS))
 
-		var insert string
-		if len(s.Source) > 0 && len(s.Destination) > 0 {
-			insert = fmt.Sprintf(
-				"INSERT INTO video_session(id) VALUES (\"%s\",\"%s\",\"%s\",\"%s\");",
-				s.Id, s.Source, s.Destination, s.Description)
-		} else {
-			// Avoid foreign-key errors.
-			insert = fmt.Sprintf(
-				"INSERT INTO video_session(id) VALUES (\"%s\");",
-				s.Id)
-		}
-		if _, err := db.Exec(insert); err != nil {
-			log.Fatalf("%v: %s", err, insert)
-		}
-
 		// Find new foreign keys:
 		// video_source(id), video_destination(id), cellular(id), gnss_receiver(id) TODO,
 		// video_metadata_format(id), video_packets_format(id)
@@ -144,6 +129,21 @@ func sessionPass1(sessions []storage.Session, db *sql.DB) {
 func sessionPass2(sessions []storage.Session, db *sql.DB) {
 	// Add the files after foreign-key references have been resolved in pass 2
 	for _, s := range sessions {
+		var sessionInsert string
+		if len(s.Source) > 0 && len(s.Destination) > 0 {
+			sessionInsert = fmt.Sprintf(
+				"INSERT INTO video_session(id, source, destination, description) VALUES (\"%s\",\"%s\",\"%s\",\"%s\");",
+				s.Id, s.Source, s.Destination, s.Description)
+		} else {
+			// Avoid foreign-key errors.
+			sessionInsert = fmt.Sprintf(
+				"INSERT INTO video_session(id) VALUES (\"%s\");",
+				s.Id)
+		}
+		if _, err := db.Exec(sessionInsert); err != nil {
+			log.Fatalf("%v: %s", err, sessionInsert)
+		}
+
 		for _, v := range s.Video.PacketFiles {
 			insert := fmt.Sprintf("INSERT INTO video_packets(video_session, filename, start_time, cellular, format) VALUES(\"%s\",\"%s\",\"%s\",\"%s\",\"%s\");",
 				s.Id, v.Filename, v.Timestamp, v.Cellular, v.Format)
@@ -175,15 +175,10 @@ func main() {
 
 	// Make a working db that we will later mv to the destination database
 	working, workingFilename := workdb()
+	log.Println(workingFilename)
 
 	sessionPass1(sessions, working)
 	sessionPass2(sessions, working)
-	/*
-		insert := "INSERT INTO video_session (id, source, destination) VALUES (\"zzzz\", \"vehicle000\", \"operator000\");"
-		if _, err := db.Exec(insert); err != nil {
-			log.Fatalf("%v: %s", err, insert)
-		}
-	*/
 
 	working.Close()
 
@@ -192,20 +187,4 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	/*
-		rows, err := db.Query("SELECT * from VIDEO_SESSION")
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var id string
-			var maybeSource, maybeDestination, maybeDescription sql.NullString
-			if err := rows.Scan(&id, &maybeSource, &maybeDestination, &maybeDescription); err != nil {
-				log.Fatal(err)
-			}
-			fmt.Println(id, maybeNull(maybeSource), maybeNull(maybeDestination),
-				maybeNull(maybeDescription))
-		}
-	*/
 }

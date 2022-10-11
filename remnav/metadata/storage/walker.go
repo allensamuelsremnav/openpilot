@@ -1,11 +1,14 @@
 package storage
 
 import (
+	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"path"
 	"path/filepath"
+	experiment "remnav.com/metadata/experiment"
 	"strings"
 )
 
@@ -50,14 +53,47 @@ type Session struct {
 var VideoSubdir = "video"
 var walkerId = "archive_walker"
 
-func session(archiveRoot string, sessionFile os.FileInfo) ([]VideoPacketFile, []VideoMetadataFile) {
+func readConfigFile(configPath string) *experiment.Config {
+	// Read config file if available.
+	_, err := os.Stat(configPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+
+	configFile, err := os.Open(configPath)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer configFile.Close()
+	configBytes, err := ioutil.ReadAll(configFile)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	// Interpret as JSON.
+	var config experiment.Config
+	json.Unmarshal([]byte(configBytes), &config)
+	return &config
+}
+
+func session(archiveRoot string, sessionFile os.FileInfo) *Session {
+	configPath := filepath.Join(archiveRoot, sessionFile.Name(), "experiment.json")
+	config := readConfigFile(configPath)
+	var source, destination, description string
+	if config != nil {
+		source = (*config).Video.VideoSource
+		destination = (*config).Video.VideoDestination
+		description = (*config).Description
+		fmt.Printf("%s: %s, %s, \"%s\"\n", sessionFile.Name(), source, destination, description)
+	}
+
 	// Make slices for the data files for the directory sessionFile
 	// Just the video files for now.
 	videoPath := filepath.Join(archiveRoot, sessionFile.Name(), VideoSubdir)
 	info, err := os.Stat(videoPath)
 	if os.IsNotExist(err) || !info.IsDir() {
 		log.Println(walkerId, videoPath, "not found or not a directory, skipping", sessionFile.Name())
-		return nil, nil
+		return nil
 	}
 	files, err := ioutil.ReadDir(videoPath)
 	if err != nil {
@@ -96,9 +132,14 @@ func session(archiveRoot string, sessionFile os.FileInfo) ([]VideoPacketFile, []
 					Format:    tokens[2]})
 		}
 	}
-	return packetFiles, metadataFiles
-}
+	return &Session{Id: sessionFile.Name(),
+		Source:      source,
+		Destination: destination,
+		Description: description,
+		Video: VideoFiles{PacketFiles: packetFiles,
+			MetadataFiles: metadataFiles}}
 
+}
 func Walker(archiveRoot string) []Session {
 	// Compute a slice of Session objects for the data at archiveRoot
 	files, err := ioutil.ReadDir(archiveRoot)
@@ -109,14 +150,12 @@ func Walker(archiveRoot string) []Session {
 	var sessions []Session
 	for _, file := range files {
 		if file.IsDir() {
-			packetFiles, metadataFiles := session(archiveRoot, file)
-			if packetFiles == nil {
+			session := session(archiveRoot, file)
+			if session == nil {
 				continue
 			}
 			sessions = append(sessions,
-				Session{Id: file.Name(),
-					Video: VideoFiles{PacketFiles: packetFiles,
-						MetadataFiles: metadataFiles}})
+				*session)
 		}
 	}
 	return sessions
