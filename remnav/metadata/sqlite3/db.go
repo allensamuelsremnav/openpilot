@@ -127,7 +127,7 @@ func sessionPass1(sessions []storage.Session, db *sql.DB) {
 }
 
 func sessionPass2(sessions []storage.Session, db *sql.DB) {
-	// Add the files after foreign-key references have been resolved in pass 2
+	// Add the files after foreign-key references have been resolved in pass 1
 	for _, s := range sessions {
 		var sessionInsert string
 		if len(s.Source) > 0 && len(s.Destination) > 0 {
@@ -168,7 +168,7 @@ func main() {
 	flag.Parse()
 
 	log.Println("archive_root", *archiveRoot)
-	log.Println("generated database", *dbFilename)
+	log.Println("database", *dbFilename)
 
 	// Read file system once
 	sessions := storage.Walker(*archiveRoot)
