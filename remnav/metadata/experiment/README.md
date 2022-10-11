@@ -27,6 +27,6 @@ See `experiment.go` for description of the fields in the experiment-configuratio
 * Verify that `archive_root`, `archive_sender`, and `vehicle_root`
   match the vehicle and archive server.
 * Use the `description` field for a human-readable summary of the experiment.
-* Place the edited `experiment.json` on the vehicle; it will be passed to `rnlaunch`.
+* Place the edited `experiment.json` on the vehicle; it can have any name. (It will be passed to `rnlaunch`.)
 
 
