@@ -21,7 +21,8 @@ See `experiment.go` for description of the fields in the experiment-configuratio
 * Verify that `video_source`, `video_destination`, and `gnss_receiver`
   match the experimental hardware and software.
 * Verify corresponding entries in
-  [idsJSON](https://bitbucket.org/remnav/rn1/src/master/remnav/metadata/storage/ids.go)
+  [ids.go](https://bitbucket.org/remnav/rn1/src/master/remnav/metadata/storage/ids.go)
+* Verify the file format ids and cellular ids in [ids.go](https://bitbucket.org/remnav/rn1/src/master/remnav/metadata/storage/ids.go)
 * Set `video_sender` and `gnss_client` to the full file paths.
 * Verify that `archive_root`, `archive_sender`, and `vehicle_root`
   match the vehicle and archive server.
