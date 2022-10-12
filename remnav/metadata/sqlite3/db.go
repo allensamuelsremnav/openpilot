@@ -23,7 +23,12 @@ func maybeNull(maybeString sql.NullString) string {
 
 func workdb() (*sql.DB, string) {
 	// Open and initialize a working database.
+	// Create a temp file.
 	tmpfile, err := ioutil.TempFile("", "metadata.*.db")
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = tmpfile.Close()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -180,10 +185,13 @@ func main() {
 	sessionPass1(sessions, working)
 	sessionPass2(sessions, working)
 
-	working.Close()
+	err := working.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// This is atomic
-	err := os.Rename(workingFilename, *dbFilename)
+	err = os.Rename(workingFilename, *dbFilename)
 	if err != nil {
 		log.Fatal(err)
 	}
