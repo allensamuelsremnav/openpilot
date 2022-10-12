@@ -9,10 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	experiment "remnav.com/remnav/metadata/experiment"
 	"sync"
 	"text/template"
 	"time"
+
+	experiment "remnav.com/remnav/metadata/experiment"
 
 	"github.com/google/uuid"
 )
@@ -66,6 +67,7 @@ rsync -arv ${LOCAL_ROOT}/${SESSION_ID} ${ARCHIVE_USER}@${ARCHIVE_SERVER}:${ARCHI
 func main() {
 	sessionIdFlag := flag.String("session_id", "", "specify session id rather use automatic UUID")
 	videoSenderFlag := flag.String("video_sender", "", "override video_sender in configuration")
+	GNSSClientFlag := flag.String("gnss_client", "", "override gnss_client in configuration")
 	flag.Parse()
 	if len(flag.Args()) != 1 {
 		log.Fatalln("expected experiment configuration, got", flag.Args())
@@ -108,6 +110,10 @@ func main() {
 	}
 
 	GNSSClient := config.GNSS.GNSSClient
+	if len(*GNSSClientFlag) > 0 {
+		// flag overrides configuration value
+		GNSSClient = *GNSSClientFlag
+	}
 	if len(GNSSClient) > 0 {
 		log.Println("gnss_client", GNSSClient)
 	}
@@ -158,8 +164,10 @@ func main() {
 		scriptFilepath)
 
 	// Run only video sender until GNSS client is working.
-	wg.Add(1)
+	wg.Add(2)
 	go run(videoSender,
+		[]string{"--session_id", sessionId, "--config", configPath})
+	go run(GNSSClient,
 		[]string{"--session_id", sessionId, "--config", configPath})
 
 	wg.Wait()
