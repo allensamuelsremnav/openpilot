@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"math/rand"
 	"os"
@@ -90,7 +90,7 @@ func main() {
 		log.Fatalln(err)
 	}
 	defer configFile.Close()
-	byteValue, err := ioutil.ReadAll(configFile)
+	byteValue, err := io.ReadAll(configFile)
 	if err != nil {
 		log.Fatalln(err)
 	}

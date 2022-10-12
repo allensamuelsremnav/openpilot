@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 
@@ -14,17 +13,10 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-func maybeNull(maybeString sql.NullString) string {
-	if maybeString.Valid {
-		return maybeString.String
-	}
-	return "NULL"
-}
-
 func workdb() (*sql.DB, string) {
 	// Open and initialize a working database.
 	// Create a temp file.
-	tmpfile, err := ioutil.TempFile("", "metadata.*.db")
+	tmpfile, err := os.CreateTemp("", "metadata.*.db")
 	if err != nil {
 		log.Fatal(err)
 	}

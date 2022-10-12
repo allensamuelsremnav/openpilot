@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -74,6 +73,9 @@ func main() {
 
 	// Read config file.
 	configPath, err := filepath.Abs(flag.Args()[0])
+	if err != nil {
+		log.Fatalln(err)
+	}
 	log.Println("config file", configPath)
 
 	configFile, err := os.Open(configPath)
@@ -81,7 +83,7 @@ func main() {
 		log.Fatalln(err)
 	}
 	defer configFile.Close()
-	configBytes, err := ioutil.ReadAll(configFile)
+	configBytes, err := io.ReadAll(configFile)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -135,7 +137,7 @@ func main() {
 	}
 
 	// Copy the config file to the local session dir.
-	err = ioutil.WriteFile(filepath.Join(localSessionDir, "experiment.json"),
+	err = os.WriteFile(filepath.Join(localSessionDir, "experiment.json"),
 		configBytes, 0664)
 	if err != nil {
 		log.Fatal(err)

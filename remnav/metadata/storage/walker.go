@@ -3,7 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 	"path"
@@ -65,7 +65,7 @@ func readConfigFile(configPath string) *experiment.Config {
 		log.Fatalln(err)
 	}
 	defer configFile.Close()
-	configBytes, err := ioutil.ReadAll(configFile)
+	configBytes, err := io.ReadAll(configFile)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -76,7 +76,7 @@ func readConfigFile(configPath string) *experiment.Config {
 	return &config
 }
 
-func session(archiveRoot string, sessionFile os.FileInfo) *Session {
+func session(archiveRoot string, sessionFile os.DirEntry) *Session {
 	configPath := filepath.Join(archiveRoot, sessionFile.Name(), "experiment.json")
 	config := readConfigFile(configPath)
 	var source, destination, description string
@@ -95,7 +95,7 @@ func session(archiveRoot string, sessionFile os.FileInfo) *Session {
 		log.Println(walkerId, videoPath, "not found or not a directory, skipping", sessionFile.Name())
 		return nil
 	}
-	files, err := ioutil.ReadDir(videoPath)
+	files, err := os.ReadDir(videoPath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func session(archiveRoot string, sessionFile os.FileInfo) *Session {
 }
 func Walker(archiveRoot string) []Session {
 	// Compute a slice of Session objects for the data at archiveRoot
-	files, err := ioutil.ReadDir(archiveRoot)
+	files, err := os.ReadDir(archiveRoot)
 	if err != nil {
 		log.Fatal(walkerId, err)
 	}
