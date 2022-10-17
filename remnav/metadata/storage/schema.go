@@ -133,7 +133,7 @@ CREATE TABLE video_metadata (
   PRIMARY KEY(video_session, filename)
 );
 
--- video session file information
+-- files with video packets
 CREATE TABLE video_packets (
   video_session VARCHAR(128) REFERENCES video_session(id),
   -- partial path to file.
