@@ -11,22 +11,30 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"text/template"
 
 	_ "github.com/mattn/go-sqlite3"
 	"remnav.com/remnav/metadata/storage"
 )
 
-type ChannelPair struct {
-	PacketsFile  string
-	MetadataFile string
+type channelPair struct {
+	packetsFile  string
+	metadataFile string
 }
 
 // The channel pairs for a dedup operation.
-type ChannelPairs struct {
-	SessionId string
-	Pairs     []ChannelPair
+type channelPairs struct {
+	sessionId string
+	pairs     []channelPair
 }
+
+type dedupReturn struct {
+	sessionId string
+	err       error
+}
+
+var wg sync.WaitGroup
 
 func sessionIds(db *sql.DB, table string) []string {
 	// Query table for session ids
@@ -52,7 +60,7 @@ func sessionIds(db *sql.DB, table string) []string {
 	return sessions
 }
 
-func channelPairs(db *sql.DB, sessionId string) ChannelPairs {
+func sessionPairs(db *sql.DB, sessionId string) channelPairs {
 	// Query for packet and metadata pairs.
 	q := `
 SELECT packets.channel, packets.filename, metadata.filename
@@ -79,48 +87,47 @@ FROM
 		log.Fatal(err)
 	}
 
-	var channelPairs []ChannelPair
+	var pairs []channelPair
 	for rows.Next() {
 		var channel, packetFilename, metadataFilename string
 		if err := rows.Scan(&channel, &packetFilename, &metadataFilename); err != nil {
 			log.Fatal(err)
 		}
-		channelPairs = append(channelPairs,
-			ChannelPair{PacketsFile: packetFilename,
-				MetadataFile: metadataFilename})
+		pairs = append(pairs,
+			channelPair{packetsFile: packetFilename,
+				metadataFile: metadataFilename})
 	}
-	return ChannelPairs{SessionId: sessionId, Pairs: channelPairs}
+	return channelPairs{sessionId: sessionId, pairs: pairs}
 }
 
-func dedup(prog, archive_root, dedup_root string, jobs <-chan ChannelPairs, errs chan<- error) {
+func dedup(prog, archive_root, dedup_root string, jobs <-chan channelPairs, errs chan<- dedupReturn) {
 	// Execute dedup jobs from channel.
 	for job := range jobs {
 		args := []string{
-			"--m", filepath.Join(dedup_root, fmt.Sprintf("%s.csv", job.SessionId)),
-			"--p", filepath.Join(dedup_root, fmt.Sprintf("%s.dat", job.SessionId))}
-		for _, pair := range job.Pairs {
-			root_ := filepath.Join(archive_root, job.SessionId, storage.VideoSubdir)
-			args = append(args, filepath.Join(root_, pair.MetadataFile))
-			args = append(args, filepath.Join(root_, pair.PacketsFile))
+			"--m", filepath.Join(dedup_root, fmt.Sprintf("%s.csv", job.sessionId)),
+			"--p", filepath.Join(dedup_root, fmt.Sprintf("%s.dat", job.sessionId))}
+		for _, pair := range job.pairs {
+			root_ := filepath.Join(archive_root, job.sessionId, storage.VideoSubdir)
+			args = append(args, filepath.Join(root_, pair.metadataFile))
+			args = append(args, filepath.Join(root_, pair.packetsFile))
 		}
-		// log.Printf("%s %s (%d channel pairs)", prog, args, len(job.Pairs))
+		// log.Printf("%s %s (%d channel pairs)", prog, args, len(job.pairs))
 		cmd := exec.Command(prog, args...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 
-		// Every iteration must put a return status into errs; otherwise main will hang.
 		err := cmd.Start()
 		if err != nil {
-			errs <- err
+			errs <- dedupReturn{sessionId: job.sessionId, err: err}
 			continue
 		}
 		err = cmd.Wait()
 		if err != nil {
-			errs <- err
+			errs <- dedupReturn{sessionId: job.sessionId, err: err}
 			continue
 		}
-		errs <- nil
 	}
+	wg.Done()
 }
 
 func main() {
@@ -164,20 +171,21 @@ func main() {
 
 	// Find the channel pairs for all sessions in dbTable
 	allSessions := sessionIds(db, dbTable)
-	var allChannelPairs []ChannelPairs
+	var allChannelPairs []channelPairs
 	for _, session := range allSessions {
-		info := channelPairs(db, session)
-		if len(info.Pairs) == 0 {
-			log.Printf("%s, %d channel pairs, skipping\n", info.SessionId, len(info.Pairs))
+		info := sessionPairs(db, session)
+		if len(info.pairs) == 0 {
+			log.Printf("%s, %d channel pairs, skipping\n", info.sessionId, len(info.pairs))
 		}
 		allChannelPairs = append(allChannelPairs, info)
 	}
-	log.Println("dedup jobs", len(allChannelPairs))
+	log.Println(len(allChannelPairs), "dedup jobs")
 
 	// Start the workers.
-	jobs := make(chan ChannelPairs, len(allChannelPairs))
-	errs := make(chan error, len(allChannelPairs))
+	jobs := make(chan channelPairs)
+	errs := make(chan dedupReturn, len(allChannelPairs)) // every job might need to report error
 	for i := 0; i < *numDedups; i++ {
+		wg.Add(1)
 		go dedup(*dedupProg, *archiveRoot, *dedupRoot, jobs, errs)
 	}
 
@@ -187,10 +195,21 @@ func main() {
 	}
 	close(jobs)
 
-	// Check for first error.
-	for i := 0; i < len(allChannelPairs); i++ {
-		if err := <-errs; err != nil {
-			log.Fatal(err)
+	go func() {
+		wg.Wait()
+		close(errs)
+	}()
+
+	errCount := 0
+	for err := range errs {
+		if err.err != nil {
+			log.Printf("error, sessionId %s\n", err.sessionId)
+			errCount += 1
 		}
+	}
+
+	if errCount > 0 {
+		log.Printf("%d jobs, non-zero exit status", errCount)
+		os.Exit(1)
 	}
 }
