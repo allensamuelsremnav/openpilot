@@ -185,33 +185,36 @@ func main() {
 
 	// Start the workers.
 	jobs := make(chan channelPairs)
-	errs := make(chan dedupReturn, len(allChannelPairs)) // every job might need to report error
+	errs := make(chan dedupReturn)
 	for i := 0; i < *numDedups; i++ {
 		wg.Add(1)
 		go dedup(*dedupProg, *archiveRoot, *dedupRoot, jobs, errs)
 	}
 
 	// Send the jobs.
-	for _, job := range allChannelPairs {
-		jobs <- job
-	}
-	close(jobs)
+	go func() {
+		for _, job := range allChannelPairs {
+			jobs <- job
+		}
+		close(jobs)
+	}()
 
 	go func() {
 		wg.Wait()
 		close(errs)
 	}()
 
+	// Read the errors.
 	errCount := 0
 	for err := range errs {
 		if err.err != nil {
-			log.Printf("error, sessionId %s\n", err.sessionId)
+			log.Printf("sessionId %s, error %v\n", err.sessionId, err.err)
 			errCount += 1
 		}
 	}
 
 	if errCount > 0 {
-		log.Printf("%d jobs, non-zero exit status", errCount)
+		log.Printf("%d / %d jobs with non-zero exit status", errCount, len(allChannelPairs))
 		os.Exit(1)
 	}
 }
