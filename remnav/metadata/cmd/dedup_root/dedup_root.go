@@ -18,6 +18,7 @@ import (
 	"remnav.com/remnav/metadata/storage"
 )
 
+// Matching packets and metadata file.
 type channelPair struct {
 	packetsFile  string
 	metadataFile string
@@ -29,6 +30,7 @@ type channelPairs struct {
 	pairs     []channelPair
 }
 
+// Return value for a dedup operation.
 type dedupReturn struct {
 	sessionId string
 	err       error
@@ -61,7 +63,7 @@ func sessionIds(db *sql.DB, table string) []string {
 }
 
 func sessionPairs(db *sql.DB, sessionId string) channelPairs {
-	// Query for packet and metadata pairs.
+	// Query for a session's packet and metadata pairs.
 	q := `
 SELECT packets.channel, packets.filename, metadata.filename
 FROM

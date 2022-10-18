@@ -1,6 +1,6 @@
 # `dedup_root
 
-Apply dedup executable to metadata and packet files for an experiment session.
+Apply dedup executable to metadata and packet files for experiment sessions at `archive_root`.
 
 ```
 dedup_root --dedup_prog ./dedup --archive_root /home/user/6TB/remconnect  --dedup_root /home/gopal.solanki/dedup --metadata_db /home/user/6TB/remconnect/metadata.db
