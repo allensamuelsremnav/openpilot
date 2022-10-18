@@ -8,8 +8,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	experiment "remnav.com/remnav/metadata/experiment"
 	"strings"
+
+	experiment "remnav.com/remnav/metadata/experiment"
 )
 
 type IdDesc struct {
@@ -107,29 +108,26 @@ func session(archiveRoot string, sessionFile os.DirEntry) *Session {
 		if file.IsDir() {
 			continue
 		}
-		if len(path.Ext(file.Name())) == 0 {
-			tokens := strings.Split(file.Name(), "_")
-			if len(tokens) != 3 {
-				log.Fatalf("expected timestamp, carrier id, and fmt id, got %v",
-					tokens)
-			}
+		ext := path.Ext(file.Name())
+		tokens := strings.Split(strings.TrimSuffix(file.Name(), ext), "_")
+		if len(tokens) != 3 {
+			log.Fatalf("expected timestamp, carrier id, and fmt id, got %v",
+				tokens)
+		}
+		if len(ext) == 0 || ext == ".dat" {
 			packetFiles = append(packetFiles,
 				VideoPacketFile{Filename: file.Name(),
 					Timestamp: tokens[0],
 					Cellular:  tokens[1],
 					Format:    tokens[2]})
-		} else {
-			ext := path.Ext(file.Name())
-			tokens := strings.Split(strings.TrimSuffix(file.Name(), ext), "_")
-			if len(tokens) != 3 {
-				log.Fatalf("expected timestamp, carrier id, and fmt id, got %v",
-					tokens)
-			}
+		} else if ext == ".csv" {
 			metadataFiles = append(metadataFiles,
 				VideoMetadataFile{Filename: file.Name(),
 					Timestamp: tokens[0],
 					Cellular:  tokens[1],
 					Format:    tokens[2]})
+		} else {
+			log.Println("skipping %s, unrecognized extension %s", file.Name(), ext)
 		}
 	}
 	return &Session{Id: sessionFile.Name(),
