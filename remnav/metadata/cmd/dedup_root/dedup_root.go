@@ -142,7 +142,7 @@ func main() {
 	tableOverride := flag.Bool("table_override", false, "use table \"dedup_override\" instead of video_session")
 	dedupProg := flag.String("dedup_prog", "", "dedup executable")
 	dedupRoot := flag.String("dedup_root", "", "root directory for deduped files")
-	numDedups := flag.Int("num_dedup", 4, "dedup parallelism")
+	numProc := flag.Int("proc", 4, "number of dedup subprocesses")
 	flag.Parse()
 	if len(*archiveRoot) == 0 {
 		log.Fatalln("--archive_root is required")
@@ -156,7 +156,7 @@ func main() {
 	log.Println("archive_root", *archiveRoot)
 	log.Println("dedup_root", *dedupRoot)
 	log.Println("metadata_db", *metadataDB)
-	log.Println("num_dedup", *numDedups)
+	log.Println("proc", *numProc)
 	dbTable := "video_session"
 	if *tableOverride {
 		dbTable = "dedup_override"
@@ -186,7 +186,7 @@ func main() {
 	// Start the workers.
 	jobs := make(chan channelPairs)
 	errs := make(chan dedupReturn)
-	for i := 0; i < *numDedups; i++ {
+	for i := 0; i < *numProc; i++ {
 		wg.Add(1)
 		go dedup(*dedupProg, *archiveRoot, *dedupRoot, jobs, errs)
 	}
