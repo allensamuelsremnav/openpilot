@@ -111,8 +111,9 @@ func session(archiveRoot string, sessionFile os.DirEntry) *Session {
 		ext := path.Ext(file.Name())
 		tokens := strings.Split(strings.TrimSuffix(file.Name(), ext), "_")
 		if len(tokens) != 3 {
-			log.Fatalf("expected timestamp, carrier id, and fmt id, got %v",
-				tokens)
+			log.Printf("expected timestamp, carrier id, and fmt id, got %v for %s",
+				tokens, file.Name())
+			continue
 		}
 		if len(ext) == 0 || ext == ".dat" {
 			packetFiles = append(packetFiles,
@@ -127,7 +128,7 @@ func session(archiveRoot string, sessionFile os.DirEntry) *Session {
 					Cellular:  tokens[1],
 					Format:    tokens[2]})
 		} else {
-			log.Println("skipping %s, unrecognized extension %s", file.Name(), ext)
+			log.Printf("skipping %s, unrecognized extension %s", file.Name(), ext)
 		}
 	}
 	return &Session{Id: sessionFile.Name(),
@@ -142,7 +143,7 @@ func Walker(archiveRoot string) []Session {
 	// Compute a slice of Session objects for the data at archiveRoot
 	files, err := os.ReadDir(archiveRoot)
 	if err != nil {
-		log.Fatal(walkerId, err)
+		log.Fatalln(walkerId, err)
 	}
 
 	var sessions []Session
