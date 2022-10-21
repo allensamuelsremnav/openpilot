@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"testing"
+	"time"
 )
 
 var js = []string{
@@ -17,8 +18,35 @@ var js = []string{
 	`{"class":"PPS","device":"/dev/pps0","real_sec":1666298551,"real_nsec":0,"clock_sec":1666298551,"clock_nsec":1881,"precision":-20}
 `}
 
+func checkFloat64(t *testing.T, field string, want, got float64) {
+	EPS := 0.000000001
+	if math.Abs(want-got) > EPS {
+		t.Fatalf("got %s = %.10f, want %0.10f", field, got, want)
+	}
+}
+func checkTime(t *testing.T, field string, want string, got time.Time) {
+	w, err := time.Parse(time.RFC3339, want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.Equal(got) {
+		t.Fatalf("got %s = %s, want %s", field, got, w)
+	}
+}
+func checkString(t *testing.T, field string, want, got string) {
+	if want != got {
+		t.Fatalf("got %s = %s, want %s", field, got, want)
+	}
+}
+func checkInt(t *testing.T, field string, want int, got int) {
+	if want != got {
+		t.Fatalf("got %s = %d, want %d", field, got, want)
+	}
+}
 func TestUnmarshal(t *testing.T) {
-	// Test unmarshalling of the expected messages.
+	// Test unmarshalling of the expected messages. Unmarshalling
+	// should be perfect except for human mistakes in
+	// specification.
 	for _, j := range js {
 		// Use TPV for probe since it has a class field
 		var probe class
@@ -32,27 +60,35 @@ func TestUnmarshal(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			lat, err := tpv.Lat.Float64()
-			if err != nil {
-				t.Fatal(err)
+			checkString(t, "Device", "/dev/ttyACM0", tpv.Device)
+			if want := Mode3D; want != tpv.Mode {
+				t.Fatalf("got %s = %d, want %d", "Mode", tpv.Mode, want)
 			}
-			lon, err := tpv.Lon.Float64()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if want := 37.270564937; math.Abs(lat-want) > 0.000000001 {
-				t.Fatalf("lat = %.10f, want %.10f", lat, want)
-			}
-			if want := -121.771497228; math.Abs(lon-want) > 0.000000001 {
-				t.Fatalf("lon = %.10f, want %.10f", lon, want)
-			}
-			// fmt.Printf("%s %v, %f %f\n", probe.Class, tpv.Time, lat, lon)
+			checkTime(t, "Time", "2022-10-20T20:32:53.000Z", tpv.Time)
+			checkFloat64(t, "Lat", 37.270564937, tpv.Lat)
+			checkFloat64(t, "Lon", -121.771497228, tpv.Lon)
+			checkFloat64(t, "Alt", 209.3529, tpv.Alt)
+			checkFloat64(t, "EPX", 2.678, tpv.EPX)
+			checkFloat64(t, "EPY", 2.761, tpv.EPY)
+			checkFloat64(t, "EPV", 10.079, tpv.EPV)
+			checkFloat64(t, "SEP", 9.620, tpv.SEP)
+			checkFloat64(t, "Track", 306.2339, tpv.Track)
+			checkFloat64(t, "Speed", 0.170, tpv.Speed)
+			checkFloat64(t, "EPS", 0.50, tpv.EPS)
 		} else if probe.Class == "SKY" {
 			var sky SKY
 			err := json.Unmarshal([]byte(j), &sky)
 			if err != nil {
 				t.Fatal(err)
 			}
+
+			checkString(t, "Device", "/dev/ttyACM0", sky.Device)
+			checkTime(t, "Time", "2022-10-20T20:42:30.000Z", sky.Time)
+			checkFloat64(t, "XDOP", 0.71, sky.XDOP)
+			checkFloat64(t, "YDOP", 0.71, sky.YDOP)
+			checkFloat64(t, "VDOP", 2.00, sky.VDOP)
+			checkFloat64(t, "HDOP", 1.01, sky.HDOP)
+			checkFloat64(t, "PDOP", 2.24, sky.PDOP)
 			used := 0
 			for _, prn := range sky.Satellites {
 				if prn.Used {
@@ -60,22 +96,22 @@ func TestUnmarshal(t *testing.T) {
 				}
 			}
 			// fmt.Printf("%s %v, %d / %d PRN used\n", probe.Class, sky.Time, used, len(sky.Satellites))
-			if want := 9; used != want {
-				t.Fatalf("used = %d, want %d", used, want)
-			}
-			if want := 18; len(sky.Satellites) != want {
-				t.Fatalf("len(Satellites) = %d, want %d", len(sky.Satellites), want)
-			}
+			checkInt(t, "used", 9, used)
+			checkInt(t, "len(Satellites)", 18, len(sky.Satellites))
 		} else if probe.Class == "PPS" {
 			var pps PPS
 			err := json.Unmarshal([]byte(j), &pps)
 			if err != nil {
 				t.Fatal(err)
 			}
-			// fmt.Println(probe.Class, pps.Device)
+			checkString(t, "Device", "/dev/pps0", pps.Device)
 			if want := "/dev/pps0"; pps.Device != want {
 				t.Fatalf("pps device = %s, want %s", pps.Device, want)
 			}
+			checkInt(t, "RealSec", 1666298551, pps.RealSec)
+			checkInt(t, "RealNsec", 0, pps.RealNsec)
+			checkInt(t, "ClockSec", 1666298551, pps.ClockSec)
+			checkInt(t, "ClockNsec", 1881, pps.ClockNsec)
 		} else if probe.Class == "DEVICES" {
 			var devices Devices
 			err := json.Unmarshal([]byte(j), &devices)
@@ -84,10 +120,7 @@ func TestUnmarshal(t *testing.T) {
 			}
 			want := []string{"/dev/ttyACM0", "/dev/pps0"}
 			for i, d := range devices.Devices {
-				// fmt.Printf("DEVICES, device: %s\n", d.Path)
-				if d.Path != want[i] {
-					t.Fatalf("path = %s, want %s", d.Path, want[i])
-				}
+				checkString(t, "path", want[i], d.Path)
 			}
 		} else if probe.Class == "WATCH" {
 			continue
@@ -98,6 +131,7 @@ func TestUnmarshal(t *testing.T) {
 }
 
 func TestLog(t *testing.T) {
+	// Test reading a sample log file.
 	f, err := os.Open("gpsd.rn3")
 	if err != nil {
 		t.Fatal(err)
@@ -117,10 +151,10 @@ func TestLog(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		i, _ := counts[tpv.Class]
+		i := counts[tpv.Class]
 		counts[tpv.Class] = i + 1
 	}
-	want := map[string]int{"DEVICES":1, "PPS":579, "SKY":577, "TPV":868, "WATCH":1}
+	want := map[string]int{"DEVICES": 1, "PPS": 579, "SKY": 577, "TPV": 868, "WATCH": 1}
 	if len(want) != len(counts) {
 		t.Fatalf("len(counts) = %d, want %d", len(counts), len(want))
 	}

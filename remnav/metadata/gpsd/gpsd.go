@@ -2,7 +2,6 @@
 package gpsd
 
 import (
-	"encoding/json"
 	"time"
 )
 
@@ -23,24 +22,23 @@ const (
 type TPV struct {
 	Class  string
 	Device string
-	Status json.Number
 	Mode   NMEAMode
 	Time   time.Time
-	Lat    json.Number
-	Lon    json.Number
-	Alt    json.Number
+	Lat    float64
+	Lon    float64
+	Alt    float64
 
-	EPX   json.Number
-	EPY   json.Number
-	EPV   json.Number
-	SEP   json.Number // 3d error
-	Track json.Number
-	Speed json.Number
-	EPS   json.Number // speed error
+	EPX   float64
+	EPY   float64
+	EPV   float64
+	SEP   float64 // 3d error
+	Track float64
+	Speed float64
+	EPS   float64 // speed error
 }
 
 type PRN struct {
-	PRN  json.Number
+	PRN  int64
 	Used bool
 }
 
@@ -48,28 +46,26 @@ type SKY struct {
 	Class      string
 	Device     string
 	Time       time.Time
-	XDOP       json.Number
-	YDOP       json.Number
-	VDOP       json.Number
-	HDOP       json.Number
-	PDOP       json.Number
+	XDOP       float64
+	YDOP       float64
+	VDOP       float64
+	HDOP       float64
+	PDOP       float64
 	Satellites []PRN
 }
 
 type PPS struct {
 	Class     string
 	Device    string
-	RealSec   json.Number `json:"real_sec"`
-	RealNsec  json.Number `json:"real_nsec"`
-	ClockSec  json.Number `json:"clock_sec"`
-	ClockNsec json.Number `json:"clock_nsec"`
-	Precision json.Number
-}
-
-type Devices struct {
-	Devices []Device
+	RealSec   int `json:"real_sec"`
+	RealNsec  int `json:"real_nsec"`
+	ClockSec  int `json:"clock_sec"`
+	ClockNsec int `json:"clock_nsec"`
 }
 
 type Device struct {
 	Path string
+}
+type Devices struct {
+	Devices []Device
 }
