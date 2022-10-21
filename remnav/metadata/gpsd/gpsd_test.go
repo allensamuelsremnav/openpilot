@@ -1,8 +1,11 @@
 package gpsd
 
 import (
+	"bufio"
 	"encoding/json"
+	"io"
 	"math"
+	"os"
 	"testing"
 )
 
@@ -90,6 +93,44 @@ func TestUnmarshal(t *testing.T) {
 			continue
 		} else {
 			t.Fatalf("%s unexpected", probe.Class)
+		}
+	}
+}
+
+func TestLog(t *testing.T) {
+	f, err := os.Open("gpsd.rn3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rdr := bufio.NewReader(f)
+	counts := make(map[string]int)
+	for {
+		line, err := rdr.ReadString('\n')
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		var tpv TPV
+		err = json.Unmarshal([]byte(line), &tpv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		i, _ := counts[tpv.Class]
+		counts[tpv.Class] = i + 1
+	}
+	want := map[string]int{"DEVICES":1, "PPS":579, "SKY":577, "TPV":868, "WATCH":1}
+	if len(want) != len(counts) {
+		t.Fatalf("len(counts) = %d, want %d", len(counts), len(want))
+	}
+	for k, w := range want {
+		got, ok := counts[k]
+		if !ok {
+			t.Fatalf("key %s not found", k)
+		}
+		if got != w {
+			t.Fatalf("got counts[%s] == %d, want %d", k, got, w)
 		}
 	}
 }
