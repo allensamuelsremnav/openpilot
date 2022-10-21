@@ -2,6 +2,9 @@
 package gpsd
 
 import (
+	"encoding/json"
+	"errors"
+	"math"
 	"time"
 )
 
@@ -33,8 +36,27 @@ type TPV struct {
 	EPV   float64
 	SEP   float64 // 3d error
 	Track float64
+	// Remember degrees --> radians if we add track error.
 	Speed float64
 	EPS   float64 // speed error
+}
+
+func (tpv *TPV) UnmarshalJSON(b []byte) error {
+	type RawTPV TPV
+	var raw RawTPV
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	*tpv = TPV(raw)
+	// Want track in radians, not degrees.
+	tpv.Track = raw.Track / (2 * math.Pi)
+	return nil
+}
+
+func (tpv *TPV) MarshalJSON() ([]byte, error) {
+	// Marshalling needs to undo Track degrees -> radians conversion.
+	// We don't need marshalling for now.
+	return nil, errors.New("TPV marshalling to JSON not implemented")
 }
 
 type PRN struct {
