@@ -49,7 +49,7 @@ func (tpv *TPV) UnmarshalJSON(b []byte) error {
 	}
 	*tpv = TPV(raw)
 	// Want track in radians, not degrees.
-	tpv.Track = raw.Track / (2 * math.Pi)
+	tpv.Track = raw.Track / 360.0 * 2 * math.Pi
 	return nil
 }
 

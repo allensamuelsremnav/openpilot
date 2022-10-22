@@ -73,7 +73,7 @@ func TestUnmarshal(t *testing.T) {
 			checkFloat64(t, "EPY", 2.761, tpv.EPY)
 			checkFloat64(t, "EPV", 10.079, tpv.EPV)
 			checkFloat64(t, "SEP", 9.620, tpv.SEP)
-			checkFloat64(t, "Track", 306.2339/(2*math.Pi), tpv.Track)
+			checkFloat64(t, "Track", 306.2339/360.0*2*math.Pi, tpv.Track)
 			checkFloat64(t, "Speed", 0.170, tpv.Speed)
 			checkFloat64(t, "EPS", 0.50, tpv.EPS)
 		} else if probe.Class == "SKY" {
