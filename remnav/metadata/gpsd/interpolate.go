@@ -14,15 +14,15 @@ type Position struct {
 }
 
 func Interpolate(tpvs []TPV, probe time.Time, start int) (*Position, int) {
-	// Interpolate pose at probe. Returns an interpolated position
-	// and the index of the containing interval. Returns nil if
+	// Returns an interpolated position at probe time and the
+	// index of the containing interval. Returns nil if
 	// interpolation is not possible and a negative integer.
 
 	// tpvs must be in time order.
 	// Begin the linear search at start; this is an optimization for
 	// the expected use case. 0 is always safe.
-	if start < 0 || len(tpvs) <= start {
-		log.Fatalf("starting index %d is out of range [0, %d)", start, len(tpvs))
+	if start < 0 {
+		return nil, -1
 	}
 	for i := start; i < len(tpvs)-1; i++ {
 		tpv := tpvs[i]
