@@ -2,7 +2,8 @@
     "description" : "experiment 000",
     "storage": {
 	"archive_server": "96.64.247.70",
-	"archive_root": "/home/user/6TB/remconnect",
+	"archive_root": "/home/user/6TB/remconnect/archive",
+	"dedup_root": : "/home/user/6TB/remconnect/dedup",
 	"vehicle_root": "/home/user/6TB/vehicle/remconnect"
     },
     "video": {

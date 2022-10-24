@@ -7,6 +7,7 @@ type StorageConfig struct {
 	// e.g. 96.64.247.70 and /home/user/6TB/remconnect
 	ArchiveServer string `json:"archive_server"`
 	ArchiveRoot   string `json:"archive_root"`
+	DedupRoot     string `json:"dedup_root"`
 	// Root directory for local storage
 	VehicleRoot string `json:"vehicle_root"`
 }
