@@ -4,7 +4,7 @@ package experiment
 
 type StorageConfig struct {
 	// Server and root directory for archive storage at operator station,
-	// e.g. 96.64.247.70 and /home/user/6TB/remconnect
+	// e.g. 96.64.247.70 and /home/user/6TB/remconnect/archive
 	ArchiveServer string `json:"archive_server"`
 	ArchiveRoot   string `json:"archive_root"`
 	DedupRoot     string `json:"dedup_root"`
