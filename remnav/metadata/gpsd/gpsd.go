@@ -2,15 +2,16 @@
 package gpsd
 
 import (
-	"encoding/json"
-	"errors"
-	"math"
 	"time"
 )
 
 type class struct {
 	Class string
 }
+
+// gpsd/gps.h says that the units are degrees, meters, and seconds in
+// the raw gpsd output.  Assume that the conversion to JSON preserves
+// this.
 
 type NMEAMode int
 
@@ -39,24 +40,6 @@ type TPV struct {
 	// Remember degrees --> radians if we add track error.
 	Speed float64
 	EPS   float64 // speed error
-}
-
-func (tpv *TPV) UnmarshalJSON(b []byte) error {
-	type RawTPV TPV
-	var raw RawTPV
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return err
-	}
-	*tpv = TPV(raw)
-	// Want track in radians, not degrees.
-	tpv.Track = raw.Track / 360.0 * 2 * math.Pi
-	return nil
-}
-
-func (tpv *TPV) MarshalJSON() ([]byte, error) {
-	// Marshalling needs to undo Track degrees -> radians conversion.
-	// We don't need marshalling for now.
-	return nil, errors.New("TPV marshalling to JSON not implemented")
 }
 
 type PRN struct {

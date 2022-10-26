@@ -6,7 +6,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
@@ -73,7 +72,7 @@ func TestUnmarshal(t *testing.T) {
 			checkFloat64(t, "EPY", 2.761, tpv.EPY)
 			checkFloat64(t, "EPV", 10.079, tpv.EPV)
 			checkFloat64(t, "SEP", 9.620, tpv.SEP)
-			checkFloat64(t, "Track", 306.2339/360.0*2*math.Pi, tpv.Track)
+			checkFloat64(t, "Track", 306.2339, tpv.Track)
 			checkFloat64(t, "Speed", 0.170, tpv.Speed)
 			checkFloat64(t, "EPS", 0.50, tpv.EPS)
 		} else if probe.Class == "SKY" {
@@ -167,12 +166,5 @@ func TestLog(t *testing.T) {
 		if got != w {
 			t.Fatalf("got counts[%s] == %d, want %d", k, got, w)
 		}
-	}
-}
-
-func TestMarshal(t *testing.T) {
-	err := json.NewEncoder(os.Stdout).Encode(&TPV{})
-	if err == nil || !strings.Contains(err.Error(), "TPV marshalling to JSON not implemented") {
-		t.Fatal(err)
 	}
 }
