@@ -7,7 +7,6 @@ type StorageConfig struct {
 	// e.g. 96.64.247.70 and /home/user/6TB/remconnect/archive
 	ArchiveServer string `json:"archive_server"`
 	ArchiveRoot   string `json:"archive_root"`
-	DedupRoot     string `json:"dedup_root"`
 	// Root directory for local storage
 	VehicleRoot string `json:"vehicle_root"`
 }
@@ -28,6 +27,9 @@ type GNSSConfig struct {
 
 	// Full path to executable
 	GNSSClient string `json:"gnss_client"`
+
+	// Network address, e.g. 10.1.10.225:2947
+	GPSDAddress string `json:"gpsd_address"`
 }
 
 // Top-level JSON

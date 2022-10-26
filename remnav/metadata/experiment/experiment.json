@@ -3,7 +3,6 @@
     "storage": {
 	"archive_server": "96.64.247.70",
 	"archive_root": "/home/user/6TB/remconnect/archive",
-	"dedup_root": : "/home/user/6TB/remconnect/dedup",
 	"vehicle_root": "/home/user/6TB/vehicle/remconnect"
     },
     "video": {
@@ -14,6 +13,7 @@
     },
     "gnss": {
 	"gnss_receiver": "NEO-6M",
-	"gnss_client": "/home/user/vehicle/bin/gnss_client"
+	"gnss_client": "/home/user/vehicle/bin/gnss_client",
+	"gpsd_address": "10.1.10.225:2947"
     }
 }

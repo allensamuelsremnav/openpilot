@@ -90,6 +90,11 @@ func main() {
 		log.Fatalln(err)
 	}
 
+	// Unmarshalling silently fails on invalid JSON.
+	if !json.Valid(configBytes) {
+		log.Fatalf("invalid JSON %s", configPath)
+	}
+
 	// Interpret as JSON.
 	var config experiment.Config
 	json.Unmarshal([]byte(configBytes), &config)
@@ -116,6 +121,12 @@ func main() {
 	}
 	if len(GNSSClient) > 0 {
 		log.Println("gnss_client", GNSSClient)
+	}
+	// launcher doesn't directly use this, but it's easy to get wrong.
+	if len(config.GNSS.GPSDAddress) == 0 {
+		log.Fatal("invalid or missing gpsd_address")
+	} else {
+		log.Println("gpsd_address", config.GNSS.GPSDAddress)
 	}
 
 	var sessionId string
