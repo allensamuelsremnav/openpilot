@@ -52,6 +52,7 @@ type Session struct {
 
 // Video files are stored in this subdirectory of the session directory
 var VideoSubdir = "video"
+var GNSSSubdir = "gnss"
 var walkerId = "archive_walker"
 
 func readConfigFile(configPath string) *experiment.Config {

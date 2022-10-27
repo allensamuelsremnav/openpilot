@@ -49,7 +49,7 @@ func TestUnmarshal(t *testing.T) {
 	// specification.
 	for _, j := range js {
 		// Use TPV for probe since it has a class field
-		var probe class
+		var probe Class
 		err := json.Unmarshal([]byte(j), &probe)
 		if err != nil {
 			t.Fatal(err)

@@ -2,11 +2,25 @@
 package gpsd
 
 import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net"
 	"time"
 )
 
-type class struct {
+type Class struct {
 	Class string
+}
+
+type Device struct {
+	Path   string
+	Driver string
+}
+
+type Devices struct {
+	Class   string
+	Devices []Device
 }
 
 // gpsd/gps.h says that the units are degrees, meters, and seconds in
@@ -68,9 +82,18 @@ type PPS struct {
 	ClockNsec int `json:"clock_nsec"`
 }
 
-type Device struct {
-	Path string
-}
-type Devices struct {
-	Devices []Device
+func PokeWatch(conn net.Conn) {
+	// Poke gpsd with a watch request
+	param, _ := json.Marshal(
+		map[string]interface{}{
+			"class":  "WATCH",
+			"enable": true,
+			"json":   true,
+		})
+	_, err := fmt.Fprintf(conn, "?WATCH=%s", param)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("?WATCH=%s", param)
+
 }

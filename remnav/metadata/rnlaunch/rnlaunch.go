@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -70,34 +69,15 @@ func main() {
 	GNSSClientFlag := flag.String("gnss_client", "", "override gnss_client in configuration")
 	flag.Parse()
 	if len(flag.Args()) != 1 {
-		log.Fatalln("expected experiment configuration, got", flag.Args())
+		log.Fatalln("expected experiment configuration argument, got args", flag.Args())
 	}
 
-	// Read config file.
 	configPath, err := filepath.Abs(flag.Args()[0])
 	if err != nil {
 		log.Fatalln(err)
 	}
 	log.Println("config file", configPath)
-
-	configFile, err := os.Open(configPath)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer configFile.Close()
-	configBytes, err := io.ReadAll(configFile)
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	// Unmarshalling silently fails on invalid JSON.
-	if !json.Valid(configBytes) {
-		log.Fatalf("invalid JSON %s", configPath)
-	}
-
-	// Interpret as JSON.
-	var config experiment.Config
-	json.Unmarshal([]byte(configBytes), &config)
+	config, configBytes := experiment.Read(configPath)
 
 	if len(config.Description) > 0 {
 		log.Printf("configuration description \"%s\"",

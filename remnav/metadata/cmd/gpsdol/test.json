@@ -1,0 +1,9 @@
+{
+    "description" : "test gpsdol on rn3",
+    "storage": {
+	"vehicle_root": "/home/user/6TB/vehicle/remconnect"
+    },
+    "gnss": {
+	"gpsd_address": "10.1.10.225:2947"
+    }
+}

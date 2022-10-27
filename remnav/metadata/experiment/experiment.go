@@ -1,5 +1,12 @@
 package experiment
 
+import (
+	"encoding/json"
+	"io"
+	"log"
+	"os"
+)
+
 // Structs for experiment-configuration JSON.
 
 type StorageConfig struct {
@@ -38,4 +45,29 @@ type Config struct {
 	Storage     StorageConfig
 	Video       VideoConfig
 	GNSS        GNSSConfig
+}
+
+func Read(path string) (Config, []byte) {
+	// Read config file.
+
+	configFile, err := os.Open(path)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer configFile.Close()
+	configBytes, err := io.ReadAll(configFile)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	// Unmarshalling silently fails on invalid JSON.
+	if !json.Valid(configBytes) {
+		log.Fatalf("invalid JSON %s", path)
+	}
+
+	// Interpret as JSON.
+	var config Config
+	json.Unmarshal([]byte(configBytes), &config)
+
+	return config, configBytes
 }

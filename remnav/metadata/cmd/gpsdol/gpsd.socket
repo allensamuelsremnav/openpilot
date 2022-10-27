@@ -1,0 +1,5 @@
+[Socket]
+# First blank ListStream clears the system defaults
+ListenStream=
+ListenStream=/var/run/gpsd.sock
+ListenStream=0.0.0.0:2947
