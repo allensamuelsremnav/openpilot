@@ -2,10 +2,6 @@
 package gpsd
 
 import (
-	"encoding/json"
-	"fmt"
-	"log"
-	"net"
 	"time"
 )
 
@@ -80,20 +76,4 @@ type PPS struct {
 	RealNsec  int `json:"real_nsec"`
 	ClockSec  int `json:"clock_sec"`
 	ClockNsec int `json:"clock_nsec"`
-}
-
-func PokeWatch(conn net.Conn) {
-	// Poke gpsd with a watch request
-	param, _ := json.Marshal(
-		map[string]interface{}{
-			"class":  "WATCH",
-			"enable": true,
-			"json":   true,
-		})
-	_, err := fmt.Fprintf(conn, "?WATCH=%s", param)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("?WATCH=%s", param)
-
 }

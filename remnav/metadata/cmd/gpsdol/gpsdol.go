@@ -3,10 +3,8 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
@@ -115,44 +113,5 @@ func main() {
 
 	gpsd.PokeWatch(conn)
 
-	// Gather all of the input
-	deviceCheck := true
-	lineCount := 0
-	for {
-		line, err := reader.ReadString('\n')
-		if err == nil {
-			if deviceCheck {
-				// Misconfiguration could point to a gpsd server with no devices.
-				var probe gpsd.Class
-				err := json.Unmarshal([]byte(line), &probe)
-				if err != nil {
-					log.Fatal(err)
-				}
-				if probe.Class == "DEVICES" {
-					var devices gpsd.Devices
-					err := json.Unmarshal([]byte(line), &devices)
-					if err != nil {
-						log.Fatal(err)
-					}
-					if len(devices.Devices) == 0 {
-						log.Fatalf("no devices found for gpsd at %s.  is a GPS attached?",
-							config.GNSS.GPSDAddress)
-					}
-					deviceCheck = false
-				}
-			}
-			_, err = fmt.Fprint(GNSSFile, line)
-			if err != nil {
-				log.Fatal(err)
-			}
-			lineCount++
-			if lineCount%500 == 0 {
-				log.Printf("%s: %d messages", os.Args[0], lineCount)
-			}
-		} else if err == io.EOF {
-			break
-		} else {
-			log.Fatal(err)
-		}
-	}
+	gpsd.Watch(config.GNSS.GPSDAddress, reader, GNSSFile)
 }
