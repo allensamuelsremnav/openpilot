@@ -8,7 +8,10 @@ import json
 import folium
 from folium import plugins
 
+
 def read(logfilename):
+    """Read raw gpsd log file (JSON for each packet)."""
+    # Return pandas.DataFrame
     lat = []
     lon = []
     speed = []
@@ -40,7 +43,9 @@ def read(logfilename):
                        "speed": speed, "mode": mode})
     return df
 
+
 def html_map(df):
+    """Make folium map of lat/lon in df."""
     m = folium.Map(location=[df.lat.iloc[1], df.lon.iloc[1]], zoom_start=17)
     #dt = [date ]
     for index, row in df.iterrows():
@@ -56,6 +61,8 @@ def html_map(df):
 
 
 def main():
+    """Parse arguments, make HTML map."""
+    # python mapit.py ./gpsd.rn5.log
     parser = argparse.ArgumentParser()
     parser.add_argument("log",
                         help="logged JSON output of GPSD")
