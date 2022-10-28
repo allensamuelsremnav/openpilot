@@ -2,11 +2,9 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -96,20 +94,8 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	// Make connection and reader.
-	log.Printf("%s: connecting to %s", os.Args[0], config.GNSS.GPSDAddress)
-	conn, err := net.Dial("tcp4", config.GNSS.GPSDAddress)
-	if err != nil {
-		log.Fatal(err)
-	}
+	conn, reader := gpsd.Conn(config.GNSS.GPSDAddress)
 	defer conn.Close()
-	reader := bufio.NewReader(conn)
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		log.Fatal(err)
-	}
-	// This should be the gpsd version information.
-	log.Println(line)
 
 	gpsd.PokeWatch(conn)
 

@@ -1,11 +1,9 @@
-// Check chedk of gpsd watch.
+// Simple check for gpsd watch.
 package main
 
 import (
-	"bufio"
 	"flag"
 	"log"
-	"net"
 	"os"
 
 	gpsd "remnav.com/remnav/metadata/gpsd"
@@ -26,20 +24,8 @@ func main() {
 		}
 	}
 
-	// Make connection and reader.
-	log.Printf("%s: connecting to %s", os.Args[0], *GPSDAddrFlag)
-	conn, err := net.Dial("tcp4", *GPSDAddrFlag)
-	if err != nil {
-		log.Fatal(err)
-	}
+	conn, reader := gpsd.Conn(*GPSDAddrFlag)
 	defer conn.Close()
-	reader := bufio.NewReader(conn)
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		log.Fatal(err)
-	}
-	// This should be the gpsd version information.
-	log.Println(line)
 
 	gpsd.PokeWatch(conn)
 

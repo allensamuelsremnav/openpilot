@@ -10,6 +10,24 @@ import (
 	"os"
 )
 
+func Conn(GPSDAddr string) (net.Conn, *bufio.Reader) {
+	// Make connection and reader.
+	log.Printf("%s: connecting to %s", os.Args[0], GPSDAddr)
+	conn, err := net.Dial("tcp4", GPSDAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	reader := bufio.NewReader(conn)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		log.Fatal(err)
+	}
+	// This should be the gpsd version information.
+	log.Println(line)
+	return conn, reader
+}
+
 func PokeWatch(conn net.Conn) {
 	// Poke gpsd with a watch request
 	param, _ := json.Marshal(
