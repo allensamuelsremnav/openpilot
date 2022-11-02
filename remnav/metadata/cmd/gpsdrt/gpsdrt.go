@@ -82,16 +82,17 @@ func main() {
 	if len(*gpsdAddress) == 0 {
 		log.Fatalf("%s: --gpsd_addr required", os.Args[0])
 	}
-	if len(*serviceAddress) == 0 {
-		log.Fatalf("%s: --service_addr required", os.Args[0])
-	}
 
 	// Make connection for service
-	serviceConn, err := net.Dial("tcp4", *serviceAddress)
-	if err != nil {
-		log.Fatal(err)
+	var writer io.Writer = os.Stdout
+	if len(*serviceAddress) > 0 {
+		serviceConn, err := net.Dial("tcp4", *serviceAddress)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer serviceConn.Close()
+		writer = serviceConn
 	}
-	defer serviceConn.Close()
 
 	// Make connection and reader for gpsd
 	gpsdConn, err := net.Dial("tcp4", *gpsdAddress)
@@ -117,7 +118,7 @@ func main() {
 			continue
 		}
 		log.Print(latest.get())
-		fmt.Fprint(serviceConn, latest.get())
+		fmt.Fprint(writer, latest.get())
 		time.Sleep(time.Second)
 	}
 }
