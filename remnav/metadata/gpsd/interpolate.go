@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Track is tempting, but can't be done locally because heading wraps at North.
+// Track is tempting, but is trickier because heading wraps at North.
 type Position struct {
 	Time  time.Time
 	Lat   float64
