@@ -1,4 +1,4 @@
-// Simple check for gpsd watch.
+// Simple check for gpsd.Watch.
 package main
 
 import (
