@@ -1,5 +1,6 @@
 import os
 import argparse
+import math
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
@@ -44,25 +45,38 @@ def read(logfilename):
     return df
 
 
+def map_config(df):
+    center_lat = (df["lat"].max() + df["lat"].min()) / 2
+    center_lon = (df["lon"].max() + df["lon"].min()) / 2
+    lon_scale = math.cos(math.pi * center_lat / 180)
+    lat_range = df["lat"].max() - df["lat"].min()
+    lon_range = (df["lon"].max() - df["lon"].min()) * lon_scale
+    map_range = max(lat_range, lon_range)
+    raw = int(round(9. - math.log2(map_range)))
+    zoom = max(1, min(18, raw))
+    return (center_lat, center_lon), zoom
+            
+
 def html_map(df):
     """Make folium map of lat/lon in df."""
-    m = folium.Map(location=[df.lat.iloc[1], df.lon.iloc[1]], zoom_start=17)
+    center_latlon, zoom = map_config(df)
+    m = folium.Map(location=center_latlon, zoom_start=zoom)
     #dt = [date ]
     for index, row in df.iterrows():
         tooltip = f'{row["utc"]} {row["speed"]:.1f} m/s, eph {row["eph"]:.1f} m'
         folium.Circle(
-            radius=1,
+            radius=4,
             location=[row["lat"], row["lon"]],
             popup=tooltip,
             color="blue",
-            fill=False,
+            fill=True,
         ).add_to(m)
     return m
 
 
 def main():
     """Parse arguments, make HTML map."""
-    # python mapit.py ./gpsd.rn5.log
+    # python mapgpsd.py ./gpsd.rn5.log
     parser = argparse.ArgumentParser()
     parser.add_argument("log",
                         help="logged JSON output of GPSD")
