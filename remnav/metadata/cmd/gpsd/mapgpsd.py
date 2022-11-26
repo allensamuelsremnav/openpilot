@@ -1,5 +1,6 @@
 import os
 import argparse
+import math
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
@@ -30,7 +31,7 @@ def read(logfilename):
                     lon.append(line_dict['lon'])
                     utc.append(line_dict['time'])
                     speed.append(line_dict['speed'])
-                    eph.append(line_dict.get('eph', np.NAN))
+                    eph.append(line_dict.get('eph', np.NaN))
                     mode.append(line_dict['mode'])
             elif line_dict["class"] == "SKY":
                 if "hdop" in line_dict:
@@ -40,29 +41,44 @@ def read(logfilename):
         hdop.append(sky_map[t] if t in sky_map else np.NaN)
     df = pd.DataFrame({"utc": pd.to_datetime(utc), 
                        "lat": lat, "lon": lon, "eph": eph, "hdop": hdop,
-                       "speed": speed, "mode": mode})
+                       "speed": speed, "mode": mode,
+                       "log": os.path.basename(logfilename)})
     return df
 
 
+def map_config(df):
+    center_lat = (df["lat"].max() + df["lat"].min()) / 2
+    center_lon = (df["lon"].max() + df["lon"].min()) / 2
+    lon_scale = math.cos(math.pi * center_lat / 180)
+    lat_range = df["lat"].max() - df["lat"].min()
+    lon_range = (df["lon"].max() - df["lon"].min()) * lon_scale
+    print(f'center lat,lon {center_lat:.7f},{center_lon:.7f}, lat range {lat_range:.7f}, lon range {lon_range:.7f}')
+    map_range = max(lat_range, lon_range)
+    raw = int(round(9. - math.log2(map_range)))
+    zoom = max(1, min(18, raw))
+    return (center_lat, center_lon), zoom
+            
+
 def html_map(df):
     """Make folium map of lat/lon in df."""
-    m = folium.Map(location=[df.lat.iloc[1], df.lon.iloc[1]], zoom_start=17, max_zoom=19)
+    center_latlon, zoom = map_config(df)
+    m = folium.Map(location=center_latlon, zoom_start=zoom, max_zoom=19)
     #dt = [date ]
     for index, row in df.iterrows():
-        tooltip = f'{row["utc"]} {row["speed"]:.1f} m/s, eph {row["eph"]:.1f} m'
+        tooltip = f'{row["utc"]} {row["speed"]:.1f} m/s, eph {row["eph"]:.1f} m, log {row["log"]}"'
         folium.Circle(
-            radius=1,
+            radius=4,
             location=[row["lat"], row["lon"]],
             popup=tooltip,
             color="blue",
-            fill=False,
+            fill=True,
         ).add_to(m)
     return m
 
 
 def main():
     """Parse arguments, make HTML map."""
-    # python mapit.py ./gpsd.rn5.log
+    # python mapgpsd.py ./gpsd.rn5.log
     parser = argparse.ArgumentParser()
     parser.add_argument("log", nargs='+',
                         help="logged JSON output of GPSD")
