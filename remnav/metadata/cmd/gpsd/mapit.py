@@ -30,7 +30,7 @@ def read(logfilename):
                     lon.append(line_dict['lon'])
                     utc.append(line_dict['time'])
                     speed.append(line_dict['speed'])
-                    eph.append(line_dict['eph'])
+                    eph.append(line_dict.get('eph', np.NAN))
                     mode.append(line_dict['mode'])
             elif line_dict["class"] == "SKY":
                 if "hdop" in line_dict:
@@ -46,7 +46,7 @@ def read(logfilename):
 
 def html_map(df):
     """Make folium map of lat/lon in df."""
-    m = folium.Map(location=[df.lat.iloc[1], df.lon.iloc[1]], zoom_start=17)
+    m = folium.Map(location=[df.lat.iloc[1], df.lon.iloc[1]], zoom_start=17, max_zoom=19)
     #dt = [date ]
     for index, row in df.iterrows():
         tooltip = f'{row["utc"]} {row["speed"]:.1f} m/s, eph {row["eph"]:.1f} m'
@@ -64,21 +64,31 @@ def main():
     """Parse arguments, make HTML map."""
     # python mapit.py ./gpsd.rn5.log
     parser = argparse.ArgumentParser()
-    parser.add_argument("log",
+    parser.add_argument("log", nargs='+',
                         help="logged JSON output of GPSD")
     parser.add_argument("--html",
                         default="",
                         help="HTML output file")
+    parser.add_argument("--csv",
+                        default="",
+                        help="csv output file")
     args = parser.parse_args()
+
     html_filename = args.html
     if not html_filename:
-        root, _ = os.path.splitext(args.log)
+        root, _ = os.path.splitext(args.log[0])
         html_filename = root + ".html"
 
-    df = read(args.log)
+    csv_filename = args.csv
+    if not csv_filename:
+        root, _ = os.path.splitext(args.log[0])
+        csv_filename = root + ".csv"
+
+    df = pd.concat([read(log) for log in args.log])
     m = html_map(df)
     m.save(html_filename)
     
+    df.to_csv(csv_filename, index=False)
 
 if __name__ == "__main__":
     main()
