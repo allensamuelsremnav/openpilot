@@ -52,10 +52,14 @@ def map_config(df):
     lon_scale = math.cos(math.pi * center_lat / 180)
     lat_range = df["lat"].max() - df["lat"].min()
     lon_range = (df["lon"].max() - df["lon"].min()) * lon_scale
-    print(f'center lat,lon {center_lat:.7f},{center_lon:.7f}, lat range {lat_range:.7f}, lon range {lon_range:.7f}')
     map_range = max(lat_range, lon_range)
     raw = int(round(9. - math.log2(map_range)))
     zoom = max(1, min(18, raw))
+
+    # Print some numbers useful for setting up target aras.
+    half_range = 111.32 * map_range / 2
+    print(f'center lat,lon {center_lat:.7f},{center_lon:.7f}, half range {half_range:.2f} km')
+
     return (center_lat, center_lon), zoom
             
 
