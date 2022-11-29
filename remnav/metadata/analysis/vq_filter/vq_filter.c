@@ -3,7 +3,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
-#define     DEBUG0 1
 #define     MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
 #define     MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
 #define     MATCH   0
@@ -22,8 +21,8 @@
 #define     BIT_RATE_BIN_SIZE   0.5
 #define     MAX_PACKETS_IN_A_FRAME  30
 #define     MIN_PACKETS_IN_A_FRAME  1
-#define     MAX_TRANSIT_LATENCY_OF_A_FRAME  200
-#define     MIN_TRANSIT_LATENCY_OF_A_FRAME  10
+#define     MAX_TRANSIT_LATENCY_OF_A_FRAME  500
+#define     MIN_TRANSIT_LATENCY_OF_A_FRAME  100
 #define     MAX_BYTES_IN_A_FRAME    25000
 #define     MIN_BYTES_IN_A_FRAME    2000
 #define     MAX_LATE_PACKETS_IN_A_FRAME     20
@@ -47,6 +46,7 @@ struct meta_data {
     double      vx_epoch_ms;                // time since epoch in ms
     double      tx_epoch_ms;                // time since epoch in ms
     double      rx_epoch_ms;                // time sicne epoch in ms
+    int         modem_occ;                  // 31 if no information avaialble from the mdoem
     unsigned    video_packet_len;           // packet length in bytes
     unsigned    frame_start;                // 1-bit flag; set if this packet is the start of a new frame
     unsigned    rolling_frame_number;       // 4-bit rolling frame number
@@ -105,8 +105,9 @@ struct session_stats {
     struct stats    cts, *ctsp;             // camera time-stamp
     // packet level stats
     struct stats    c2v, *c2vp;             // camera to video latency
+    struct stats    v2t, *v2tp;             // best encoder to transmit for a packet
     struct stats    c2r, *c2rp;             // camera to receiver latency
-    struct stats    best_t2r, *best_t2rp;   // best tx to rx delay for any packet
+    struct stats    best_t2r, *best_t2rp;   // best tx to rx delay for a packet
 };
 
 struct s_carrier {
@@ -117,7 +118,8 @@ struct s_carrier {
         double vx_epoch_ms; 
         double tx_epoch_ms; 
         double rx_epoch_ms;
-        float last_rx_m_tx;                   // tx-rx of the last transmitted packet
+        float last_rx_m_tx;                 // tx-rx of the last transmitted packet
+        int modem_occ;                      // modem buffer occupancy. 31 if not available from the modem
 };
 
 // reads a new meta data line. returns 0 if reached end of the file
@@ -201,13 +203,13 @@ int read_annotation_file (void);
 int check_annotation (unsigned frame_num); 
 
 // extracts tx_epoch_ms from the vx_epoch_ms embedded format
-void fix_vx_tx_epoch_ms (double *vx_epoch_ms, double *tx_epoch_ms);
+void decode_sendtime (double *vx_epoch_ms, double *tx_epoch_ms, int *modem_occ);
 
 // outputs per carrier stats
 void emit_carrier_stat (struct s_carrier *cp, FILE *c_fp, char *cname, struct meta_data *mdp, struct frame *fp);
 
 // globals
-char    *usage = "Usage: vqfilter -l <ddd> -b <dd.d> -md <input prefex> [-v] [-ns] [-mdc <input prefix> [-a <file name>] [-help] -out <output PREFIX> ";
+char    *usage = "Usage: vqfilter -l <ddd> -b <dd.d> -md <input prefex> [-v] [-ns1 | ns2] [-mdc <input prefix> [-a <file name>] [-help] -out <output PREFIX> ";
 FILE    *md_fp = NULL;                          // meta data file name
 FILE    *an_fp = NULL;                          // annotation file name
 FILE    *fs_fp = NULL;                          // frame statistics output file
@@ -225,7 +227,7 @@ unsigned anlist[MAX_NUM_OF_ANNOTATIONS][2];     // mmanual annotations
 int     len_anlist=0;                           // length of the annotation list
 int     have_carrier_metadata = 0;              // set to 1 if per carrier meta data is available
 int     new_sendertime_format =0;               // set to 1 if using embedded sender time format
-int     verbose;                                // if set to 1, the late frame report has every frame not just late
+int     verbose;                                // 1 or 2 for the new sender time formats
 
 int main (int argc, char* argv[]) {
     unsigned    waiting_for_first_frame;        // set to 1 till first clean frame start encountered
@@ -277,8 +279,13 @@ int main (int argc, char* argv[]) {
             }
 
         // new sender time format
-        } else if (strcmp (*argv, "-ns") == MATCH) {
+        } else if (strcmp (*argv, "-ns1") == MATCH) {
             new_sendertime_format = 1; 
+
+        // new sender time format
+        } else if (strcmp (*argv, "-ns2") == MATCH) {
+            new_sendertime_format = 2; 
+
 
         // verbose
         } else if (strcmp (*argv, "-v") == MATCH) {
@@ -497,6 +504,7 @@ void update_session_packet_stats (
     struct frame *fp,                       // current frame pointer
     struct meta_data *mdp) {               // current packet's meta data; current may be NULL at EOF
     update_metric_stats (ssp->c2vp, 0, mdp->vx_epoch_ms - fp->camera_epoch_ms, MAX_C2V_LATENCY, MIN_C2V_LATENCY);
+    update_metric_stats (ssp->v2tp, 0, mdp->tx_epoch_ms - mdp->vx_epoch_ms, 50, 0);
     update_metric_stats (ssp->c2rp, 0, mdp->rx_epoch_ms - fp->camera_epoch_ms, MAX_C2R_LATENCY, MIN_C2R_LATENCY);
 } // end of update_session_packet_stats
 
@@ -581,7 +589,7 @@ void emit_frame_stats (struct frame *p, int last) {     // last is set 1 for the
     if (ssp->frame_count==1) { // first frame
         // frame stat output file header
         fprintf (fs_fp, "F#, tx-TS, Late, Missing, Bit-rate, has_an, ");
-        fprintf (fs_fp, "1st Pkt #, Size(B), Size(P), LPC, LPN, retx, C->tx lat, C->rx lat, rx->tx lat, ooo, ");
+        fprintf (fs_fp, "1st Pkt #, Size(B), Size(P), LPC, LPN, retx, C->tx, tx->rx, C->rx, ooo, ");
         fprintf (fs_fp, "Camera TS, 1st Tx TS, last Rx TS, earliest Rx, latest Rx TS, Frame rate, Res\n"); 
     } // print header
 
@@ -604,8 +612,8 @@ void emit_frame_stats (struct frame *p, int last) {     // last is set 1 for the
         p->latest_packet_num,
         p->latest_retx,
         p->tx_epoch_ms_1st_packet - p->camera_epoch_ms, 
-        p->rx_epoch_ms_latest_packet - p->camera_epoch_ms,  
         p->rx_epoch_ms_latest_packet - p->tx_epoch_ms_1st_packet, 
+        p->rx_epoch_ms_latest_packet - p->camera_epoch_ms,  
         p->out_of_order);
 
     // Camera TS, 1st Tx TS, last Rx TS, earliest Rx, latest Rx TS, Frame rate, Res
@@ -624,7 +632,7 @@ void emit_frame_stats (struct frame *p, int last) {     // last is set 1 for the
         // late frame output file header
         fprintf (lf_fp, "F#, Late, Miss, P1, LPN, Sz (P), c->rx, "); 
         fprintf (lf_fp, "Pkt #, isLPN, retx, ch, c-TS, tx-TS, rx-TS, P c->rx, ");
-        fprintf (lf_fp, "C0 c->vx, C0 c->rx, C0 tx->rx, C0 tx_TS, C1 c->vx, C1 c->rx, C1 tx->rx, C1 tx_TS, C2 c->vx, C2 c->rx, C2 tx->rx, C2 tx_TS, ");
+        fprintf (lf_fp, "C0 c2v, v2t, t2r, c2r, occ, tx_TS, C1 c2v, v2t, t2r, c2r, occ, tx_TS, C2 c2v, v2t, t2r, c2r, occ, tx_TS, ");
         fprintf (lf_fp, "dtx, ftx->rx, Eff\n");
 
         if (have_carrier_metadata) { 
@@ -755,12 +763,12 @@ void emit_frame_stats (struct frame *p, int last) {     // last is set 1 for the
                 // fast channel availabiliyt and efficiency
                 float fastest_tx_to_rx = MIN(c0p->last_rx_m_tx, MIN(c1p->last_rx_m_tx, c2p->last_rx_m_tx));
                 float c2v_latency = MAX(c0p->tx*(c0p->vx_epoch_ms - p->camera_epoch_ms), 
-                    MAX(c1p->tx*(c1p->vx_epoch_ms - p->camera_epoch_ms), 
-                    c2p->tx*(c2p->vx_epoch_ms - p->camera_epoch_ms))); 
+                    MAX(c1p->tx*(c1p->vx_epoch_ms - p->camera_epoch_ms), c2p->tx*(c2p->vx_epoch_ms - p->camera_epoch_ms))); 
                 fprintf (lf_fp, "%0.1f, ", fastest_tx_to_rx);
                 fprintf (lf_fp, "%0.1f, ", (mdp->rx_epoch_ms-p->camera_epoch_ms) - fastest_tx_to_rx - c2v_latency); 
 
                 // update session packet stats (wrong place for this code. 
+                // update_metric_stats (ssp->c2vp, 0, c2v_latency, MAX_C2V_LATENCY, MIN_C2V_LATENCY);
                 update_metric_stats (ssp->best_t2rp, 0, fastest_tx_to_rx, MAX_T2R_LATENCY, MIN_T2R_LATENCY);
             
             } // if per carrier meta data is available then print latency of the supplying carrier
@@ -794,17 +802,19 @@ void emit_carrier_stat (struct s_carrier *cp, FILE *c_fp, char *cname, struct me
     // if this carrier transmitted this meta data line, then print the carrier stats
 	if (cp->packet_num == mdp->packet_number) {
         cp->tx = 1; 
-        fix_vx_tx_epoch_ms (&cp->vx_epoch_ms, &cp->tx_epoch_ms);
-	    fprintf (lf_fp, "%0.1f, %0.1f, %0.1f, %0.1f, ", 
+        decode_sendtime (&cp->vx_epoch_ms, &cp->tx_epoch_ms, &cp->modem_occ);
+	    fprintf (lf_fp, "%0.1f, %0.1f, %0.1f, %0.1f, %d, %0.1f, ", 
             cp->vx_epoch_ms - fp->camera_epoch_ms,
-            cp->rx_epoch_ms - fp->camera_epoch_ms,
+            cp->tx_epoch_ms - cp->vx_epoch_ms,
             cp->rx_epoch_ms - cp->tx_epoch_ms,
+            cp->rx_epoch_ms - fp->camera_epoch_ms,
+            cp->modem_occ,
             cp->tx_epoch_ms);
         cp->last_rx_m_tx = cp->rx_epoch_ms - cp->tx_epoch_ms; 
     } //if this carrier transmitted this meta data line, then print the carrier stats 
-	else {// stay silent except indicate the channel quality
+	else {// stay silent except indicate the channel quality through t2r
         cp->tx = 0; 
-	    fprintf (lf_fp, ", , %0.1f, , ", cp->last_rx_m_tx);
+	    fprintf (lf_fp, ", , %0.1f, , , , ", cp->last_rx_m_tx);
     }
 
 } // emit_carrier_stat
@@ -872,9 +882,10 @@ void emit_session_stats (void) {
     compute_metric_stats (ssp->latep, ssp->frame_count); 
     compute_metric_stats (ssp->brp, ssp->frame_count); 
     compute_metric_stats (ssp->ctsp, ssp->frame_count); 
-    compute_metric_stats (ssp->c2rp, ssp->pcp->count); 
     compute_metric_stats (ssp->c2vp, ssp->pcp->count); 
+    compute_metric_stats (ssp->v2tp, ssp->pcp->count); 
     compute_metric_stats (ssp->best_t2rp, ssp->pcp->count); 
+    compute_metric_stats (ssp->c2rp, ssp->pcp->count); 
 
     fprintf (ss_fp, "Total number of frames in the session, %u\n", ssp->frame_count); 
     emit_metric_stats ("Frames with late packets", "Late Packets distribution", ssp->latep, 1, MAX_LATE_PACKETS_IN_A_FRAME, MIN_LATE_PACKETS_IN_A_FRAME);
@@ -884,9 +895,10 @@ void emit_session_stats (void) {
     sprintf (buffer, "Frames with bit rate below %.1fMbps", minimum_acceptable_bitrate);
     emit_metric_stats (buffer, "Bit-rate", ssp->brp, 1, MAX_BIT_RATE_OF_A_FRAME, MIN_BIT_RATE_OF_A_FRAME); 
     emit_metric_stats ("Camera time stamp", "Camera time stamp", ssp->ctsp, 1, 60, 30); 
-    emit_metric_stats ("C->Rx latency", "C->Rx latency", ssp->c2rp, 0, MAX_C2R_LATENCY, MIN_C2R_LATENCY); 
     emit_metric_stats ("C->V latency", "C->V latency", ssp->c2vp, 0, MAX_C2V_LATENCY, MIN_C2V_LATENCY); 
+    emit_metric_stats ("V->T latency", "V->T latency", ssp->v2tp, 0, 50, 0); 
     emit_metric_stats ("Best TX->RX latency", "Best TX->RX latency", ssp->best_t2rp, 0, MAX_T2R_LATENCY, MIN_T2R_LATENCY); 
+    emit_metric_stats ("C->Rx latency", "C->Rx latency", ssp->c2rp, 0, MAX_C2R_LATENCY, MIN_C2R_LATENCY); 
     emit_metric_stats ("Packets in frame", "Packets in frame", ssp->pcp, 1, MAX_PACKETS_IN_A_FRAME, MIN_PACKETS_IN_A_FRAME); 
     emit_metric_stats ("Bytes in frame", "Bytes in frame", ssp->bcp, 1, MAX_BYTES_IN_A_FRAME, MIN_BYTES_IN_A_FRAME);
 
@@ -954,7 +966,7 @@ int read_md (FILE *fp, struct meta_data *p) {
             exit(1);
         } // scan did not succeed
         else { // successful scan
-            fix_vx_tx_epoch_ms (&(p->vx_epoch_ms), &(p->tx_epoch_ms));
+            decode_sendtime (&p->vx_epoch_ms, &p->tx_epoch_ms, &p->modem_occ);
             return 1;
         } // successful scan
     } // if were able to read a line from the file
@@ -964,15 +976,27 @@ int read_md (FILE *fp, struct meta_data *p) {
 } // end of read_md
 
 // extracts tx_epoch_ms from the vx_epoch_ms embedded format
-void fix_vx_tx_epoch_ms (double *vx_epoch_ms, double *tx_epoch_ms) {
-            double real_vx_epoch_ms = trunc (*vx_epoch_ms/256);
-            // fix the vx and tx TS
-            if (new_sendertime_format) {
-                *tx_epoch_ms = real_vx_epoch_ms + (/* tx - vx */ *vx_epoch_ms - real_vx_epoch_ms*256);
-            }
-            else // tx time stamp not available
-                *tx_epoch_ms = *vx_epoch_ms; 
-
+void decode_sendtime (double *vx_epoch_ms, double *tx_epoch_ms, int *modem_occ) {
+            double real_vx_epoch_ms;
+            unsigned tx_minus_vx; 
+            
+            // calculate tx-vx and modem occupancy
+            if (new_sendertime_format == 1) {
+                real_vx_epoch_ms = /* starts at bit 8 */ trunc (*vx_epoch_ms/256);
+                *modem_occ = 31; // not available
+                tx_minus_vx =  /* lower 8 bits */ *vx_epoch_ms - real_vx_epoch_ms*256;
+            } // format 1:only tx-vx available
+            else if (new_sendertime_format == 2) {
+                real_vx_epoch_ms = /*starts at bit 9 */ trunc (*vx_epoch_ms/512);
+                *modem_occ = /* bits 8:4 */ trunc ((*vx_epoch_ms - real_vx_epoch_ms*512)/16); 
+                tx_minus_vx =  /* bits 3:0 */ (*vx_epoch_ms - real_vx_epoch_ms*512) - (*modem_occ *16); 
+            } // format 2: tx-vx and modem occ available
+            else {
+                *modem_occ = 31; // not available
+                tx_minus_vx = 0; 
+            } // format 0: tx-vx and modem occ not available
+                
+            *tx_epoch_ms = real_vx_epoch_ms + tx_minus_vx; 
             *vx_epoch_ms = real_vx_epoch_ms; 
 
             return;
@@ -1011,6 +1035,7 @@ void init_session_stats (struct session_stats *p) {
     p->brp = &(p->br); init_metric_stats (p->brp);
     p->ctsp = &(p->cts); init_metric_stats (p->ctsp);
     p->c2vp = &(p->c2v); init_metric_stats (p->c2vp);
+    p->v2tp = &(p->v2t); init_metric_stats (p->v2tp);
     p->c2rp = &(p->c2r); init_metric_stats (p->c2rp);
     p->best_t2rp = &(p->best_t2r); init_metric_stats (p->best_t2rp);
 } // end of init_session_stats
