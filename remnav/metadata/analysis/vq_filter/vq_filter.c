@@ -82,6 +82,12 @@ struct frame {
     float       nm1_bit_rate;               // bit rate of previous (n-1) frame in Mbps
     unsigned    nm1_size;                   // size of the previous frame
     double      nm1_rx_epoch_ms_earliest_packet;    //rx time stamp of the earliest arriving packet for the previous (n-1) frame
+
+    double      cdisplay_epoch_ms;          // the time stamp (current) where this frame is expeceted to be displayed
+    double      ndisplay_epoch_ms;          // the time stamp when this frame's display will end. Next frame should arrive by this itme.
+    double      display_period_ms;          // 1/frame rate
+    int         repeat_count;               // number of times this frame caused a previous frame to be repeated
+    int         skip_count;                 // if 1 then this frame will cause previous frame to be skipped
 }; 
 
 struct stats {
@@ -209,7 +215,7 @@ void decode_sendtime (double *vx_epoch_ms, double *tx_epoch_ms, int *modem_occ);
 void emit_carrier_stat (struct s_carrier *cp, FILE *c_fp, char *cname, struct meta_data *mdp, struct frame *fp);
 
 // globals
-char    *usage = "Usage: vqfilter -l <ddd> -b <dd.d> -md <input prefex> [-v] [-ns1 | ns2] [-mdc <input prefix> [-a <file name>] [-help] -out <output PREFIX> ";
+char    *usage = "Usage: vqfilter -l <ddd> -b <dd.d> -md|mdc <input prefex> [-j <dd>] [-v] [-ns1|ns2] [-a <file name>] [-help] -out <output prefix> ";
 FILE    *md_fp = NULL;                          // meta data file name
 FILE    *an_fp = NULL;                          // annotation file name
 FILE    *fs_fp = NULL;                          // frame statistics output file
@@ -228,6 +234,7 @@ int     len_anlist=0;                           // length of the annotation list
 int     have_carrier_metadata = 0;              // set to 1 if per carrier meta data is available
 int     new_sendertime_format =0;               // set to 1 if using embedded sender time format
 int     verbose;                                // 1 or 2 for the new sender time formats
+int     rx_jitter_buffer_ms = 10;               // buffer to mitigate skip/repeats due to frame arrival jitter
 
 int main (int argc, char* argv[]) {
     unsigned    waiting_for_first_frame;        // set to 1 till first clean frame start encountered
@@ -342,6 +349,14 @@ int main (int argc, char* argv[]) {
                 printf ("%s\n", usage); 
                 exit (-1); 
             }
+        
+        // rx arrival jitter buffer
+        } else if (strcmp (*argv, "-j") == MATCH) {
+            if (sscanf (*++argv, "%d", &rx_jitter_buffer_ms) != 1) {
+                printf ("missing frame arrival jitter buffer length specification \n");
+                printf ("%s\n", usage); 
+                exit (-1); 
+            }
 
         // help/usage
         } else if (strcmp (*argv, "--help")==MATCH || strcmp (*argv, "-help")==MATCH) {
@@ -413,6 +428,44 @@ int main (int argc, char* argv[]) {
                     cfp->missing += cmdp->packet_number - (lmdp->packet_number+1);
                 else 
                     cfp->missing += 1; // not the correct number of missing packets but can't do better
+
+            // check if the last frame arrived too late and would have caused repeats at the display
+		    cfp->display_period_ms = 1000 / (double) ((cfp->frame_rate==HZ_30? 30 : cfp->frame_rate==HZ_15 ? 15 : cfp->frame_rate==HZ_10? 10 : 5));
+		    if (ssp->frame_count < 1) { // set up display clock
+		        // set up display clock
+		        cfp->cdisplay_epoch_ms = cfp->rx_epoch_ms_latest_packet + rx_jitter_buffer_ms;
+		        cfp->ndisplay_epoch_ms = cfp->cdisplay_epoch_ms + cfp->display_period_ms;
+		        cfp->repeat_count = 0; // nothing repeated yet
+                cfp->skip_count = 0; 
+		    } // set up display clock
+		    else { // check if this frame caused a repeat
+                if (cfp->rx_epoch_ms_latest_packet < cfp->cdisplay_epoch_ms) {
+                    // multiple frames arriving within in the current display period
+                    // do not advance the dipslay clock but reset repeat_count since late frames can
+                    // advance the display clock by arbitrarly large amount and next frame may arrive 
+                    // earlier than this simulated display
+                    cfp->repeat_count = 0;
+                    cfp->skip_count = 1; 
+                }
+                else if (cfp->rx_epoch_ms_latest_packet < cfp->ndisplay_epoch_ms) {
+                    // frame arrived in time. Nothing will need to be repeated
+                    // advance display clock
+                    cfp->repeat_count = 0; 
+                    cfp->skip_count = 0; 
+                    cfp->cdisplay_epoch_ms += cfp->display_period_ms; 
+                    cfp->ndisplay_epoch_ms = cfp->cdisplay_epoch_ms + cfp->display_period_ms; 
+                }
+                else {
+                    // frame arrived late. Calcculate number of repeats
+                    // advance display clock
+                    double delta = cfp->rx_epoch_ms_latest_packet - cfp->ndisplay_epoch_ms; 
+                    cfp->repeat_count = ceil (delta/cfp->display_period_ms); 
+                    cfp-> skip_count = 0; 
+                    cfp->cdisplay_epoch_ms += (cfp->repeat_count+1) * cfp->display_period_ms; 
+                    cfp->ndisplay_epoch_ms = cfp->cdisplay_epoch_ms + cfp->display_period_ms; 
+                }
+		    } // check if the last frame that arrived caused repeats
+
             update_bit_rate (cfp, lmdp, cmdp);
             update_session_stats (cfp);
 
@@ -583,14 +636,13 @@ void emit_frame_stats (struct frame *p, int last) {     // last is set 1 for the
     static int first_line = 1;
     struct s_carrier *c0p=&c0, *c1p=&c1, *c2p=&c2; 
 
-
     // all frame (later or otherswise) stat outputs
     // print header line if at the first frame
     if (ssp->frame_count==1) { // first frame
         // frame stat output file header
         fprintf (fs_fp, "F#, tx-TS, Late, Missing, Bit-rate, has_an, ");
         fprintf (fs_fp, "1st Pkt #, Size(B), Size(P), LPC, LPN, retx, C->tx, tx->rx, C->rx, ooo, ");
-        fprintf (fs_fp, "Camera TS, 1st Tx TS, last Rx TS, earliest Rx, latest Rx TS, Frame rate, Res\n"); 
+        fprintf (fs_fp, "Camera TS, 1st Tx TS, last Rx TS, earliest Rx, latest Rx TS, Frame rate, Res, Rpt, skp, cdsp_TS, ndsp_TS\n"); 
     } // print header
 
     // output stats used by WATs: F#, tx-TS, Late, Missing, Bit_rate
@@ -617,14 +669,15 @@ void emit_frame_stats (struct frame *p, int last) {     // last is set 1 for the
         p->out_of_order);
 
     // Camera TS, 1st Tx TS, last Rx TS, earliest Rx, latest Rx TS, Frame rate, Res
-    fprintf (fs_fp, "%.0lf, %.0lf, %.0lf, %.0lf, %.0lf, %s, %s\n", 
+    fprintf (fs_fp, "%.0lf, %.0lf, %.0lf, %.0lf, %.0lf, %s, %s, %d, %d, %0lf, %0lf\n", 
         p->camera_epoch_ms,
         p->tx_epoch_ms_1st_packet,
         p->rx_epoch_ms_last_packet, 
         p->rx_epoch_ms_earliest_packet,
         p->rx_epoch_ms_latest_packet,
         p->frame_rate==HZ_30? "30Hz" : p->frame_rate==HZ_15 ? "15Hz" : p->frame_rate==HZ_10? "10Hz" : "5Hz",
-        p->frame_resolution==RES_HD? "HD" : "SD"); 
+        p->frame_resolution==RES_HD? "HD" : "SD", 
+        p->repeat_count, p->skip_count, p->cdisplay_epoch_ms, p->ndisplay_epoch_ms); 
 
     // late frame stats ouput
     // print header line if at the first frame
