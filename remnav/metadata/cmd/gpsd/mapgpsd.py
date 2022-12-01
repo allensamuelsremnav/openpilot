@@ -8,7 +8,11 @@ import random
 import json
 import folium
 from folium import plugins
+import pyproj
 
+def latlon2webmercator(lat, lon):
+    """Convert lat/lon to web mercator."""
+    return pyproj.Transformer.from_crs( "EPSG:4326", "EPSG:3857").transform(lat, lon)
 
 def read(logfilename):
     """Read raw gpsd log file (JSON for each packet)."""
@@ -47,6 +51,7 @@ def read(logfilename):
 
 
 def map_config(df):
+    """Map configuration parameters, e.g. center."""
     center_lat = (df["lat"].max() + df["lat"].min()) / 2
     center_lon = (df["lon"].max() + df["lon"].min()) / 2
     lon_scale = math.cos(math.pi * center_lat / 180)
@@ -57,8 +62,11 @@ def map_config(df):
     zoom = max(1, min(18, raw))
 
     # Print some numbers useful for setting up target aras.
-    half_range = 111.32 * map_range / 2
-    print(f'center lat,lon {center_lat:.7f},{center_lon:.7f}, half range {half_range:.2f} km')
+    upper_left = latlon2webmercator(df["lat"].max(), df["lon"].min())
+    lower_right = latlon2webmercator(df["lat"].min(), df["lon"].max())
+    print(f'center lat,lon {center_lat:.7f}°,{center_lon:.7f}°')
+    print(f'x half-range {(lower_right[0] - upper_left[0]) /2 :.7f} m')
+    print(f'y half-range {(upper_left[1] - lower_right[1]) /2 :.7f} m')
 
     return (center_lat, center_lon), zoom
             
