@@ -269,10 +269,6 @@ int main (int argc, char* argv[]) {
     while ( !(c0_eof || c1_eof || c2_eof) ) {
         int retransmission = 0; 
 
-        // check that the files are sorted by incresaing packet number
-        if ((packet_num > c0_mdp->packet_num) || (packet_num > c1_mdp->packet_num) || (packet_num > c2_mdp->packet_num))
-            FATAL ("The input files MUST be sorted in increasing packet number. Check around packet %d\n", packet_num)
-
         // first check if a channel wants to retransmit last packet
         c0_mdp->match = c0_mdp->packet_num == (packet_num-1); 
         c1_mdp->match = c1_mdp->packet_num == (packet_num-1); 
@@ -289,6 +285,9 @@ int main (int argc, char* argv[]) {
             } // end of case1, 2 and 3
         } // end of switch (c0_match + c1_match + c2_match)
 
+        // check that the files are sorted by incresaing packet number
+        if ((packet_num > c0_mdp->packet_num) || (packet_num > c1_mdp->packet_num) || (packet_num > c2_mdp->packet_num))
+            FATAL ("The input files MUST be sorted in increasing packet number. Check around packet %d\n", packet_num)
 
         // now check which channels will transmit this packet
         c0_mdp->match = c0_mdp->packet_num == packet_num; 
