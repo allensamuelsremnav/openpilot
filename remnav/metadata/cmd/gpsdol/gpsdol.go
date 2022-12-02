@@ -9,13 +9,15 @@ import (
 	"os"
 	"path/filepath"
 
+	machineid "github.com/denisbrodbeck/machineid"
 	gpsd "remnav.com/remnav/metadata/gpsd"
 	storage "remnav.com/remnav/metadata/storage"
 )
 
-func fileTransfer(gnssSubdir, localRoot, archiveServer, archiveRoot string, script io.Writer) {
+func fileTransfer(machineID, gnssSubdir, localRoot, archiveServer, archiveRoot string, script io.Writer) {
 	// Write bash script to copy local session storage.
 	m := map[string]interface{}{
+		"machineID":     machineID,
 		"gnssSubdir":    gnssSubdir,
 		"localRoot":     localRoot,
 		"archiveServer": archiveServer,
@@ -34,7 +36,8 @@ ARCHIVE_SERVER="{{.archiveServer}}"
 ARCHIVE_ROOT="{{.archiveRoot}}"
 GNSS_SUBDIR="{{.gnssSubdir}}"
 LOCAL_ROOT="{{.localRoot}}"
-rsync -arv ${LOCAL_ROOT}/${GNSS_SUBDIR} ${ARCHIVE_USER}@${ARCHIVE_SERVER}:${ARCHIVE_ROOT}
+MACHINE_ID="{{.machineID}}"
+rsync -arv ${LOCAL_ROOT}/${GNSS_SUBDIR}/${MACHINE_ID} ${ARCHIVE_USER}@${ARCHIVE_SERVER}:${ARCHIVE_ROOT}/${GNSS_SUBDIR}
 
 `
 	t_ := template.Must(template.New("").Parse(t))
@@ -59,9 +62,16 @@ func main() {
 		"local address of gpsd server")
 	flag.Parse()
 
+	protectedID, err := machineid.ProtectedID("gpsdol")
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	log.Printf("%s: machine id %s", os.Args[0], protectedID)
+
 	// Make the local gnss storage directory if it doesn't exist.
-	gnssPath := filepath.Join(*vehicleRootFlag, storage.RawGNSSSubdir)
-	err := os.MkdirAll(gnssPath, 0775)
+	gnssPath := filepath.Join(*vehicleRootFlag, storage.RawGNSSSubdir, protectedID)
+	err = os.MkdirAll(gnssPath, 0775)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -83,7 +93,8 @@ func main() {
 		log.Fatal(err)
 	}
 	defer scriptFile.Close()
-	fileTransfer(storage.RawGNSSSubdir,
+	fileTransfer(protectedID,
+		storage.RawGNSSSubdir,
 		*vehicleRootFlag,
 		*archiveServerFlag, *archiveRootFlag,
 		scriptFile)
