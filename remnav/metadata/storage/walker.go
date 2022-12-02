@@ -55,6 +55,9 @@ var VideoSubdir = "video"
 var GNSSSubdir = "gnss"
 var walkerId = "archive_walker"
 
+// Raw gnss logs are stored in this subdirectory of the archive directory
+var RawGNSSSubdir = "gnss"
+
 func readConfigFile(configPath string) *experiment.Config {
 	// Read config file if available.
 	_, err := os.Stat(configPath)

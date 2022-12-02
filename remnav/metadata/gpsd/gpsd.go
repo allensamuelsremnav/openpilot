@@ -1,4 +1,4 @@
-// Package gpsd has structs for decoding messages from the gpds server.
+// Package gpsd has structs and functions for decoding messages from the gpds server.
 package gpsd
 
 import (
