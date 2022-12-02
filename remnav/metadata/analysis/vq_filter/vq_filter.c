@@ -88,6 +88,7 @@ struct frame {
     double      display_period_ms;          // 1/frame rate
     int         repeat_count;               // number of times this frame caused a previous frame to be repeated
     int         skip_count;                 // if 1 then this frame will cause previous frame to be skipped
+    float       c2d_frames;                 // camera to display latency in units of frame time
 }; 
 
 struct stats {
@@ -224,7 +225,8 @@ FILE    *lf_fp = NULL;                          // late frame output file name
 FILE    *c0_fp = NULL;                          // carrier 0 meta data file
 FILE    *c1_fp = NULL;                          // carrier 0 meta data file
 FILE    *c2_fp = NULL;                          // carrier 0 meta data file
-struct  session_stats sstat, *ssp=&sstat; 
+char    annotation_file_name[200];              // annotation file name
+struct  session_stats sstat, *ssp=&sstat;       // session stats 
 float   minimum_acceptable_bitrate = -1;        // used for stats generation only
 unsigned maximum_acceptable_c2rx_latency = -1;  // packets considered late if the latency exceeds this 
 struct  meta_data md[MD_BUFFER_SIZE];           // buffer to store meta data lines*/
@@ -300,8 +302,9 @@ int main (int argc, char* argv[]) {
 
         // annotation file
         } else if (strcmp (*argv, "-a") == MATCH) {
-            if ((an_fp = fopen (*++argv, "r")) == NULL) {
-                printf ("Could not open annotation file %s\n", *argv);
+            strcpy(annotation_file_name, *++argv);
+            if ((an_fp = fopen (annotation_file_name, "r")) == NULL) {
+                printf ("Could not open annotation file %s\n", annotation_file_name);
                 print_usage (); 
                 exit (-1); 
             } else // read the annotation file
@@ -430,7 +433,6 @@ int main (int argc, char* argv[]) {
                     cfp->missing += 1; // not the correct number of missing packets but can't do better
 
             // check if the last frame arrived too late and would have caused repeats at the display
-		    cfp->display_period_ms = 1000 / (double) ((cfp->frame_rate==HZ_30? 30 : cfp->frame_rate==HZ_15 ? 15 : cfp->frame_rate==HZ_10? 10 : 5));
 		    if (ssp->frame_count < 1) { // set up display clock
 		        // set up display clock
 		        cfp->cdisplay_epoch_ms = cfp->rx_epoch_ms_latest_packet + rx_jitter_buffer_ms;
@@ -438,7 +440,7 @@ int main (int argc, char* argv[]) {
 		        cfp->repeat_count = 0; // nothing repeated yet
                 cfp->skip_count = 0; 
 		    } // set up display clock
-		    else { // check if this frame caused a repeat
+		    else { // check if this frame caused a repeat or skip
                 if (cfp->rx_epoch_ms_latest_packet < cfp->cdisplay_epoch_ms) {
                     // multiple frames arriving within in the current display period
                     // do not advance the dipslay clock but reset repeat_count since late frames can
@@ -446,7 +448,7 @@ int main (int argc, char* argv[]) {
                     // earlier than this simulated display
                     cfp->repeat_count = 0;
                     cfp->skip_count = 1; 
-                }
+                } /*
                 else if (cfp->rx_epoch_ms_latest_packet < cfp->ndisplay_epoch_ms) {
                     // frame arrived in time. Nothing will need to be repeated
                     // advance display clock
@@ -455,16 +457,19 @@ int main (int argc, char* argv[]) {
                     cfp->cdisplay_epoch_ms += cfp->display_period_ms; 
                     cfp->ndisplay_epoch_ms = cfp->cdisplay_epoch_ms + cfp->display_period_ms; 
                 }
+                */
                 else {
-                    // frame arrived late. Calcculate number of repeats
+                    // frame arrived late. Calculate number of repeats
                     // advance display clock
                     double delta = cfp->rx_epoch_ms_latest_packet - cfp->ndisplay_epoch_ms; 
                     cfp->repeat_count = ceil (delta/cfp->display_period_ms); 
                     cfp-> skip_count = 0; 
                     cfp->cdisplay_epoch_ms += (cfp->repeat_count+1) * cfp->display_period_ms; 
-                    cfp->ndisplay_epoch_ms = cfp->cdisplay_epoch_ms + cfp->display_period_ms; 
+                    cfp->ndisplay_epoch_ms = cfp->cdisplay_epoch_ms + cfp->display_period_ms;
                 }
 		    } // check if the last frame that arrived caused repeats
+                    
+            cfp->c2d_frames = (cfp->cdisplay_epoch_ms - cfp->camera_epoch_ms) / cfp->display_period_ms; 
 
             update_bit_rate (cfp, lmdp, cmdp);
             update_session_stats (cfp);
@@ -623,6 +628,7 @@ void init_frame (
     fp->rx_epoch_ms_last_packet = fp->rx_epoch_ms_earliest_packet = fp->rx_epoch_ms_latest_packet = cmdp->rx_epoch_ms;
     fp->latest_retx = cmdp->retx; 
     fp->frame_rate = cmdp->frame_rate; 
+	fp->display_period_ms = 1000 / (double) ((fp->frame_rate==HZ_30? 30 : fp->frame_rate==HZ_15 ? 15 : fp->frame_rate==HZ_10? 10 : 5));
     fp->frame_resolution = cmdp->frame_resolution;
     fp->late = cmdp->rx_epoch_ms > (fp->camera_epoch_ms + maximum_acceptable_c2rx_latency);
     fp->packet_count = fp->latest_packet_count = 1; 
@@ -639,16 +645,22 @@ void emit_frame_stats (struct frame *p, int last) {     // last is set 1 for the
     // all frame (later or otherswise) stat outputs
     // print header line if at the first frame
     if (ssp->frame_count==1) { // first frame
+        // record the parameters used to generate this file
+        fprintf (fs_fp, "Command line arguments; -l=%d -ns%d -b %0.1f -j %d -a %s\n", 
+            maximum_acceptable_c2rx_latency,
+            new_sendertime_format,
+            minimum_acceptable_bitrate, 
+            rx_jitter_buffer_ms,
+            annotation_file_name); 
         // frame stat output file header
-        fprintf (fs_fp, "F#, tx-TS, Late, Missing, Bit-rate, has_an, ");
-        fprintf (fs_fp, "1st Pkt #, Size(B), Size(P), LPC, LPN, retx, C->tx, tx->rx, C->rx, ooo, ");
-        fprintf (fs_fp, "Camera TS, 1st Tx TS, last Rx TS, earliest Rx, latest Rx TS, Frame rate, Res, Rpt, skp, cdsp_TS, ndsp_TS\n"); 
+        fprintf (fs_fp, "F#, Late, Miss, Mbps, anno, ");
+        fprintf (fs_fp, "1st Pkt #, SzP, SzB, LPC, LPN, retx, c2t, t2r, c2r, ooo, Rpt, skp, c2d, ");
+        fprintf (fs_fp, "CTS, 1st Tx TS, last Rx TS, earliest Rx, latest Rx TS, cdsp_TS, ndsp_TS\n"); 
     } // print header
 
     // output stats used by WATs: F#, tx-TS, Late, Missing, Bit_rate
-    fprintf (fs_fp, "%u, %.0lf, %u, %u, %.1f, %u, ", 
+    fprintf (fs_fp, "%u, %u, %u, %.1f, %u, ", 
         ssp->frame_count, 
-        p->tx_epoch_ms_1st_packet, 
         p->late, 
         p->missing, 
         p->nm1_bit_rate, 
@@ -656,37 +668,40 @@ void emit_frame_stats (struct frame *p, int last) {     // last is set 1 for the
 
     // output debug stats
     // Size(B), Size(P), Latest Pkt count, Latest Pkt num, C->tx lat, C->rx lat, rx->tx lat, ooo
-    fprintf (fs_fp, "%u, %u, %u, %u, %u, %u, %.1f, %.1f, %.1f, %u, ",
+    fprintf (fs_fp, "%u, %u, %u, %u, %u, %u, %.1f, %.1f, %.1f, %u, %u, %u, %.1f, ",
         p->first_packet_num, 
-        p->size,
         p->packet_count, 
+        p->size,
         p->latest_packet_count,
         p->latest_packet_num,
         p->latest_retx,
         p->tx_epoch_ms_1st_packet - p->camera_epoch_ms, 
         p->rx_epoch_ms_latest_packet - p->tx_epoch_ms_1st_packet, 
         p->rx_epoch_ms_latest_packet - p->camera_epoch_ms,  
-        p->out_of_order);
+        p->out_of_order,
+        p->repeat_count, 
+        p->skip_count, 
+        p->c2d_frames);
 
     // Camera TS, 1st Tx TS, last Rx TS, earliest Rx, latest Rx TS, Frame rate, Res
-    fprintf (fs_fp, "%.0lf, %.0lf, %.0lf, %.0lf, %.0lf, %s, %s, %d, %d, %0lf, %0lf\n", 
+    // version with frame rate and res fprintf (fs_fp, "%.0lf, %.0lf, %.0lf, %.0lf, %.0lf, %s, %s, %d, %d, %0lf, %0lf\n", 
+    fprintf (fs_fp, "%.0lf, %.0lf, %.0lf, %.0lf, %.0lf, %0lf, %0lf\n", 
         p->camera_epoch_ms,
         p->tx_epoch_ms_1st_packet,
         p->rx_epoch_ms_last_packet, 
         p->rx_epoch_ms_earliest_packet,
         p->rx_epoch_ms_latest_packet,
-        p->frame_rate==HZ_30? "30Hz" : p->frame_rate==HZ_15 ? "15Hz" : p->frame_rate==HZ_10? "10Hz" : "5Hz",
-        p->frame_resolution==RES_HD? "HD" : "SD", 
-        p->repeat_count, p->skip_count, p->cdisplay_epoch_ms, p->ndisplay_epoch_ms); 
+        p->cdisplay_epoch_ms, 
+        p->ndisplay_epoch_ms); 
 
     // late frame stats ouput
     // print header line if at the first frame
     if (ssp->frame_count==1) { // first frame
         // late frame output file header
-        fprintf (lf_fp, "F#, Late, Miss, P1, LPN, Sz (P), c->rx, "); 
-        fprintf (lf_fp, "Pkt #, isLPN, retx, ch, c-TS, tx-TS, rx-TS, P c->rx, ");
-        fprintf (lf_fp, "C0 c2v, v2t, t2r, c2r, occ, tx_TS, C1 c2v, v2t, t2r, c2r, occ, tx_TS, C2 c2v, v2t, t2r, c2r, occ, tx_TS, ");
-        fprintf (lf_fp, "dtx, ftx->rx, Eff\n");
+        fprintf (lf_fp, "F#, P#, LPN, Late, Miss, SzP, SzB, Fc2r, "); 
+        fprintf (lf_fp, "retx, ch, C-TS, tx-TS, rx-TS, Pc2r, ");
+        fprintf (lf_fp, "C0 c2v, v2t, t2r, c2r, occ, tx-TS, C1 c2v, v2t, t2r, c2r, occ, tx-TS, C2 c2v, v2t, t2r, c2r, occ, tx-TS, ");
+        fprintf (lf_fp, "dtx, ft->r, Eff\n");
 
         if (have_carrier_metadata) { 
 	        // skip header lines of the carrier files and read the first line
@@ -766,18 +781,17 @@ void emit_frame_stats (struct frame *p, int last) {     // last is set 1 for the
             if (mdp->packet_number != p->latest_packet_num)
                 continue;
             */
-            fprintf (lf_fp, "%u, %u, %u, %u, %u, %u, %0.1f,  ", 
+            fprintf (lf_fp, "%u, %u, %u, %u, %u, %u, %u, %0.1f,  ", 
                 ssp->frame_count,
+                mdp->packet_number,
+                p->latest_packet_num,
                 p->late,
                 p->missing,
-                p->first_packet_num, 
-                p->latest_packet_num,
                 p->packet_count,
+                p->size,
                 p->rx_epoch_ms_latest_packet - p->camera_epoch_ms
             );
-            fprintf (lf_fp, "%u, %u, %u, %u, %.0lf, %.0lf, %.0lf, %0.1f, ", 
-                mdp->packet_number,
-                mdp->packet_number == p->latest_packet_num? 1 : 0,
+            fprintf (lf_fp, "%u, %u, %0lf, %0lf, %0lf, %0.1f, ", 
                 mdp->retx,
                 mdp->ch,
                 p->camera_epoch_ms,
