@@ -61,29 +61,28 @@ func main() {
 		"10.1.10.225:2947",
 		"local address of gpsd server")
 	flag.Parse()
+	if flag.NArg() > 0 {
+		log.Printf("ignoring unexpected argument %s\n", flag.Arg(0))
+	}
 
 	protectedID, err := machineid.ProtectedID("gpsdol")
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	log.Printf("%s: machine id %s", os.Args[0], protectedID)
+	log.Printf("%s: machine id %s\n", os.Args[0], protectedID)
 
 	// Make the local gnss storage directory if it doesn't exist.
 	gnssPath := filepath.Join(*vehicleRootFlag, storage.RawGNSSSubdir, protectedID)
 	err = os.MkdirAll(gnssPath, 0775)
 	if err != nil {
-		log.Fatalln(err)
+		log.Fatalf("%s: %s while creating directory %s",
+			os.Args[0], err, gnssPath)
 	}
 	// umask modifies the group permission; fix it.
 	err = os.Chmod(gnssPath, 0775)
 	if err != nil {
-		log.Fatalln(err)
-	}
-
-	err = os.Chmod(gnssPath, 0775)
-	if err != nil {
-		log.Fatalln(err)
+		log.Fatal(err)
 	}
 
 	// Write script to transfer local session files.
@@ -99,7 +98,7 @@ func main() {
 		*archiveServerFlag, *archiveRootFlag,
 		scriptFile)
 	os.Chmod(scriptFilepath, 0775)
-	log.Printf("%s: run this script on vehicle when session is finished and a reliable WiFi or Ethernet connection is available: %s",
+	log.Printf("%s: run this script on vehicle when session is finished and a reliable WiFi or Ethernet connection is available: %s\n",
 		os.Args[0],
 		scriptFilepath)
 
