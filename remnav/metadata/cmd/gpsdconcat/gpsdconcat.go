@@ -128,42 +128,48 @@ func destinationInventory(destinationDir string) (int, int) {
 }
 
 func concatSources(raw []string, first, last int, tag string) []string {
+	// Find the raw logs to concatenate.
+	if len(raw) == 0 {
+		return nil
+	}
+
+	// Timestamps of a raw log containing first and last
 	firstPrefix := time.UnixMilli(int64(first)).UTC().Format(gpsd.WatchTimestampFmt)
-	lastPrefix := time.UnixMilli(int64(first)).UTC().Format(gpsd.WatchTimestampFmt)
+	lastPrefix := time.UnixMilli(int64(last)).UTC().Format(gpsd.WatchTimestampFmt)
 	if verbose {
 		log.Printf("%s: [%s, %s]", tag, firstPrefix, lastPrefix)
 	}
+
 	logFirst := -1
 	logLast := len(raw)
-	if firstPrefix < raw[0] {
-		logFirst = 0
-	} else {
-		for i, s := range raw {
-			if firstPrefix <= s {
-				logFirst = i
-				break
-			}
-		}
-		if logFirst == -1 {
-			log.Printf("all metadata %s after gpsd logs",
-				senderTimestamp)
-			return []string{}
+	// intersect [firstPrefix, infinity) with raw logs.
+	if raw[len(raw)-1] < firstPrefix {
+		log.Printf("all %s were after gpsd logs",
+			senderTimestamp)
+		return nil
+	}
+	for i, s := range raw {
+		if firstPrefix <= s {
+			logFirst = i
+			break
 		}
 	}
-	if raw[len(raw)-1] < lastPrefix {
-		logLast = len(raw) - 1
-	} else {
-		for i := len(raw) - 1; i >= 0; i-- {
-			if raw[i] <= lastPrefix {
-				logLast = i
-				break
-			}
+
+	// intersect (-infinity, lastPrefix] with raw logs.
+	if lastPrefix < raw[0] {
+		log.Printf("all %s were before gpsd logs",
+			senderTimestamp)
+		return nil
+	}
+	for i := len(raw) - 1; i >= 0; i-- {
+		if raw[i] <= lastPrefix {
+			logLast = i
+			break
 		}
-		if logLast == len(raw) {
-			log.Printf("all metadata %s before gpsd logs",
-				senderTimestamp)
-			return []string{}
-		}
+	}
+	if logFirst == -1 || logLast == len(raw) || logLast < logFirst {
+		log.Fatal("programming error, logFirst %d, logLast %d",
+			logFirst, logLast)
 	}
 	return raw[logFirst : logLast+1]
 }
