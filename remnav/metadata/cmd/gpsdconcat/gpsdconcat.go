@@ -79,10 +79,13 @@ func metadataSendRange(rdr io.Reader, tag string) (int, int) {
 				raw, tag)
 		}
 		t := traw / senderScale
-		if first < 0 {
+		// sender timestamp might be out of order.
+		if first < 0 || t < first {
 			first = t
 		}
-		last = t
+		if last < t {
+			last = t
+		}
 	}
 	if verbose {
 		log.Printf("[%d, %d] ms %s", first, last, tag)
