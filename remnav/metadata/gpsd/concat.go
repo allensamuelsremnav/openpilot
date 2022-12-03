@@ -7,6 +7,10 @@ import (
 )
 
 func Concat(logs []string, destination io.Writer) int {
+	// Concatenate log files to destination.  This is a bit more
+	// than a cat operation: it tries to fix missing newlines at
+	// the end of a log file since gpsd log reading expects a
+	// newline at the end of each line of JSON.
 	newline := []byte{0xA}
 	bytesWritten := 0
 	for _, l := range logs {

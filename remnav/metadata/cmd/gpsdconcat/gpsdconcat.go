@@ -109,6 +109,7 @@ func destinationInventory(destinationDir string) (int, int) {
 				if err != nil {
 					log.Fatal(err)
 				}
+				defer f.Close()
 				s, e := metadataSendRange(f, n)
 				if first < 0 || s < first {
 					first = s
@@ -167,7 +168,7 @@ func concatSources(raw []string, first, last int, tag string) []string {
 func main() {
 	rawFlag := flag.String("raw",
 		"",
-		"archive storage directory for raw gnss logs")
+		"archive storage directory for raw gpsd logs")
 	verboseFlag := flag.Bool("verbose",
 		false,
 		"verbose output")
@@ -178,14 +179,14 @@ func main() {
 	if false && len(*rawFlag) == 0 {
 		log.Fatal("--raw required")
 	}
-	log.Printf("raw logs from %s", *rawFlag)
+	log.Printf("raw gpsd logs from %s", *rawFlag)
 
 	if flag.NArg() == 0 {
 		log.Fatalln("session identifiers required")
 	}
 
 	raw := rawInventory(*rawFlag)
-	log.Printf("%d raw logs, [%s, %s]", len(raw), raw[0], raw[len(raw)-1])
+	log.Printf("%d raw gpsd logs, [%s, %s]", len(raw), raw[0], raw[len(raw)-1])
 	// debugging code:
 	// raw := []string{"/home/greg/rn1/remnav/metadata/gpsd/nonl.json",
 	//		"/home/greg/rn1/remnav/metadata/gpsd/gpsd.rn3"}
@@ -200,7 +201,7 @@ func main() {
 			time.UnixMilli(int64(first)).UTC(),
 			time.UnixMilli(int64(last)).UTC())
 		logSources := concatSources(raw, first, last, sessionId)
-		log.Printf("%d/%d relevant raw logs found for %s", len(logSources), len(raw),
+		log.Printf("%d/%d relevant raw gpsd logs found for %s", len(logSources), len(raw),
 			sessionId)
 		if len(logSources) == 0 {
 			continue
@@ -226,7 +227,8 @@ func main() {
 		}
 		defer outFile.Close()
 
-		gpsd.Concat(logSources, outFile)
+		bytesWritten := gpsd.Concat(logSources, outFile)
+		log.Printf("%d bytes, %s", bytesWritten, outlogPath)
 	}
 
 }
