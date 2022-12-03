@@ -45,6 +45,8 @@ func PokeWatch(conn net.Conn) {
 
 }
 
+var WatchTimestampFmt = "20060102T1504Z"
+
 func WatchLogPeriodic(gpsdAddress string, reader *bufio.Reader, gnssDir string) {
 	// Gather all of the input from the watch reader; send to a succession of files
 
@@ -53,7 +55,6 @@ func WatchLogPeriodic(gpsdAddress string, reader *bufio.Reader, gnssDir string) 
 		return filepath.Join(gnssDir, timestamp+"_"+fmtId+".json")
 	}
 
-	timestampFmt := "20060102T1504Z"
 	deviceCheck := true
 	lineCount := 0
 	var pending []string
@@ -92,7 +93,7 @@ func WatchLogPeriodic(gpsdAddress string, reader *bufio.Reader, gnssDir string) 
 					if err != nil {
 						log.Fatal(err)
 					}
-					otimestamp = tpv.Time.Format(timestampFmt)
+					otimestamp = tpv.Time.Format(WatchTimestampFmt)
 					ofile, err = os.Create(logfilename(gnssDir, otimestamp))
 					if err != nil {
 						log.Fatal(err)
@@ -125,7 +126,7 @@ func WatchLogPeriodic(gpsdAddress string, reader *bufio.Reader, gnssDir string) 
 				if err != nil {
 					log.Fatal(err)
 				}
-				ts := tpv.Time.Format(timestampFmt)
+				ts := tpv.Time.Format(WatchTimestampFmt)
 				if otimestamp != ts {
 					// New minute, so new log file
 					ofile.Close()
