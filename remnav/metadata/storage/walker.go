@@ -50,6 +50,8 @@ type Session struct {
 	GNSS        []GNSSTrackFile
 }
 
+// These vars are used elsewhere, so even if we abandon most of this code,
+// keep the Subdir variables.
 // Video files are stored in this subdirectory of the session directory
 var VideoSubdir = "video"
 var GNSSSubdir = "gnss"
