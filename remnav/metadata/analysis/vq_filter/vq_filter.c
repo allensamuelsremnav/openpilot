@@ -42,7 +42,7 @@
 #define     MIN_T2R_LATENCY 10
 
 struct meta_data {
-    unsigned    packet_number;              // incrementing number starting from 0
+    int         packet_num;                 // incrementing number starting from 0
     double      vx_epoch_ms;                // time since epoch in ms
     double      tx_epoch_ms;                // time since epoch in ms
     double      rx_epoch_ms;                // time sicne epoch in ms
@@ -63,15 +63,15 @@ struct frame {
     unsigned    late;                       // number of late packets in this frame
     unsigned    missing;                    // number of missing packets in this frames
     unsigned    out_of_order;               // number of out of order packets in this frame
-    unsigned    first_packet_num;           // first packet number of the frame
-    unsigned    last_packet_num;            // last packet number of the frame
+    int         first_packet_num;           // first packet number of the frame
+    int         last_packet_num;            // last packet number of the frame
     unsigned    packet_count;               // number of packets in this frame
     double      tx_epoch_ms_1st_packet;     // tx timestamp of the first packet of the frame
     double      rx_epoch_ms_last_packet;    // rx timestamp of last packet of the frame
     double      rx_epoch_ms_earliest_packet;// rx time stamp of the earliest arriving packet for this frame
     double      rx_epoch_ms_latest_packet;  // rx timestamp of the late-most packet of the frame (not necessarily last packet)
     unsigned    latest_packet_count;        // the latest packet count of the frame
-    unsigned    latest_packet_num;          // the latest packet number of the frame
+    int         latest_packet_num;          // the latest packet number of the frame
     unsigned    latest_retx;                // queue the latest packet came from
     unsigned    frame_rate;                 // in HZ
     unsigned    frame_resolution;           // HD or SD
@@ -121,7 +121,7 @@ struct s_carrier {
         char line[MAX_MD_LINE_SIZE];        // line to read the carrier data in 
         char *lp;                           // pointer to line
         int tx;                             // set to 1 if this carrier tranmitted the packet being considered
-        unsigned packet_num;                // packet number read from this line of the carrier meta_data finle 
+        int packet_num;                     // packet number read from this line of the carrier meta_data finle 
         double vx_epoch_ms; 
         double tx_epoch_ms; 
         double rx_epoch_ms;
@@ -131,6 +131,7 @@ struct s_carrier {
 
 // reads a new meta data line. returns 0 if reached end of the file
 int read_md (
+    int skip_header,                        // if 1 then skip the header lines
     FILE *fp, 
     struct meta_data *p);    
 
@@ -155,7 +156,8 @@ void update_bit_rate (                      // updates stats of the last frame
 
 // assumes called at the end of a frame after frame and session stats have been updated
 void emit_frame_stats (
-    struct frame *p,
+    int print_header,                       // set to 1 if only header is to be emitted
+    struct frame *p,                        // current frame pointer
     int last);                              // set to 1 when called with the last frame of the session
 
 // initializes the session stat structures for the specified metrics
@@ -213,7 +215,31 @@ int check_annotation (unsigned frame_num);
 void decode_sendtime (double *vx_epoch_ms, double *tx_epoch_ms, int *modem_occ);
 
 // outputs per carrier stats
-void emit_carrier_stat (struct s_carrier *cp, FILE *c_fp, char *cname, struct meta_data *mdp, struct frame *fp);
+void emit_carrier_stat (int print_header, struct s_carrier *cp, FILE *c_fp, char *cname, struct meta_data *mdp, struct frame *fp);
+
+void emit_packet_header (FILE *fp);
+
+void emit_frame_header (FILE *fp);
+
+void skip_combined_md_file_header (FILE *fp);
+
+void skip_carrier_md_file_header (FILE *fp, char *cname);
+
+void skip_combined_md_file_header (FILE *fp);
+
+/*
+void red (FILE *fp) {
+  fprintf(fp, "\033[1;31m");
+}
+
+void yellow () {
+  printf("\033[1;33m");
+}
+
+void reset (FILE *fp) {
+  fprintf(fp, "\033[0m");
+}
+*/
 
 // globals
 char    *usage = "Usage: vqfilter -l <ddd> -b <dd.d> -md|mdc <input prefex> [-j <dd>] [-v] [-ns1|ns2] [-a <file name>] [-help] -out <output prefix> ";
@@ -294,7 +320,6 @@ int main (int argc, char* argv[]) {
         // new sender time format
         } else if (strcmp (*argv, "-ns2") == MATCH) {
             new_sendertime_format = 2; 
-
 
         // verbose
         } else if (strcmp (*argv, "-v") == MATCH) {
@@ -402,8 +427,16 @@ int main (int argc, char* argv[]) {
     // sesstion stat structures intialization
     init_session_stats (ssp);
 
+    // skip/print headers
+    skip_combined_md_file_header (md_fp);
+    skip_carrier_md_file_header (c0_fp, "C0");
+    skip_carrier_md_file_header (c1_fp, "C0");
+    skip_carrier_md_file_header (c2_fp, "C0");
+    emit_frame_header (fs_fp);
+    emit_packet_header (lf_fp);
+
     // while there are more lines to read from the meta data file
-    while (read_md (md_fp, cmdp) != 0) { 
+    while (read_md (0, md_fp, cmdp) != 0) { 
 
         //  if first frame then skip till a clean frame start 
         if (waiting_for_first_frame) {
@@ -416,6 +449,7 @@ int main (int argc, char* argv[]) {
                 // skip packets till we find a clean start 
                 ; 
         } 
+
         // else if conntinuation of the current frame
         else if (cmdp->rolling_frame_number == lmdp->rolling_frame_number) {
 
@@ -423,23 +457,30 @@ int main (int argc, char* argv[]) {
             update_packet_stats (cfp, lmdp, cmdp);
             update_session_packet_stats (cfp, cmdp);
         }
-        // else start of a new frame. lmdp has the last packet of the current frame. cmdp first of the new frame
-        else { 
-            // update stats of the last frame
+
+        // else start of a new frame. 
+        // lmdp has the last packet of the current frame. cmdp first of the new frame
+        else {
+
+            // first finish processing the last frame
+
+            // check if the last frame ended with packets missing
             if (!lmdp->frame_end) // frame ended abruptly
                 if (cmdp->frame_start) // next frame started cleanly so all the missing packets belong to this frame
-                    cfp->missing += cmdp->packet_number - (lmdp->packet_number+1);
+                    cfp->missing += cmdp->packet_num - (lmdp->packet_num+1);
                 else 
                     cfp->missing += 1; // not the correct number of missing packets but can't do better
 
             // check if the last frame arrived too late and would have caused repeats at the display
-		    if (ssp->frame_count < 1) { // set up display clock
+		    if (ssp->frame_count < 1) { // we just reached the end of first frame
 		        // set up display clock
+                // by definition the first frame does not have repeat/skip
 		        cfp->cdisplay_epoch_ms = cfp->rx_epoch_ms_latest_packet + rx_jitter_buffer_ms;
 		        cfp->ndisplay_epoch_ms = cfp->cdisplay_epoch_ms + cfp->display_period_ms;
 		        cfp->repeat_count = 0; // nothing repeated yet
                 cfp->skip_count = 0; 
 		    } // set up display clock
+
 		    else { // check if this frame caused a repeat or skip
                 if (cfp->rx_epoch_ms_latest_packet < cfp->cdisplay_epoch_ms) {
                     // multiple frames arriving within in the current display period
@@ -448,7 +489,8 @@ int main (int argc, char* argv[]) {
                     // earlier than this simulated display
                     cfp->repeat_count = 0;
                     cfp->skip_count = 1; 
-                } /*
+                } // of frame arrived early and will cause previous frame(s) not yet displayed to be skipped
+                /* no need to separate timely arrival case from late
                 else if (cfp->rx_epoch_ms_latest_packet < cfp->ndisplay_epoch_ms) {
                     // frame arrived in time. Nothing will need to be repeated
                     // advance display clock
@@ -456,28 +498,32 @@ int main (int argc, char* argv[]) {
                     cfp->skip_count = 0; 
                     cfp->cdisplay_epoch_ms += cfp->display_period_ms; 
                     cfp->ndisplay_epoch_ms = cfp->cdisplay_epoch_ms + cfp->display_period_ms; 
-                }
+                } 
                 */
                 else {
-                    // frame arrived late. Calculate number of repeats
+                    // frame arrived in time or late. Calculate number of repeats
                     // advance display clock
                     double delta = cfp->rx_epoch_ms_latest_packet - cfp->ndisplay_epoch_ms; 
                     cfp->repeat_count = ceil (delta/cfp->display_period_ms); 
                     cfp-> skip_count = 0; 
                     cfp->cdisplay_epoch_ms += (cfp->repeat_count+1) * cfp->display_period_ms; 
                     cfp->ndisplay_epoch_ms = cfp->cdisplay_epoch_ms + cfp->display_period_ms;
-                }
+                } // frame arrived in time or late
 		    } // check if the last frame that arrived caused repeats
                     
+            // camera to display latency
             cfp->c2d_frames = (cfp->cdisplay_epoch_ms - cfp->camera_epoch_ms) / cfp->display_period_ms; 
 
+            // bit-rate of last to last frame
             update_bit_rate (cfp, lmdp, cmdp);
+
+            // update session stat so the frame number etc. is correct
             update_session_stats (cfp);
 
             // emit frame stats 
-            emit_frame_stats (cfp, 0);
+            emit_frame_stats (0, cfp, 0);
 
-            // now fill in cfp for the new frame which could clean or abrupt start
+            // now process the meta data line of the new frame
             init_frame (cfp, lmdp, cmdp, 0);    
             update_session_packet_stats (cfp, cmdp);
         } // start of a new frame
@@ -500,7 +546,7 @@ int main (int argc, char* argv[]) {
     update_session_stats (cfp);
 
     // end of the file so emit both last frame and session stats
-    emit_frame_stats(cfp, 1);
+    emit_frame_stats(0, cfp, 1);
     emit_session_stats();
 
     exit (0); 
@@ -576,20 +622,20 @@ void update_packet_stats (
 
     fp->size += cmdp->video_packet_len;
     fp->late += cmdp->rx_epoch_ms > (fp->camera_epoch_ms + maximum_acceptable_c2rx_latency); 
-    fp->missing += cmdp->packet_number - (lmdp->packet_number+1);  
+    fp->missing += cmdp->packet_num - (lmdp->packet_num+1);  
     fp->out_of_order += cmdp->rx_epoch_ms < lmdp->rx_epoch_ms;
 
     // check if this packet is earliest or latest arriving packet so far
     if (cmdp->rx_epoch_ms > fp->rx_epoch_ms_latest_packet) { // this is the latest packet so far
         fp->rx_epoch_ms_latest_packet = cmdp->rx_epoch_ms;
         fp->latest_packet_count = fp->packet_count; 
-        fp->latest_packet_num = cmdp->packet_number; 
+        fp->latest_packet_num = cmdp->packet_num; 
         fp->latest_retx = cmdp->retx; 
     }
     fp->rx_epoch_ms_earliest_packet = MIN(fp->rx_epoch_ms_earliest_packet, cmdp->rx_epoch_ms);
 
     // assume that this could be the last packet of the frame
-    fp->last_packet_num = cmdp->packet_number;
+    fp->last_packet_num = cmdp->packet_num;
     fp->rx_epoch_ms_last_packet = cmdp->rx_epoch_ms;
 
 } // end of update_packet_stats
@@ -614,16 +660,16 @@ void init_frame (
     } else if (lmdp->frame_end) {
         // abrupt start of this frame but clean end of previous frame.
         // missing the camera_epoch_ms. So will add one frame worth of delay to previous camera time stamp
-        fp->missing = cmdp->packet_number - (lmdp->packet_number + 1); 
+        fp->missing = cmdp->packet_num - (lmdp->packet_num + 1); 
         fp->camera_epoch_ms += fp->frame_rate==HZ_30? 33.33 : fp->frame_rate==HZ_15? 66.66 : fp->frame_rate==HZ_10? 100 : 200;
     } else {
         // abrupt start of this frame AND abrupt end of the previous frame. Now we can't tell how many packets each frame lost
         // have assigned one missing packet to previous frame. So will assign the remaining packets to this frame. 
-        fp->missing = cmdp->packet_number - (lmdp->packet_number +1) -1; 
+        fp->missing = cmdp->packet_num - (lmdp->packet_num +1) -1; 
         fp->camera_epoch_ms += fp->frame_rate==HZ_30? 33.33 : fp->frame_rate==HZ_15? 66.66 : fp->frame_rate==HZ_10? 100 : 200;
     }
     fp->out_of_order = /* first_frame? 0: */ cmdp->rx_epoch_ms < lmdp->rx_epoch_ms; 
-    fp->first_packet_num = fp->last_packet_num = cmdp->packet_number;
+    fp->first_packet_num = fp->last_packet_num = cmdp->packet_num;
     fp->tx_epoch_ms_1st_packet = cmdp->tx_epoch_ms;
     fp->rx_epoch_ms_last_packet = fp->rx_epoch_ms_earliest_packet = fp->rx_epoch_ms_latest_packet = cmdp->rx_epoch_ms;
     fp->latest_retx = cmdp->retx; 
@@ -632,253 +678,265 @@ void init_frame (
     fp->frame_resolution = cmdp->frame_resolution;
     fp->late = cmdp->rx_epoch_ms > (fp->camera_epoch_ms + maximum_acceptable_c2rx_latency);
     fp->packet_count = fp->latest_packet_count = 1; 
-    fp->latest_packet_num = cmdp->packet_number; 
+    fp->latest_packet_num = cmdp->packet_num; 
 
-} // end of init_frame 
+} // end of init_frame
+
+void emit_frame_header (FILE *fp) {
+
+    // command line arguments
+    // red (fp);
+    fprintf (fp, "Command line arguments; ");
+    fprintf (fp, "-l %d ", maximum_acceptable_c2rx_latency);
+    fprintf (fp, "-ns%d ", new_sendertime_format);
+    fprintf (fp, "-b %0.1f ", minimum_acceptable_bitrate);
+    fprintf (fp, "-j %d ", rx_jitter_buffer_ms);
+    fprintf (fp, "-a %s ", annotation_file_name);
+    fprintf (fp, "\n"); 
+    // reset (fp); 
+
+    fprintf (fp, "F#, ");
+    fprintf (fp, "Late, ");
+    fprintf (fp, "Miss, ");
+    fprintf (fp, "Mbps, ");
+    fprintf (fp, "anno, ");
+    fprintf (fp, "1st Pkt, ");
+    fprintf (fp, "SzP, ");
+    fprintf (fp, "SzB, ");
+    fprintf (fp, "LPC, ");
+    fprintf (fp, "LPN, ");
+    fprintf (fp, "retx, ");
+    fprintf (fp, "c2t, ");
+    fprintf (fp, "t2r, ");
+    fprintf (fp, "c2r, ");
+    fprintf (fp, "ooo, ");
+    fprintf (fp, "Rpt, ");
+    fprintf (fp, "skp, ");
+    fprintf (fp, "c2d, ");
+    fprintf (fp, "CTS, ");
+    fprintf (fp, "1st TX_TS, ");
+    fprintf (fp, "last Rx_TS, ");
+    fprintf (fp, "earliest Rx_TS, ");
+    fprintf (fp, "latest Rx_TS, ");
+    fprintf (fp, "cdsp_TS, ");
+    fprintf (fp, "ndsp_TS, ");
+    
+    fprintf (fp, "\n"); 
+
+} // emit_frame_header
+
+void emit_packet_header (FILE *lf_fp) {
+
+        fprintf (lf_fp, "F#, ");
+        fprintf (lf_fp, "P#, ");
+        fprintf (lf_fp, "Late, ");
+	    fprintf (lf_fp, "Miss, ");
+	    fprintf (lf_fp, "Mbps, ");
+	    fprintf (lf_fp, "SzP, ");
+	    fprintf (lf_fp, "SzB, ");
+	    fprintf (lf_fp, "LPN, ");
+	    fprintf (lf_fp, "Fc2t, ");
+	    fprintf (lf_fp, "Ft2r, ");
+	    fprintf (lf_fp, "Fc2r, ");
+	    fprintf (lf_fp, "Rpt, ");
+	    fprintf (lf_fp, "skp, ");
+	    fprintf (lf_fp, "c2d, ");
+        fprintf (lf_fp, "CTS, ");
+
+        // Delivered packet meta data
+        fprintf (lf_fp, "retx, ");
+        fprintf (lf_fp, "ch, ");
+        fprintf (lf_fp, "tx_TS, ");
+        fprintf (lf_fp, "rx_TS, ");
+        fprintf (lf_fp, "Pc2R, ");
+        
+        // per carrier meta data
+        fprintf (lf_fp, "C0: c2v, v2t, t2r, c2r, occ, tx_TS, "); 
+        fprintf (lf_fp, "C1: c2v, v2t, t2r, c2r, occ, tx_TS, "); 
+        fprintf (lf_fp, "C2: c2v, v2t, t2r, c2r, occ, tx_TS, "); 
+
+    fprintf (lf_fp, "\n");
+    return;
+} // emit_packet_header
 
 // assumes called at the end of a frame after frame and session stats have been updated
-void emit_frame_stats (struct frame *p, int last) {     // last is set 1 for the last frame of the se//ssion 
+void emit_frame_stats (int print_header, struct frame *p, int last) {     // last is set 1 for the last frame of the se//ssion 
     static struct s_carrier c0, c1, c2; 
-    static int first_line = 1;
     struct s_carrier *c0p=&c0, *c1p=&c1, *c2p=&c2; 
-
-    // all frame (later or otherswise) stat outputs
-    // print header line if at the first frame
-    if (ssp->frame_count==1) { // first frame
-        // record the parameters used to generate this file
-        fprintf (fs_fp, "Command line arguments; -l=%d -ns%d -b %0.1f -j %d -a %s\n", 
-            maximum_acceptable_c2rx_latency,
-            new_sendertime_format,
-            minimum_acceptable_bitrate, 
-            rx_jitter_buffer_ms,
-            annotation_file_name); 
-        // frame stat output file header
-        fprintf (fs_fp, "F#, Late, Miss, Mbps, anno, ");
-        fprintf (fs_fp, "1st Pkt #, SzP, SzB, LPC, LPN, retx, c2t, t2r, c2r, ooo, Rpt, skp, c2d, ");
-        fprintf (fs_fp, "CTS, 1st Tx TS, last Rx TS, earliest Rx, latest Rx TS, cdsp_TS, ndsp_TS\n"); 
-    } // print header
-
-    // output stats used by WATs: F#, tx-TS, Late, Missing, Bit_rate
-    fprintf (fs_fp, "%u, %u, %u, %.1f, %u, ", 
-        ssp->frame_count, 
-        p->late, 
-        p->missing, 
-        p->nm1_bit_rate, 
-        p->has_annotation);
-
-    // output debug stats
-    // Size(B), Size(P), Latest Pkt count, Latest Pkt num, C->tx lat, C->rx lat, rx->tx lat, ooo
-    fprintf (fs_fp, "%u, %u, %u, %u, %u, %u, %.1f, %.1f, %.1f, %u, %u, %u, %.1f, ",
-        p->first_packet_num, 
-        p->packet_count, 
-        p->size,
-        p->latest_packet_count,
-        p->latest_packet_num,
-        p->latest_retx,
-        p->tx_epoch_ms_1st_packet - p->camera_epoch_ms, 
-        p->rx_epoch_ms_latest_packet - p->tx_epoch_ms_1st_packet, 
-        p->rx_epoch_ms_latest_packet - p->camera_epoch_ms,  
-        p->out_of_order,
-        p->repeat_count, 
-        p->skip_count, 
-        p->c2d_frames);
-
-    // Camera TS, 1st Tx TS, last Rx TS, earliest Rx, latest Rx TS, Frame rate, Res
-    // version with frame rate and res fprintf (fs_fp, "%.0lf, %.0lf, %.0lf, %.0lf, %.0lf, %s, %s, %d, %d, %0lf, %0lf\n", 
-    fprintf (fs_fp, "%.0lf, %.0lf, %.0lf, %.0lf, %.0lf, %0lf, %0lf\n", 
-        p->camera_epoch_ms,
-        p->tx_epoch_ms_1st_packet,
-        p->rx_epoch_ms_last_packet, 
-        p->rx_epoch_ms_earliest_packet,
-        p->rx_epoch_ms_latest_packet,
-        p->cdisplay_epoch_ms, 
-        p->ndisplay_epoch_ms); 
-
-    // late frame stats ouput
-    // print header line if at the first frame
-    if (ssp->frame_count==1) { // first frame
-        // late frame output file header
-        fprintf (lf_fp, "F#, P#, LPN, Late, Miss, SzP, SzB, Fc2r, "); 
-        fprintf (lf_fp, "retx, ch, C-TS, tx-TS, rx-TS, Pc2r, ");
-        fprintf (lf_fp, "C0 c2v, v2t, t2r, c2r, occ, tx-TS, C1 c2v, v2t, t2r, c2r, occ, tx-TS, C2 c2v, v2t, t2r, c2r, occ, tx-TS, ");
-        fprintf (lf_fp, "dtx, ft->r, Eff\n");
-
-        if (have_carrier_metadata) { 
-	        // skip header lines of the carrier files and read the first line
-	        // carrier 0
-	        if (fgets (c0p->line, MAX_MD_LINE_SIZE, c0_fp) == NULL) {
-	            printf ("Empty carrier 0 csv file\n");
-	            exit(-1);
-	        }
-	        c0p->lp = c0p->line;
-            c0p->last_rx_m_tx = 30; // default value before a packet is transmiited by this carrier
-	        // read the first line
-	        if (fgets(c0p->line, MAX_MD_LINE_SIZE, c0_fp) != NULL) {
-	            if (sscanf (c0p->line, "%u, %lf, %lf,", &c0p->packet_num, &c0p->vx_epoch_ms, &c0p->rx_epoch_ms) !=3) {
-	                printf ("could not find all the fields in the c0 meta data file %s\n", c0p->line); 
-	                exit (-1);
-	            }
-	        } else {
-	            printf ("empty c0 meta data file\n");
-	            exit (-1); 
-	        }
-	
-	        // carrier 1
-	        if (fgets (c1p->line, MAX_MD_LINE_SIZE, c1_fp) == NULL) {
-	            printf ("Empty carrier 1 csv file\n");
-	            exit(-1);
-	        }
-	        c1p->lp = c1p->line;
-            c1p->last_rx_m_tx = 30; // default value before a packet is transmiited by this carrier
-	        // read the first line
-	        if (fgets(c1p->line, MAX_MD_LINE_SIZE, c1_fp) != NULL) {
-	            if (sscanf (c1p->line, "%u, %lf, %lf,", &c1p->packet_num, &c1p->vx_epoch_ms, &c1p->rx_epoch_ms) !=3) {
-	                printf ("could not find all the fields in the c1 meta data file %s\n", c1p->line); 
-	                exit (-1);
-	            }
-	        } else {
-	            printf ("empty c1 meta data file\n");
-	            exit (-1); 
-	        }
-	
-	        // carrier 2
-	        if (fgets (c2p->line, MAX_MD_LINE_SIZE, c2_fp) == NULL) {
-	            printf ("Empty carrier 2 csv file\n");
-	            exit(-1);
-	        }
-	        c2p->lp = c2p->line;
-            c2p->last_rx_m_tx = 30; // default value before a packet is transmiited by this carrier
-	        // read the first line
-	        if (fgets(c2p->line, MAX_MD_LINE_SIZE, c2_fp) != NULL) {
-	            if (sscanf (c2p->line, "%u, %lf, %lf,", &c2p->packet_num, &c2p->vx_epoch_ms, &c2p->rx_epoch_ms) !=3) {
-	                printf ("could not find all the fields in the c2 meta data file %s\n", c2p->line); 
-	                exit (-1);
-	            }
-	        } else {
-	            printf ("empty c2 meta data file\n");
-	            exit (-1); 
-	        }
-        } // if have_carrier_meta_data
-    } // first frame - print header
-
-    // output stats of all the packets of if the frame is late; or all frames if verbose is set true
-    if (verbose || p->late) {
-
-	    // md_index point to the first line of the new frame when emit_frame is called
-	    int i, starting_index, current_index; 
-	    if (p->packet_count > MD_BUFFER_SIZE) {
-	        printf ("Warning: Frame has more packets than MD_BUFFER can hold. Increase MD_BUFFER_SIZE\n"); 
-	        starting_index = (md_index + 1) % MD_BUFFER_SIZE; 
-	    } else {
-	        starting_index = (md_index + MD_BUFFER_SIZE - p->packet_count) % MD_BUFFER_SIZE; 
-	    }
-
-        // emit meta dat for all packets in this late frame
-        for (i=0; i < p->packet_count; i++) {
-            current_index = (starting_index + i) % MD_BUFFER_SIZE;
-            struct meta_data *mdp = &md[current_index]; 
-            /*
-            if (mdp->packet_number != p->latest_packet_num)
-                continue;
-            */
-            fprintf (lf_fp, "%u, %u, %u, %u, %u, %u, %u, %0.1f,  ", 
-                ssp->frame_count,
-                mdp->packet_number,
-                p->latest_packet_num,
-                p->late,
-                p->missing,
-                p->packet_count,
-                p->size,
-                p->rx_epoch_ms_latest_packet - p->camera_epoch_ms
-            );
-            fprintf (lf_fp, "%u, %u, %0lf, %0lf, %0lf, %0.1f, ", 
-                mdp->retx,
-                mdp->ch,
-                p->camera_epoch_ms,
-                mdp->tx_epoch_ms,
-                mdp->rx_epoch_ms,
-                mdp->rx_epoch_ms - p->camera_epoch_ms
-            );
-            
-            // if per carrier meta data is available then print latency of the supplying carrier
-            if (have_carrier_metadata) {
-	            // carrirer 0
-                emit_carrier_stat (c0p, c0_fp, "c0", mdp, p);
-	
-	            // carrirer 1
-                emit_carrier_stat (c1p, c1_fp, "c1", mdp, p);
-	
-	            // carrirer 2
-                emit_carrier_stat (c2p, c2_fp, "c2", mdp, p);
-
-	            // compute difference in the tx times of the channels attempting this packet
-	            double latest_tx, earliest_tx;
-	            if (c0p->tx==0) { // c0 is not transmitting
-	                latest_tx = MAX(c1p->tx_epoch_ms, c2p->tx_epoch_ms);
-	                earliest_tx = MIN(c1p->tx_epoch_ms, c2p->tx_epoch_ms);
-	            } // c0 is not transmitting
-	            else if (c1p->tx==0) { // c1 is not transmitting
-	                latest_tx = MAX(c0p->tx_epoch_ms, c2p->tx_epoch_ms);
-	                earliest_tx = MIN(c0p->tx_epoch_ms, c2p->tx_epoch_ms);
-	            } // c1 is not transmitting
-	            else { // c2 is not transmitting
-	                latest_tx = MAX(c0p->tx_epoch_ms, c1p->tx_epoch_ms);
-	                earliest_tx = MIN(c0p->tx_epoch_ms, c1p->tx_epoch_ms);
-	            } // c2 is not transmitting
-	            fprintf (lf_fp, "%0.1f, ", latest_tx-earliest_tx); 
-
-                // fast channel availabiliyt and efficiency
-                float fastest_tx_to_rx = MIN(c0p->last_rx_m_tx, MIN(c1p->last_rx_m_tx, c2p->last_rx_m_tx));
-                float c2v_latency = MAX(c0p->tx*(c0p->vx_epoch_ms - p->camera_epoch_ms), 
-                    MAX(c1p->tx*(c1p->vx_epoch_ms - p->camera_epoch_ms), c2p->tx*(c2p->vx_epoch_ms - p->camera_epoch_ms))); 
-                fprintf (lf_fp, "%0.1f, ", fastest_tx_to_rx);
-                fprintf (lf_fp, "%0.1f, ", (mdp->rx_epoch_ms-p->camera_epoch_ms) - fastest_tx_to_rx - c2v_latency); 
-
-                // update session packet stats (wrong place for this code. 
-                // update_metric_stats (ssp->c2vp, 0, c2v_latency, MAX_C2V_LATENCY, MIN_C2V_LATENCY);
-                update_metric_stats (ssp->best_t2rp, 0, fastest_tx_to_rx, MAX_T2R_LATENCY, MIN_T2R_LATENCY);
-            
-            } // if per carrier meta data is available then print latency of the supplying carrier
-
-            fprintf (lf_fp, "\n");
-        } // for all packets in the frame
-    } // if frame is late
+    
+    // initialization
+    if (ssp->frame_count == 1) {
+        c0p->packet_num = -1; // have not read any lines yet
+        c0p->last_rx_m_tx = 30; // default value before the first packet is transmiited by this carrier
+        c1p->packet_num = -1; // have not read any lines yet
+        c1p->last_rx_m_tx = 30; // default value before the first packet is transmiited by this carrier
+        c2p->packet_num = -1; // have not read any lines yet
+        c2p->last_rx_m_tx = 30; // default value before the first packet is transmiited by this carrier
+    }
 
     if (verbose) {
         if ((ssp->frame_count % 1000) == 0)
             printf ("at frame %d\n", ssp->frame_count); 
     }
-    
+
+    // frame stats 
+    fprintf (fs_fp, "%u, ", ssp->frame_count);
+    fprintf (fs_fp, "%u, ", p->late);
+    fprintf (fs_fp, "%u, ", p->missing);
+    fprintf (fs_fp, "%.1f, ", p->nm1_bit_rate);
+    fprintf (fs_fp, "%u, ", p->has_annotation);
+    fprintf (fs_fp, "%u, ", p->first_packet_num);
+    fprintf (fs_fp, "%u, ", p->packet_count);
+    fprintf (fs_fp, "%u, ", p->size);
+    fprintf (fs_fp, "%u, ", p->latest_packet_count);
+    fprintf (fs_fp, "%u, ", p->latest_packet_num);
+    fprintf (fs_fp, "%u, ", p->latest_retx);
+    fprintf (fs_fp, "%.1f, ", p->tx_epoch_ms_1st_packet - p->camera_epoch_ms);
+    fprintf (fs_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->tx_epoch_ms_1st_packet);
+    fprintf (fs_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->camera_epoch_ms);
+    fprintf (fs_fp, "%u, ", p->out_of_order);
+    fprintf (fs_fp, "%u, ", p->repeat_count);
+    fprintf (fs_fp, "%u, ", p->skip_count);
+    fprintf (fs_fp, "%.1f, ", p->c2d_frames);
+    fprintf (fs_fp, "%.0lf, ", p->camera_epoch_ms);
+
+    fprintf (fs_fp, "%.0lf, ", p->tx_epoch_ms_1st_packet);
+    fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_last_packet);
+    fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_earliest_packet);
+    fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_latest_packet);
+    fprintf (fs_fp, "%.0lf, ", p->cdisplay_epoch_ms);
+    fprintf (fs_fp, "%.0lf, ", p->ndisplay_epoch_ms);
+    fprintf (fs_fp, "\n");
+
+    // packet stats
+
+	// md_index point to the first line of the new frame when emit_frame_stats is called
+	int i, starting_index, current_index; 
+	if (p->packet_count > MD_BUFFER_SIZE) {
+	    printf ("Warning: Frame has more packets than MD_BUFFER can hold. Increase MD_BUFFER_SIZE\n"); 
+	    starting_index = (md_index + 1) % MD_BUFFER_SIZE; 
+	} 
+    else 
+	    starting_index = (md_index + MD_BUFFER_SIZE - p->packet_count) % MD_BUFFER_SIZE; 
+
+    // for all packets in the frame
+    for (i=0; i < p->packet_count; i++) {
+        current_index = (starting_index + i) % MD_BUFFER_SIZE;
+        struct meta_data *mdp = &md[current_index]; 
+
+        // Frame metadata
+        fprintf (lf_fp, "%u, ", ssp->frame_count);
+        fprintf (lf_fp, "%u, ", mdp->packet_num);
+        fprintf (lf_fp, "%u, ", p->late);
+	    fprintf (lf_fp, "%u, ", p->missing);
+	    fprintf (lf_fp, "%.1f, ", p->nm1_bit_rate);
+	    fprintf (lf_fp, "%u, ", p->packet_count);
+	    fprintf (lf_fp, "%u, ", p->size);
+	    fprintf (lf_fp, "%u, ", p->latest_packet_num);
+	    fprintf (lf_fp, "%.1f, ", p->tx_epoch_ms_1st_packet - p->camera_epoch_ms);
+	    fprintf (lf_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->tx_epoch_ms_1st_packet);
+	    fprintf (lf_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->camera_epoch_ms);
+	    fprintf (lf_fp, "%u, ", p->repeat_count);
+	    fprintf (lf_fp, "%u, ", p->skip_count);
+	    fprintf (lf_fp, "%.1f, ", p->c2d_frames);
+        fprintf (lf_fp, "%.0lf, ", p->camera_epoch_ms);
+
+        // Delivered packet meta data
+        fprintf (lf_fp, "%u, ", mdp->retx);
+        fprintf (lf_fp, "%u, ", mdp->ch);
+        fprintf (lf_fp, "%.0lf, ", mdp->tx_epoch_ms);
+        fprintf (lf_fp, "%.0lf, ", mdp->rx_epoch_ms);
+        fprintf (lf_fp, "%.1f, ", mdp->rx_epoch_ms - p->camera_epoch_ms);
+
+        // Per carrier meta data
+        if (have_carrier_metadata) {
+
+	        emit_carrier_stat (print_header, c0p, c0_fp, "c0", mdp, p);
+	        emit_carrier_stat (print_header, c1p, c1_fp, "c1", mdp, p);
+	        emit_carrier_stat (print_header, c2p, c2_fp, "c2", mdp, p);
+	
+		    // compute difference in the tx times of the channels attempting this packet
+		    double latest_tx, earliest_tx;
+		    if (c0p->tx==0) { // c0 is not transmitting
+		       latest_tx = MAX(c1p->tx_epoch_ms, c2p->tx_epoch_ms);
+		       earliest_tx = MIN(c1p->tx_epoch_ms, c2p->tx_epoch_ms);
+		    } // c0 is not transmitting
+		    else if (c1p->tx==0) { // c1 is not transmitting
+		       latest_tx = MAX(c0p->tx_epoch_ms, c2p->tx_epoch_ms);
+		       earliest_tx = MIN(c0p->tx_epoch_ms, c2p->tx_epoch_ms);
+		    } // c1 is not transmitting
+		    else { // c2 is not transmitting
+		        latest_tx = MAX(c0p->tx_epoch_ms, c1p->tx_epoch_ms);
+		        earliest_tx = MIN(c0p->tx_epoch_ms, c1p->tx_epoch_ms);
+		    } // c2 is not transmitting
+		    fprintf (lf_fp, "%0.1f, ", latest_tx-earliest_tx); 
+	
+	        // fast channel availabiliyt and efficiency
+	        float fastest_tx_to_rx = MIN(c0p->last_rx_m_tx, MIN(c1p->last_rx_m_tx, c2p->last_rx_m_tx));
+	        float c2v_latency = MAX(c0p->tx*(c0p->vx_epoch_ms - p->camera_epoch_ms), 
+	            MAX(c1p->tx*(c1p->vx_epoch_ms - p->camera_epoch_ms), c2p->tx*(c2p->vx_epoch_ms - p->camera_epoch_ms))); 
+	        fprintf (lf_fp, "%0.1f, ", fastest_tx_to_rx);
+	        fprintf (lf_fp, "%0.1f, ", (mdp->rx_epoch_ms-p->camera_epoch_ms) - fastest_tx_to_rx - c2v_latency); 
+	
+	        // update session packet stats (wrong place for this code. 
+	        // update_metric_stats (ssp->c2vp, 0, c2v_latency, MAX_C2V_LATENCY, MIN_C2V_LATENCY);
+	        update_metric_stats (ssp->best_t2rp, 0, fastest_tx_to_rx, MAX_T2R_LATENCY, MIN_T2R_LATENCY);
+
+        } // have carrier meta data 
+
+        fprintf (lf_fp, "\n");
+        
+    } // for every packet in the frame
+            
     return; 
 } // end of emit_frame_stats
 
-// outputs per carrier stats
-void emit_carrier_stat (struct s_carrier *cp, FILE *c_fp, char *cname, struct meta_data *mdp, struct frame *fp) {
+void skip_carrier_md_file_header (FILE *fp, char *cname) {
+    char line[500];
+	if (fgets (line, MAX_MD_LINE_SIZE, fp) == NULL) {
+	    printf ("Empty %s csv file\n", cname);
+	    exit(-1);
+	}
+    return;
+} // skip_carrier_md_header 
 
-	while (mdp->packet_number > cp->packet_num) {
-	   if (fgets(cp->line, MAX_MD_LINE_SIZE, c_fp) != NULL) {
-	       if (sscanf (cp->line, "%u, %lf, %lf,", &cp->packet_num, &cp->vx_epoch_ms, &cp->rx_epoch_ms) !=3) {
-	           printf ("could not find all the fields in the %s meta data file %s\n", cname, cp->line); 
-	               exit (-1);
-	        } // if scan failed
-        } // fgets got a line
-        else // reached end of the file
+int read_carrier_md (int skip_header, FILE *fp, char *line, struct s_carrier *cp, char *cname) {
+
+	if (fgets(line, MAX_MD_LINE_SIZE, fp) != NULL) {
+	    if (sscanf (line, "%u, %lf, %lf,", &cp->packet_num, &cp->vx_epoch_ms, &cp->rx_epoch_ms) !=3) {
+	        printf ("could not find all the fields in the %s meta data file %s\n", cname, line); 
+	        exit (-1);
+	    } // if scan failed
+        else // scan passed
+            return 1;
+    } // fgets got a line
+    else // reached end of file
+        return 0;
+} // read_carrier_md
+
+// outputs per carrier stats
+void emit_carrier_stat (int print_header, struct s_carrier *cp, FILE *c_fp, char *cname, struct meta_data *mdp, struct frame *fp) {
+
+	while (mdp->packet_num > cp->packet_num) {
+        if (read_carrier_md (0, c_fp, cp->line, cp, cname) == 0)
+            // reached end of file
             break;
 	} // while have not reached and gone past the current packet
 
     // if this carrier transmitted this meta data line, then print the carrier stats
-	if (cp->packet_num == mdp->packet_number) {
+	if (cp->packet_num == mdp->packet_num) {
         cp->tx = 1; 
         decode_sendtime (&cp->vx_epoch_ms, &cp->tx_epoch_ms, &cp->modem_occ);
-	    fprintf (lf_fp, "%0.1f, %0.1f, %0.1f, %0.1f, %d, %0.1f, ", 
-            cp->vx_epoch_ms - fp->camera_epoch_ms,
-            cp->tx_epoch_ms - cp->vx_epoch_ms,
-            cp->rx_epoch_ms - cp->tx_epoch_ms,
-            cp->rx_epoch_ms - fp->camera_epoch_ms,
-            cp->modem_occ,
-            cp->tx_epoch_ms);
+	    fprintf (lf_fp, "%0.1f, ", cp->vx_epoch_ms - fp->camera_epoch_ms);
+	    fprintf (lf_fp, "%0.1f, ", cp->tx_epoch_ms - cp->vx_epoch_ms);
+	    fprintf (lf_fp, "%0.1f, ", cp->rx_epoch_ms - cp->tx_epoch_ms);
+	    fprintf (lf_fp, "%0.1f, ", cp->rx_epoch_ms - fp->camera_epoch_ms);
+	    if (cp->modem_occ == 31) /* no info */ fprintf (lf_fp, ", "); else fprintf (lf_fp, "%d, ", cp->modem_occ);
+	    fprintf (lf_fp, "%.0lf, ", cp->tx_epoch_ms);
+
         cp->last_rx_m_tx = cp->rx_epoch_ms - cp->tx_epoch_ms; 
-    } //if this carrier transmitted this meta data line, then print the carrier stats 
+
+    } // if this carrier transmitted this meta data line, then print the carrier stats 
 	else {// stay silent except indicate the channel quality through t2r
         cp->tx = 0; 
 	    fprintf (lf_fp, ", , %0.1f, , , , ", cp->last_rx_m_tx);
@@ -886,11 +944,12 @@ void emit_carrier_stat (struct s_carrier *cp, FILE *c_fp, char *cname, struct me
 
 } // emit_carrier_stat
 
-// updates session stats. assumes that it is called only at the end of a frame
+// Accumulates stats at the end of every frame. 
+// assumes that it is called only at the end of a frame
 void update_session_stats (struct frame *p) { 
     float   latency;                        // camera timestamp to the last rx packet latency of the current frame
 
-    // accumulate stats at the end of every frame
+    // frame numbers start at 1 so increment before doing anything else.
     ssp->frame_count++; 
 
     // annotation stat
@@ -1002,22 +1061,26 @@ void emit_metric_stats (
     fprintf (ss_fp, "\n");
 } // end of emit_metric_stats
 
-// reads next line of the meta data file. returns 0 if reached end of file
-int read_md (FILE *fp, struct meta_data *p) {
-    char    mdline[MAX_MD_LINE_SIZE], *mdlp = mdline; 
-    static  int linecount=0; 
-
+void skip_combined_md_file_header (FILE *fp) {
+    char line[500];
     // skip header
-    if (linecount == 0) // skip over header 
-        if (fgets (mdlp, MAX_MD_LINE_SIZE, md_fp) == NULL)
-            return 0;
-    
+    if (fgets (line, MAX_MD_LINE_SIZE, fp) == NULL) {
+	    printf ("Empty combined csv file\n");
+	    exit(-1);
+    }
+    return;
+} // skip_combined_md_file_header
+
+// reads next line of the meta data file. returns 0 if reached end of file
+int read_md (int skip_header, FILE *fp, struct meta_data *p) {
+    char    mdline[MAX_MD_LINE_SIZE], *mdlp = mdline; 
+
     // read next line
     if (fgets (mdlp, MAX_MD_LINE_SIZE, md_fp) != NULL) {
-        linecount++; 
+
         // parse the line
         if (sscanf (mdlp, "%u, %lf, %lf, %u, %u, %u, %u, %u, %u, %lf, %u, %u", 
-            &p->packet_number, 
+            &p->packet_num, 
             &p->vx_epoch_ms,
             &p->rx_epoch_ms,
             &p->video_packet_len,
@@ -1029,13 +1092,15 @@ int read_md (FILE *fp, struct meta_data *p) {
             &p->camera_epoch_ms,
             &p->retx, 
             &p->ch) != NUM_OF_MD_FIELDS) {
-            printf ("Insufficient number of fields in meta data file at line %d\n", linecount);
+            printf ("Insufficient number of fields in line: %s\n", mdlp);
             exit(1);
         } // scan did not succeed
+
         else { // successful scan
             decode_sendtime (&p->vx_epoch_ms, &p->tx_epoch_ms, &p->modem_occ);
             return 1;
         } // successful scan
+
     } // if were able to read a line from the file
     
     // get here at the end of the file
