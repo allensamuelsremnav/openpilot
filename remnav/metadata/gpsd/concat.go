@@ -9,9 +9,10 @@ import (
 )
 
 func Intersection(raw []string, first, last time.Time, verbose bool) []string {
-	// Find the gpsd logs that intersect the interval [first, last]
+	// Use the bin rules (WatchBinned) to Find the gpsd logs that
+	// intersect the interval [first, last]
 
-	// Filenames of raw logs containing first and last
+	// Filenames of binned logs containing first and last
 	firstProbe := logfilename("", first.Format(watchTimestampFmt))
 	lastProbe := logfilename("", last.Format(watchTimestampFmt))
 	if verbose {
@@ -29,11 +30,17 @@ func Intersection(raw []string, first, last time.Time, verbose bool) []string {
 
 func Concat(logs []string, destination io.Writer) int {
 	// Concatenate log files to destination.  This is a bit more
-	// than a cat operation: it tries to fix missing newlines at
+	// than a cat operation:
+
+	// Assumes that lexicographic ordering of the file names
+	// implies temporal ordering of TPV contents.
+
+	// it tries to fix missing newlines at
 	// the end of a log file since gpsd log reading expects a
 	// newline at the end of each line of JSON.
 	newline := []byte{0xA}
 	bytesWritten := 0
+
 	sort.Strings(logs)
 	for _, l := range logs {
 		logfile, err := os.Open(l)

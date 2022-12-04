@@ -108,5 +108,5 @@ func main() {
 
 	gpsd.PokeWatch(conn)
 
-	gpsd.WatchLogPeriodic(*gpsdAddressFlag, reader, gnssPath)
+	gpsd.WatchBinned(*gpsdAddressFlag, reader, gnssPath)
 }

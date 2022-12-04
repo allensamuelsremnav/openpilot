@@ -47,13 +47,19 @@ func PokeWatch(conn net.Conn) {
 
 var watchTimestampFmt = "20060102T1504Z"
 
-func logfilename(gnssDir, timestamp string) string {
+func logfilename(gnssDir, binTimestamp string) string {
 	fmtId := "g000"
-	return filepath.Join(gnssDir, timestamp+"_"+fmtId+".json")
+	return filepath.Join(gnssDir, binTimestamp+"_"+fmtId+".json")
 }
 
-func WatchLogPeriodic(gpsdAddress string, reader *bufio.Reader, gnssDir string) {
-	// Gather all of the input from the watch reader; send to a succession of files
+func WatchBinned(gpsdAddress string, reader *bufio.Reader, gnssDir string) {
+	// Gather all of the input from the watch reader; send to a succession of files.
+	//
+	// Binning rules:
+	// * Every TPV message is assigned to a one-minute bin by its time.
+	// * Log files are named by the bin that they contain.
+	// * Lexicogrphic ordering of log-file names implies temporal ordering
+	// of TPV messages.
 
 	deviceCheck := true
 	lineCount := 0
