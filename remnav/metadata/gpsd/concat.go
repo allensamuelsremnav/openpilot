@@ -4,63 +4,27 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
 	"time"
 )
 
 func Intersection(raw []string, first, last time.Time, verbose bool) []string {
 	// Find the gpsd logs that intersect the interval [first, last]
-	if len(raw) == 0 {
-		return nil
-	}
+
 	// Filenames of raw logs containing first and last
 	firstProbe := logfilename("", first.Format(watchTimestampFmt))
 	lastProbe := logfilename("", last.Format(watchTimestampFmt))
 	if verbose {
 		log.Printf("[%s, %s] probes", firstProbe, lastProbe)
 	}
-	logFirst := -1
-	logLast := len(raw)
-	// intersect [firstProbe, infinity) with raw logs.
-	if raw[len(raw)-1] < firstProbe {
-		if verbose {
-			log.Printf("%s was after gpsd logs",
-				first)
-		}
-		return nil
-	}
-	for i, s := range raw {
-		if firstProbe <= s {
-			logFirst = i
-			break
-		}
-	}
 
-	// intersect (-infinity, lastProbe] with raw logs.
-	if lastProbe < raw[0] {
-		if verbose {
-			log.Printf("%s was before gpsd logs",
-				last)
-		}
-		return nil
-	}
-	for i := len(raw) - 1; i >= 0; i-- {
-		if raw[i] <= lastProbe {
-			logLast = i
-			break
+	var ret []string
+	for _, s := range raw {
+		if firstProbe <= s && s <= lastProbe {
+			ret = append(ret, s)
 		}
 	}
-	if logLast < logFirst {
-		if verbose {
-			log.Printf("no intersection with logs, logLast %d < logFirst %d",
-				logLast, logFirst)
-		}
-		return nil
-	}
-	if logFirst == -1 || logLast == len(raw) {
-		log.Fatalf("programming error, logFirst %d, logLast %d",
-			logFirst, logLast)
-	}
-	return raw[logFirst : logLast+1]
+	return ret
 }
 
 func Concat(logs []string, destination io.Writer) int {
@@ -70,6 +34,7 @@ func Concat(logs []string, destination io.Writer) int {
 	// newline at the end of each line of JSON.
 	newline := []byte{0xA}
 	bytesWritten := 0
+	sort.Strings(logs)
 	for _, l := range logs {
 		logfile, err := os.Open(l)
 		if err != nil {
