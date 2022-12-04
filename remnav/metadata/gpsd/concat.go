@@ -35,10 +35,6 @@ func Concat(logs []string, destination io.Writer) int {
 	// Assumes that lexicographic ordering of the file names
 	// implies temporal ordering of TPV contents.
 
-	// it tries to fix missing newlines at
-	// the end of a log file since gpsd log reading expects a
-	// newline at the end of each line of JSON.
-	newline := []byte{0xA}
 	bytesWritten := 0
 
 	sort.Strings(logs)
@@ -52,19 +48,22 @@ func Concat(logs []string, destination io.Writer) int {
 		if err != nil {
 			log.Fatal(err)
 		}
+
+		if len(logBytes) > 0 && logBytes[len(logBytes)-1] != 0xA {
+			// A missing newline at the end of the file is
+			// unexpected and may cause trouble parsing
+			// the concatenated file.
+			log.Printf(
+				"skipping %s: missing newline.  This is expected only in TestNewline.",
+				l)
+			continue
+		}
+
 		n, err := destination.Write(logBytes)
 		if err != nil {
 			log.Fatal(err)
 		}
 		bytesWritten += n
-		// It's possible that the newline is missing at the end of a gpsd log file.
-		if len(logBytes) > 0 && logBytes[len(logBytes)-1] != 0xA {
-			destination.Write(newline)
-			log.Printf(
-				"missing newline in %s; attempting patch. If this not during a regression test, please report to greg.lee@@remnav.com",
-				l)
-			bytesWritten += len(newline)
-		}
 	}
 	return bytesWritten
 }

@@ -23,16 +23,31 @@ func TestConcat(t *testing.T) {
 func TestNewline(t *testing.T) {
 	// Missing newline
 	//logs := []string{"gpsd.rn6.nonl_g000.json", "gpsd.rn5_g000.json"}
-	logs := []string{"gpsd.nonl_g000.json", "gpsd.rn5_g000.json"}
-	var b bytes.Buffer
-	gotWritten := Concat(logs, &b)
-	wantLen := 1692 + 1 + 9808842
-	gotLen := b.Len()
-	if gotWritten != wantLen {
-		t.Fatalf("gotWritten %d != %d", gotWritten, wantLen)
+	{
+		logs := []string{"gpsd.nonl_g000.json", "gpsd.rn5_g000.json"}
+		var b bytes.Buffer
+		gotWritten := Concat(logs, &b)
+		wantLen := 9808842
+		gotLen := b.Len()
+		if gotWritten != wantLen {
+			t.Fatalf("gotWritten %d != %d", gotWritten, wantLen)
+		}
+		if gotLen != wantLen {
+			t.Fatalf("gotLen %d != %d", gotLen, wantLen)
+		}
 	}
-	if gotLen != wantLen {
-		t.Fatalf("gotLen %d != %d", gotLen, wantLen)
+	{
+		logs := []string{"gpsd.rn6.nonl_g000.json", "gpsd.rn5_g000.json"}
+		var b bytes.Buffer
+		gotWritten := Concat(logs, &b)
+		wantLen := 9808842
+		gotLen := b.Len()
+		if gotWritten != wantLen {
+			t.Fatalf("gotWritten %d != %d", gotWritten, wantLen)
+		}
+		if gotLen != wantLen {
+			t.Fatalf("gotLen %d != %d", gotLen, wantLen)
+		}
 	}
 }
 
