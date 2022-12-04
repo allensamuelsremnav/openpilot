@@ -1,7 +1,6 @@
 package gpsd
 
 import (
-	"bufio"
 	"bytes"
 	"testing"
 	"time"
@@ -10,8 +9,7 @@ import (
 func TestConcat(t *testing.T) {
 	logs := []string{"gpsd.rn3_g000.json", "gpsd.rn5_g000.json"}
 	var b bytes.Buffer
-	bw := bufio.NewWriter(&b)
-	gotWritten := Concat(logs, bw)
+	gotWritten := Concat(logs, &b)
 	wantLen := 1522363 + 9808842
 	gotLen := b.Len()
 	if gotWritten != wantLen {
@@ -24,11 +22,11 @@ func TestConcat(t *testing.T) {
 
 func TestNewline(t *testing.T) {
 	// Missing newline
+	//logs := []string{"gpsd.rn6.nonl_g000.json", "gpsd.rn5_g000.json"}
 	logs := []string{"gpsd.nonl_g000.json", "gpsd.rn5_g000.json"}
 	var b bytes.Buffer
-	bw := bufio.NewWriter(&b)
-	gotWritten := Concat(logs, bw)
-	wantLen := 1692 + 9808842 + 1
+	gotWritten := Concat(logs, &b)
+	wantLen := 1692 + 1 + 9808842
 	gotLen := b.Len()
 	if gotWritten != wantLen {
 		t.Fatalf("gotWritten %d != %d", gotWritten, wantLen)
