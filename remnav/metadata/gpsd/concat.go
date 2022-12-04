@@ -30,7 +30,7 @@ func Intersection(raw []string, first, last time.Time, verbose bool) []string {
 
 func Concat(logs []string, destination io.Writer) int {
 	// Concatenate log files to destination.  This is a bit more
-	// than a cat operation:
+	// than a cat operation because of the newline check.
 
 	// Assumes that lexicographic ordering of the file names
 	// implies temporal ordering of TPV contents.
