@@ -168,6 +168,9 @@ func main() {
 		if verbose {
 			log.Printf("[%d, %d] ms %s", first, last, sessionId)
 		}
+		if first < 0 {
+			continue
+		}
 		firstTime := time.UnixMilli(int64(first)).UTC()
 		lastTime := time.UnixMilli(int64(last)).UTC()
 		if verbose {
