@@ -8,7 +8,7 @@ import (
 )
 
 func TestConcat(t *testing.T) {
-	logs := []string{"gpsd.rn3", "gpsd.rn5.log"}
+	logs := []string{"gpsd.rn3_g000.json", "gpsd.rn5_g000.json"}
 	var b bytes.Buffer
 	bw := bufio.NewWriter(&b)
 	gotWritten := Concat(logs, bw)
@@ -24,7 +24,7 @@ func TestConcat(t *testing.T) {
 
 func TestNewline(t *testing.T) {
 	// Missing newline
-	logs := []string{"nonl.json", "gpsd.rn5.log"}
+	logs := []string{"nonl_g000.json", "gpsd.rn5_g000.json"}
 	var b bytes.Buffer
 	bw := bufio.NewWriter(&b)
 	gotWritten := Concat(logs, bw)

@@ -132,7 +132,7 @@ func TestUnmarshal(t *testing.T) {
 
 func TestLog(t *testing.T) {
 	// Test reading a sample log file.
-	f, err := os.Open("gpsd.rn3")
+	f, err := os.Open("gpsd.rn3_g000.json")
 	if err != nil {
 		t.Fatal(err)
 	}
