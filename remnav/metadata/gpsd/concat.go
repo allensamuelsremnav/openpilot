@@ -1,6 +1,10 @@
 package gpsd
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -49,6 +53,14 @@ func Concat(logs []string, destination io.Writer) int {
 			log.Fatal(err)
 		}
 
+		if false {
+			tmp := make([]byte, len(logBytes))
+			copy(tmp, logBytes)
+			buf := bufio.NewReader(bytes.NewBuffer(tmp))
+			if err := ParseCheck(buf); err != nil {
+				log.Fatal(err)
+			}
+		}
 		if len(logBytes) > 0 && logBytes[len(logBytes)-1] != 0xA {
 			// A missing newline at the end of the file is
 			// unexpected and may cause trouble parsing
@@ -66,4 +78,47 @@ func Concat(logs []string, destination io.Writer) int {
 		bytesWritten += n
 	}
 	return bytesWritten
+}
+
+func ParseCheck(rdr *bufio.Reader) error {
+	// Verify that we can parse rdr as a gpsd log and that its TPV times are non-decreasing.
+	utc := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	linecount := 0
+	probe := func(line string) error {
+		var probe TPV
+		err := json.Unmarshal([]byte(line), &probe)
+		if err != nil {
+			return err
+		}
+		if probe.Class == "TPV" {
+			if probe.Time.Before(utc) {
+				return fmt.Errorf("out-of-order timestamp %s at %d",
+					probe.Time,
+					linecount)
+			}
+			utc = probe.Time
+		}
+		return nil
+	}
+	for {
+		line, err := rdr.ReadString('\n')
+		if err == nil {
+			err := probe(line)
+			if err != nil {
+				return err
+			}
+		} else if err == io.EOF {
+			if len(line) > 0 {
+				err := probe(line)
+				if err != nil {
+					return err
+				}
+			}
+			break
+		} else {
+			return err
+		}
+		linecount += 1
+	}
+	return nil
 }
