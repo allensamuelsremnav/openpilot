@@ -4,6 +4,7 @@ package main
 import (
 	"encoding/csv"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -131,26 +132,38 @@ func destinationInventory(destinationDir string) (int, int) {
 }
 
 func main() {
-	rawFlag := flag.String("raw",
+	machineIdFlag := flag.String("machine_id",
 		"",
+		"identfier for vehicle")
+	archiveRootFlag := flag.String("archive_root",
+		"/home/user/6TB/remconnect/archive",
+		"archive storage directory (e.g. on rn3)")
+	rawRootFlag := flag.String("raw",
+		"/home/user/6TB/remconnect/archive",
 		"archive storage directory for raw gpsd logs")
 	verboseFlag := flag.Bool("verbose",
 		false,
 		"verbose output")
-	flag.Parse()
-
-	verbose = *verboseFlag
-
-	if false && len(*rawFlag) == 0 {
-		log.Fatal("--raw required")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [OPTIONS] sessionId...\n", os.Args[0])
+		flag.PrintDefaults()
 	}
-	log.Printf("raw gpsd logs from %s", *rawFlag)
+	flag.Parse()
 
 	if flag.NArg() == 0 {
 		log.Fatalln("session identifiers required")
 	}
 
-	raw := rawInventory(*rawFlag)
+	if len(*machineIdFlag) == 0 {
+		log.Fatal("--machine_id required")
+	}
+
+	verbose = *verboseFlag
+
+	rawDirectory := filepath.Join(*rawRootFlag, storage.RawGNSSSubdir, *machineIdFlag)
+	log.Printf("raw gpsd logs from %s", rawDirectory)
+
+	raw := rawInventory(rawDirectory)
 	log.Printf("%d raw gpsd logs, [%s, %s]", len(raw), raw[0], raw[len(raw)-1])
 	// debugging code:
 	// raw := []string{"/home/greg/rn1/remnav/metadata/gpsd/nonl.json",
@@ -164,7 +177,7 @@ func main() {
 			log.Printf("session %s", sessionId)
 		}
 
-		first, last := destinationInventory(filepath.Join(sessionId, storage.VideoSubdir))
+		first, last := destinationInventory(filepath.Join(*archiveRootFlag, sessionId, storage.VideoSubdir))
 		if verbose {
 			log.Printf("[%d, %d] ms %s", first, last, sessionId)
 		}
