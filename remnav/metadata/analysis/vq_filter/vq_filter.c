@@ -125,7 +125,7 @@ struct s_carrier {
         double vx_epoch_ms; 
         double tx_epoch_ms; 
         double rx_epoch_ms;
-        float last_rx_m_tx;                 // tx-rx of the last transmitted packet
+        float rx_m_tx;                 // tx-rx of the last transmitted packet
         int modem_occ;                      // modem buffer occupancy. 31 if not available from the modem
 };
 
@@ -227,20 +227,6 @@ void skip_carrier_md_file_header (FILE *fp, char *cname);
 
 void skip_combined_md_file_header (FILE *fp);
 
-/*
-void red (FILE *fp) {
-  fprintf(fp, "\033[1;31m");
-}
-
-void yellow () {
-  printf("\033[1;33m");
-}
-
-void reset (FILE *fp) {
-  fprintf(fp, "\033[0m");
-}
-*/
-
 // globals
 char    *usage = "Usage: vqfilter -l <ddd> -b <dd.d> -md|mdc <input prefex> [-j <dd>] [-v] [-ns1|ns2] [-a <file name>] [-help] -out <output prefix> ";
 FILE    *md_fp = NULL;                          // meta data file name
@@ -263,6 +249,7 @@ int     have_carrier_metadata = 0;              // set to 1 if per carrier meta 
 int     new_sendertime_format =0;               // set to 1 if using embedded sender time format
 int     verbose;                                // 1 or 2 for the new sender time formats
 int     rx_jitter_buffer_ms = 10;               // buffer to mitigate skip/repeats due to frame arrival jitter
+int     fast_channel = 40;                      // channels with latency lower than this are considered fast
 
 int main (int argc, char* argv[]) {
     unsigned    waiting_for_first_frame;        // set to 1 till first clean frame start encountered
@@ -378,6 +365,15 @@ int main (int argc, char* argv[]) {
                 exit (-1); 
             }
         
+        // fast channel definition
+        } else if (strcmp (*argv, "-f") == MATCH) {
+            if (sscanf (*++argv, "%d", &fast_channel) != 1) {
+                printf ("Missing specification of the fast latency\n");
+                printf ("%s\n", usage); 
+                // exit (-1); 
+            }
+        
+        // rx arrival jitter buffer
         // rx arrival jitter buffer
         } else if (strcmp (*argv, "-j") == MATCH) {
             if (sscanf (*++argv, "%d", &rx_jitter_buffer_ms) != 1) {
@@ -661,12 +657,12 @@ void init_frame (
         // abrupt start of this frame but clean end of previous frame.
         // missing the camera_epoch_ms. So will add one frame worth of delay to previous camera time stamp
         fp->missing = cmdp->packet_num - (lmdp->packet_num + 1); 
-        fp->camera_epoch_ms += fp->frame_rate==HZ_30? 33.33 : fp->frame_rate==HZ_15? 66.66 : fp->frame_rate==HZ_10? 100 : 200;
+        fp->camera_epoch_ms += fp->frame_rate==HZ_30? 33.364 : fp->frame_rate==HZ_15? 66.66 : fp->frame_rate==HZ_10? 100 : 200;
     } else {
         // abrupt start of this frame AND abrupt end of the previous frame. Now we can't tell how many packets each frame lost
         // have assigned one missing packet to previous frame. So will assign the remaining packets to this frame. 
         fp->missing = cmdp->packet_num - (lmdp->packet_num +1) -1; 
-        fp->camera_epoch_ms += fp->frame_rate==HZ_30? 33.33 : fp->frame_rate==HZ_15? 66.66 : fp->frame_rate==HZ_10? 100 : 200;
+        fp->camera_epoch_ms += fp->frame_rate==HZ_30? 33.364 : fp->frame_rate==HZ_15? 66.66 : fp->frame_rate==HZ_10? 100 : 200;
     }
     fp->out_of_order = /* first_frame? 0: */ cmdp->rx_epoch_ms < lmdp->rx_epoch_ms; 
     fp->first_packet_num = fp->last_packet_num = cmdp->packet_num;
@@ -674,7 +670,7 @@ void init_frame (
     fp->rx_epoch_ms_last_packet = fp->rx_epoch_ms_earliest_packet = fp->rx_epoch_ms_latest_packet = cmdp->rx_epoch_ms;
     fp->latest_retx = cmdp->retx; 
     fp->frame_rate = cmdp->frame_rate; 
-	fp->display_period_ms = 1000 / (double) ((fp->frame_rate==HZ_30? 30 : fp->frame_rate==HZ_15 ? 15 : fp->frame_rate==HZ_10? 10 : 5));
+	fp->display_period_ms = fp->frame_rate==HZ_30? 33.364 : fp->frame_rate==HZ_15 ? 33.364*2 : fp->frame_rate==HZ_10? 100 : 200;
     fp->frame_resolution = cmdp->frame_resolution;
     fp->late = cmdp->rx_epoch_ms > (fp->camera_epoch_ms + maximum_acceptable_c2rx_latency);
     fp->packet_count = fp->latest_packet_count = 1; 
@@ -685,7 +681,6 @@ void init_frame (
 void emit_frame_header (FILE *fp) {
 
     // command line arguments
-    // red (fp);
     fprintf (fp, "Command line arguments; ");
     fprintf (fp, "-l %d ", maximum_acceptable_c2rx_latency);
     fprintf (fp, "-ns%d ", new_sendertime_format);
@@ -693,8 +688,8 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "-j %d ", rx_jitter_buffer_ms);
     fprintf (fp, "-a %s ", annotation_file_name);
     fprintf (fp, "\n"); 
-    // reset (fp); 
 
+    // frame stat header
     fprintf (fp, "F#, ");
     fprintf (fp, "Late, ");
     fprintf (fp, "Miss, ");
@@ -727,33 +722,37 @@ void emit_frame_header (FILE *fp) {
 
 void emit_packet_header (FILE *lf_fp) {
 
-        fprintf (lf_fp, "F#, ");
-        fprintf (lf_fp, "P#, ");
-        fprintf (lf_fp, "Late, ");
-	    fprintf (lf_fp, "Miss, ");
-	    fprintf (lf_fp, "Mbps, ");
-	    fprintf (lf_fp, "SzP, ");
-	    fprintf (lf_fp, "SzB, ");
-	    fprintf (lf_fp, "LPN, ");
-	    fprintf (lf_fp, "Fc2t, ");
-	    fprintf (lf_fp, "Ft2r, ");
-	    fprintf (lf_fp, "Fc2r, ");
-	    fprintf (lf_fp, "Rpt, ");
-	    fprintf (lf_fp, "skp, ");
-	    fprintf (lf_fp, "c2d, ");
-        fprintf (lf_fp, "CTS, ");
+    fprintf (lf_fp, "F#, ");
+    fprintf (lf_fp, "P#, ");
+	fprintf (lf_fp, "LPN, ");
+    fprintf (lf_fp, "Late, ");
+	fprintf (lf_fp, "Miss, ");
+	fprintf (lf_fp, "Mbps, ");
+	fprintf (lf_fp, "SzP, ");
+	fprintf (lf_fp, "SzB, ");
+	fprintf (lf_fp, "Fc2t, ");
+	fprintf (lf_fp, "Ft2r, ");
+	fprintf (lf_fp, "Fc2r, ");
+	fprintf (lf_fp, "Rpt, ");
+	fprintf (lf_fp, "skp, ");
+	fprintf (lf_fp, "c2d, ");
+    fprintf (lf_fp, "CTS, ");
 
-        // Delivered packet meta data
-        fprintf (lf_fp, "retx, ");
-        fprintf (lf_fp, "ch, ");
-        fprintf (lf_fp, "tx_TS, ");
-        fprintf (lf_fp, "rx_TS, ");
-        fprintf (lf_fp, "Pc2R, ");
-        
-        // per carrier meta data
-        fprintf (lf_fp, "C0: c2v, v2t, t2r, c2r, occ, tx_TS, "); 
-        fprintf (lf_fp, "C1: c2v, v2t, t2r, c2r, occ, tx_TS, "); 
-        fprintf (lf_fp, "C2: c2v, v2t, t2r, c2r, occ, tx_TS, "); 
+    // Delivered packet meta data
+    fprintf (lf_fp, "retx, ");
+    fprintf (lf_fp, "ch, ");
+    fprintf (lf_fp, "tx_TS, ");
+    fprintf (lf_fp, "rx_TS, ");
+    fprintf (lf_fp, "Pc2R, ");
+    
+    // per carrier meta data
+    fprintf (lf_fp, "C0: c2v, v2t, t2r, c2r, occ, tx_TS, "); 
+    fprintf (lf_fp, "C1: c2v, v2t, t2r, c2r, occ, tx_TS, "); 
+    fprintf (lf_fp, "C2: c2v, v2t, t2r, c2r, occ, tx_TS, "); 
+
+    // packet analytics 
+    fprintf (lf_fp, "dtx, fch, eff, opt, "); 
+    fprintf (lf_fp, "3fch, 2fch, 1fch, ");
 
     fprintf (lf_fp, "\n");
     return;
@@ -767,11 +766,11 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
     // initialization
     if (ssp->frame_count == 1) {
         c0p->packet_num = -1; // have not read any lines yet
-        c0p->last_rx_m_tx = 30; // default value before the first packet is transmiited by this carrier
+        c0p->rx_m_tx = 30; // default value before the first packet is transmiited by this carrier
         c1p->packet_num = -1; // have not read any lines yet
-        c1p->last_rx_m_tx = 30; // default value before the first packet is transmiited by this carrier
+        c1p->rx_m_tx = 30; // default value before the first packet is transmiited by this carrier
         c2p->packet_num = -1; // have not read any lines yet
-        c2p->last_rx_m_tx = 30; // default value before the first packet is transmiited by this carrier
+        c2p->rx_m_tx = 30; // default value before the first packet is transmiited by this carrier
     }
 
     if (verbose) {
@@ -827,12 +826,12 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
         // Frame metadata
         fprintf (lf_fp, "%u, ", ssp->frame_count);
         fprintf (lf_fp, "%u, ", mdp->packet_num);
+	    if (p->latest_packet_num == mdp->packet_num) fprintf (lf_fp, "%u, ", p->latest_packet_num); else fprintf (lf_fp, ", "); 
         fprintf (lf_fp, "%u, ", p->late);
 	    fprintf (lf_fp, "%u, ", p->missing);
 	    fprintf (lf_fp, "%.1f, ", p->nm1_bit_rate);
 	    fprintf (lf_fp, "%u, ", p->packet_count);
 	    fprintf (lf_fp, "%u, ", p->size);
-	    fprintf (lf_fp, "%u, ", p->latest_packet_num);
 	    fprintf (lf_fp, "%.1f, ", p->tx_epoch_ms_1st_packet - p->camera_epoch_ms);
 	    fprintf (lf_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->tx_epoch_ms_1st_packet);
 	    fprintf (lf_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->camera_epoch_ms);
@@ -855,24 +854,31 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
 	        emit_carrier_stat (print_header, c1p, c1_fp, "c1", mdp, p);
 	        emit_carrier_stat (print_header, c2p, c2_fp, "c2", mdp, p);
 	
+            //
+            // analytics
+            //
 		    // compute difference in the tx times of the channels attempting this packet
 		    double latest_tx, earliest_tx;
-		    if (c0p->tx==0) { // c0 is not transmitting
-		       latest_tx = MAX(c1p->tx_epoch_ms, c2p->tx_epoch_ms);
-		       earliest_tx = MIN(c1p->tx_epoch_ms, c2p->tx_epoch_ms);
-		    } // c0 is not transmitting
-		    else if (c1p->tx==0) { // c1 is not transmitting
-		       latest_tx = MAX(c0p->tx_epoch_ms, c2p->tx_epoch_ms);
-		       earliest_tx = MIN(c0p->tx_epoch_ms, c2p->tx_epoch_ms);
-		    } // c1 is not transmitting
-		    else { // c2 is not transmitting
-		        latest_tx = MAX(c0p->tx_epoch_ms, c1p->tx_epoch_ms);
-		        earliest_tx = MIN(c0p->tx_epoch_ms, c1p->tx_epoch_ms);
-		    } // c2 is not transmitting
-		    fprintf (lf_fp, "%0.1f, ", latest_tx-earliest_tx); 
+            if ((c0p->tx + c1p->tx + c2p->tx) > 1) {
+			    if (c0p->tx==0) { // c0 is not transmitting
+			       latest_tx = MAX(c1p->tx_epoch_ms, c2p->tx_epoch_ms);
+			       earliest_tx = MIN(c1p->tx_epoch_ms, c2p->tx_epoch_ms);
+			    } // c0 is not transmitting
+			    else if (c1p->tx==0) { // c1 is not transmitting
+			       latest_tx = MAX(c0p->tx_epoch_ms, c2p->tx_epoch_ms);
+			       earliest_tx = MIN(c0p->tx_epoch_ms, c2p->tx_epoch_ms);
+			    } // c1 is not transmitting
+			    else { // c2 is not transmitting
+			        latest_tx = MAX(c0p->tx_epoch_ms, c1p->tx_epoch_ms);
+			        earliest_tx = MIN(c0p->tx_epoch_ms, c1p->tx_epoch_ms);
+			    } // c2 is not transmitting
+			    fprintf (lf_fp, "%0.1f, ", latest_tx-earliest_tx); 
+            } // atleast 2 channels are transmitting this packet
+            else
+                fprintf (lf_fp, ", "); 
 	
 	        // fast channel availabiliyt and efficiency
-	        float fastest_tx_to_rx = MIN(c0p->last_rx_m_tx, MIN(c1p->last_rx_m_tx, c2p->last_rx_m_tx));
+	        float fastest_tx_to_rx = MIN(c0p->rx_m_tx, MIN(c1p->rx_m_tx, c2p->rx_m_tx));
 	        float c2v_latency = MAX(c0p->tx*(c0p->vx_epoch_ms - p->camera_epoch_ms), 
 	            MAX(c1p->tx*(c1p->vx_epoch_ms - p->camera_epoch_ms), c2p->tx*(c2p->vx_epoch_ms - p->camera_epoch_ms))); 
 	        fprintf (lf_fp, "%0.1f, ", fastest_tx_to_rx);
@@ -881,6 +887,21 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
 	        // update session packet stats (wrong place for this code. 
 	        // update_metric_stats (ssp->c2vp, 0, c2v_latency, MAX_C2V_LATENCY, MIN_C2V_LATENCY);
 	        update_metric_stats (ssp->best_t2rp, 0, fastest_tx_to_rx, MAX_T2R_LATENCY, MIN_T2R_LATENCY);
+
+            // was fastest channel used to transfer this packet
+            if ((mdp->rx_epoch_ms-mdp->tx_epoch_ms) == fastest_tx_to_rx) // slight dangerous to compare floats but the range is low
+                fprintf (lf_fp, "1, "); 
+            else
+                fprintf (lf_fp, "0, "); 
+            
+            // fast channel availability
+            int c0fast = c0p->rx_m_tx < fast_channel ? 1 : 0; 
+            int c1fast = c1p->rx_m_tx < fast_channel ? 1 : 0; 
+            int c2fast = c2p->rx_m_tx < fast_channel ? 1 : 0; 
+            // 3 channels fast
+            fprintf (lf_fp, "%d, ", c0fast+c1fast+c2fast == 3? 1: 0);
+            fprintf (lf_fp, "%d, ", c0fast+c1fast+c2fast == 2? 1: 0);
+            fprintf (lf_fp, "%d, ", c0fast+c1fast+c2fast == 1? 1: 0);
 
         } // have carrier meta data 
 
@@ -934,12 +955,12 @@ void emit_carrier_stat (int print_header, struct s_carrier *cp, FILE *c_fp, char
 	    if (cp->modem_occ == 31) /* no info */ fprintf (lf_fp, ", "); else fprintf (lf_fp, "%d, ", cp->modem_occ);
 	    fprintf (lf_fp, "%.0lf, ", cp->tx_epoch_ms);
 
-        cp->last_rx_m_tx = cp->rx_epoch_ms - cp->tx_epoch_ms; 
+        cp->rx_m_tx = cp->rx_epoch_ms - cp->tx_epoch_ms; 
 
     } // if this carrier transmitted this meta data line, then print the carrier stats 
 	else {// stay silent except indicate the channel quality through t2r
         cp->tx = 0; 
-	    fprintf (lf_fp, ", , %0.1f, , , , ", cp->last_rx_m_tx);
+	    fprintf (lf_fp, ", , %0.1f, , , , ", cp->rx_m_tx);
     }
 
 } // emit_carrier_stat
@@ -1052,7 +1073,7 @@ void emit_metric_stats (
     // first line of the latency histogram; blank first cell, then bin names
     fprintf (ss_fp, " "); 
     for (index=0; index < NUMBER_OF_BINS; index++)
-        fprintf (ss_fp, ", %.1f-%.1f", index*bin_size, (index+1)*bin_size);
+        fprintf (ss_fp, ", %.1f-%.1f", range_min + index*bin_size, range_min + (index+1)*bin_size);
     fprintf (ss_fp, "\n"); 
     // second lline of the latency histogram; 
     fprintf (ss_fp, "%s distribution", p2);
@@ -1200,7 +1221,7 @@ void update_metric_stats (
     p->max = MAX(p->max, value);
     p->min = p->min==0?                     // first time, so can't do min
         value : MIN(p->min, value); 
-    index = MIN((unsigned) value / bin_size, NUMBER_OF_BINS-1);
+    index = MIN(MAX(trunc((value-range_min) / bin_size), 0), NUMBER_OF_BINS-1);
     p->distr[index]++;
 
     return;
