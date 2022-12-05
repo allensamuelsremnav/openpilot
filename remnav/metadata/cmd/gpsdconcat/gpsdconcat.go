@@ -138,7 +138,7 @@ func main() {
 	archiveRootFlag := flag.String("archive_root",
 		"/home/user/6TB/remconnect/archive",
 		"archive storage directory (e.g. on rn3)")
-	rawRootFlag := flag.String("raw",
+	rawRootFlag := flag.String("raw_root",
 		"/home/user/6TB/remconnect/archive",
 		"archive storage directory for raw gpsd logs")
 	verboseFlag := flag.Bool("verbose",
