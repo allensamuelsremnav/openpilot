@@ -4,6 +4,7 @@ package main
 import (
 	"encoding/csv"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -114,6 +115,9 @@ func destinationInventory(destinationDir string) (int, int) {
 				}
 				defer f.Close()
 				s, e := metadataSendRange(f, n)
+				if s < 0 {
+					continue
+				}
 				if first < 0 || s < first {
 					first = s
 				}
@@ -127,74 +131,39 @@ func destinationInventory(destinationDir string) (int, int) {
 	return first, last
 }
 
-func concatSources(raw []string, first, last int, tag string) []string {
-	// Find the raw logs to concatenate.
-	if len(raw) == 0 {
-		return nil
-	}
-
-	// Timestamps of a raw log containing first and last
-	firstPrefix := time.UnixMilli(int64(first)).UTC().Format(gpsd.WatchTimestampFmt)
-	lastPrefix := time.UnixMilli(int64(last)).UTC().Format(gpsd.WatchTimestampFmt)
-	if verbose {
-		log.Printf("%s: [%s, %s]", tag, firstPrefix, lastPrefix)
-	}
-
-	logFirst := -1
-	logLast := len(raw)
-	// intersect [firstPrefix, infinity) with raw logs.
-	if raw[len(raw)-1] < firstPrefix {
-		log.Printf("all %s were after gpsd logs",
-			senderTimestamp)
-		return nil
-	}
-	for i, s := range raw {
-		if firstPrefix <= s {
-			logFirst = i
-			break
-		}
-	}
-
-	// intersect (-infinity, lastPrefix] with raw logs.
-	if lastPrefix < raw[0] {
-		log.Printf("all %s were before gpsd logs",
-			senderTimestamp)
-		return nil
-	}
-	for i := len(raw) - 1; i >= 0; i-- {
-		if raw[i] <= lastPrefix {
-			logLast = i
-			break
-		}
-	}
-	if logFirst == -1 || logLast == len(raw) || logLast < logFirst {
-		log.Fatal("programming error, logFirst %d, logLast %d",
-			logFirst, logLast)
-	}
-	return raw[logFirst : logLast+1]
-}
-
 func main() {
-	rawFlag := flag.String("raw",
+	machineIdFlag := flag.String("machine_id",
 		"",
+		"identfier for vehicle")
+	archiveRootFlag := flag.String("archive_root",
+		"/home/user/6TB/remconnect/archive",
+		"archive storage directory (e.g. on rn3)")
+	rawRootFlag := flag.String("raw_root",
+		"/home/user/6TB/remconnect/archive",
 		"archive storage directory for raw gpsd logs")
 	verboseFlag := flag.Bool("verbose",
 		false,
 		"verbose output")
-	flag.Parse()
-
-	verbose = *verboseFlag
-
-	if false && len(*rawFlag) == 0 {
-		log.Fatal("--raw required")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [OPTIONS] sessionId...\n", os.Args[0])
+		flag.PrintDefaults()
 	}
-	log.Printf("raw gpsd logs from %s", *rawFlag)
+	flag.Parse()
 
 	if flag.NArg() == 0 {
 		log.Fatalln("session identifiers required")
 	}
 
-	raw := rawInventory(*rawFlag)
+	if len(*machineIdFlag) == 0 {
+		log.Fatal("--machine_id required")
+	}
+
+	verbose = *verboseFlag
+
+	rawDirectory := filepath.Join(*rawRootFlag, storage.RawGNSSSubdir, *machineIdFlag)
+	log.Printf("raw gpsd logs from %s", rawDirectory)
+
+	raw := rawInventory(rawDirectory)
 	log.Printf("%d raw gpsd logs, [%s, %s]", len(raw), raw[0], raw[len(raw)-1])
 	// debugging code:
 	// raw := []string{"/home/greg/rn1/remnav/metadata/gpsd/nonl.json",
@@ -203,20 +172,34 @@ func main() {
 	// return
 
 	for _, sessionId := range flag.Args() {
-		log.Printf("session %s", sessionId)
-		first, last := destinationInventory(filepath.Join(sessionId, storage.VideoSubdir))
-		log.Printf("[%d, %d] ms %s", first, last, sessionId)
-		log.Printf("[%s, %s]",
-			time.UnixMilli(int64(first)).UTC(),
-			time.UnixMilli(int64(last)).UTC())
-		logSources := concatSources(raw, first, last, sessionId)
+		// Process each requested session.
+		if verbose {
+			log.Printf("session %s", sessionId)
+		}
+
+		first, last := destinationInventory(filepath.Join(*archiveRootFlag, sessionId, storage.VideoSubdir))
+		if verbose {
+			log.Printf("[%d, %d] ms %s", first, last, sessionId)
+		}
+		if first < 0 {
+			continue
+		}
+		firstTime := time.UnixMilli(int64(first)).UTC()
+		lastTime := time.UnixMilli(int64(last)).UTC()
+		if verbose {
+			log.Printf("[%s, %s] %s", firstTime, lastTime, sessionId)
+		}
+
+		logSources := gpsd.Intersection(raw, firstTime, lastTime, verbose)
 		log.Printf("%d/%d relevant raw gpsd logs found for %s", len(logSources), len(raw),
 			sessionId)
 		if len(logSources) == 0 {
 			continue
 		}
 
-		log.Printf("concatenate %v", logSources)
+		if verbose {
+			log.Printf("concatenate %v", logSources)
+		}
 
 		outDir := filepath.Join(sessionId, storage.GNSSSubdir)
 		err := os.MkdirAll(outDir, 0775)

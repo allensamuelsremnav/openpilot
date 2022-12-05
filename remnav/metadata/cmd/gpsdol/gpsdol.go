@@ -3,6 +3,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"html/template"
 	"io"
 	"log"
@@ -46,7 +47,7 @@ rsync -arv ${LOCAL_ROOT}/${GNSS_SUBDIR}/${MACHINE_ID} ${ARCHIVE_USER}@${ARCHIVE_
 
 func main() {
 	// Listen to gpsd and write messages to
-	// vehicle_root/gnss/<YYYYmmddTHHMM_<fmtid>.json>
+	// <vehicle_root>/gnss/<machine_id>/<YYYYmmddTHHMM_<fmtid>.json>
 	// ./gpsdol
 	vehicleRootFlag := flag.String("vehicle_root",
 		"/home/user/6TB/vehicle/remconnect",
@@ -56,10 +57,14 @@ func main() {
 		"IP address of archive server (e.g. rn3)")
 	archiveRootFlag := flag.String("archive_root",
 		"/home/user/6TB/remconnect/archive",
-		"archive storage directory (e.g. on rn3")
+		"archive storage directory (e.g. on rn3)")
 	gpsdAddressFlag := flag.String("gpsd_address",
 		"10.1.10.225:2947",
 		"local address of gpsd server")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [OPTIONS]\n", os.Args[0])
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 	if flag.NArg() > 0 {
 		log.Printf("ignoring unexpected argument %s\n", flag.Arg(0))
@@ -108,5 +113,5 @@ func main() {
 
 	gpsd.PokeWatch(conn)
 
-	gpsd.WatchLogPeriodic(*gpsdAddressFlag, reader, gnssPath)
+	gpsd.WatchBinned(*gpsdAddressFlag, reader, gnssPath)
 }

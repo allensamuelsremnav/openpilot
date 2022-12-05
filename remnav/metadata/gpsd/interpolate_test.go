@@ -42,15 +42,15 @@ func TestInterval(t *testing.T) {
 		return inlineTime(t, s)
 	}
 	tpvs := []TPV{
-		TPV{Time: inline("2022-10-01T12:00:10Z"),
+		{Time: inline("2022-10-01T12:00:10Z"),
 			Lat:   10,
 			Lon:   -100,
 			Speed: 1},
-		TPV{Time: inline("2022-10-01T12:00:20Z"),
+		{Time: inline("2022-10-01T12:00:20Z"),
 			Lat:   20,
 			Lon:   -200,
 			Speed: 2},
-		TPV{Time: inline("2022-10-01T12:00:30Z"),
+		{Time: inline("2022-10-01T12:00:30Z"),
 			Lat:   30,
 			Lon:   -300,
 			Speed: 3}}
