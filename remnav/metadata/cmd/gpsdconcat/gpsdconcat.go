@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/csv"
 	"flag"
 	"fmt"
@@ -191,17 +192,13 @@ func main() {
 		}
 
 		logSources := gpsd.Intersection(raw, firstTime, lastTime, verbose)
-		log.Printf("%d/%d relevant raw gpsd logs found for %s", len(logSources), len(raw),
-			sessionId)
+		log.Printf("%d/%d relevant raw gpsd logs found for %s [%s, %s]", len(logSources), len(raw),
+			sessionId, firstTime, lastTime)
 		if len(logSources) == 0 {
 			continue
 		}
 
-		if verbose {
-			log.Printf("concatenate %v", logSources)
-		}
-
-		outDir := filepath.Join(sessionId, storage.GNSSSubdir)
+		outDir := filepath.Join(*archiveRootFlag, sessionId, storage.GNSSSubdir)
 		err := os.MkdirAll(outDir, 0775)
 		if err != nil {
 			log.Fatalf("%s: %s while creating directory %s",
@@ -219,8 +216,27 @@ func main() {
 		}
 		defer outFile.Close()
 
-		bytesWritten := gpsd.Concat(logSources, outFile)
+		var logPaths []string
+		for _, s := range logSources {
+			logPaths = append(logPaths, filepath.Join(rawDirectory, s))
+		}
+		bytesWritten := gpsd.Concat(logPaths, outFile)
 		log.Printf("%d bytes, %s", bytesWritten, outlogPath)
+
+		// Read back and run simple parse check
+		checkFile, err := os.Open(outlogPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer checkFile.Close()
+		err = gpsd.ParseCheck(bufio.NewReader(checkFile))
+		if err != nil {
+			log.Fatal(err)
+		}
+		if verbose {
+			log.Println("ParseCheck passed")
+		}
+
 	}
 
 }
