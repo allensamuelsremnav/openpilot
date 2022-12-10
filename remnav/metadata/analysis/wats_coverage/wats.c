@@ -3,25 +3,26 @@
 #include	<string.h>
 #include	<math.h>
 
-// #define		DEBUG 			1
 #define		MAX_POP_CHAR	1000				// largest text string in the pop up 
-#define 	MAX_OSM			15000				// maximum entries in the OSM file. fatal if there are more.
-#define 	MAX_GPS			15000				// maximum entries in the gps file. fatal if there are more.
+#define 	MAX_OSM			25000				// maximum entries in the OSM file. fatal if there are more.
+#define 	MAX_GPS			25000				// maximum entries in the gps file. fatal if there are more.
 #define 	MAX_VQ_FILES	50					// maximum number of vq (and gps) files
 #define 	MAX_NAME		100					// maximum lenght of the file name
 #define 	MAX_LINE_SIZE	1000				// maximum size of a line in any of the files
 #define		MATCH			0					// strcmp success output
 #define 	ACCEPTABLE_GPS_MATCH_RATIO 0.75		// vq filter points to gps file map ratio. below this generates warning
 #define		ACCEPTABLE_OSM_MATCH_RATIO 0.75		// gps coords to osm bin map ratio. below this genrates warning
-#define		NEUTRAL_COLOR 	0x000000			// this bin point not traversed yet
+#define		NEUTRAL_COLOR 	0xC0C0C0			// color of the untraversed bin point
 #define		FRAME_COLOR 	0x9933FF			// camera frame position before mapping to bin point
-#define		BAD_COLOR		0xFF0000			// bad coverage at this bin point
-#define		GOOD_COLOR		0x00FF00			// good coverage at this bin point
+#define		BAD_COLOR		0x990000			// bad coverage at this bin point
+#define		GOOD_COLOR		0x009900			// good coverage at this bin point
 #define		MIXED_COLOR		0x3333FF			// mixed coverage: some times good, sometimes bad at this bin point
-#define		GPS_COLOR		0x999900			// gps file points
+#define		GPS_COLOR		0x00FFFF			// color of the gps file points; will be overwritten by frame colors for the matches
+#define		NO_BIN_MATCH_COLOR	0xFF00FF		// color of the frames that did not match the osm points
 #define		R_EARTH_KM		6378.1
 #define		FATAL(STR, ARG) {printf (STR, ARG); exit(-1);}
 #define		WARN(STR, ARG) {if (!silent) printf (STR, ARG);}
+#define		IGNORE_FIRST_xxx_FRAMES 100			// first xxx will not be marked defective
 
 struct s_coord {
 	double	lon;
@@ -42,7 +43,9 @@ struct s_frame {
 	unsigned		late;						// number of late packets in this frame
 	unsigned		missing;					// number of missing packets in this frame
 	float			bit_rate;					// bit-rate of the frame
+	int				sizeB; 						// frame size in bytes
 	unsigned		has_annotation;				// 1 if this frame has user generated annotation
+	int				no_fast_channel;			// 1 if there was atleast one packet in this frame with no fast channel
 	float			distance;					// distance of the frame from the nearest bin point; invalid if not in search window
 	float			speed; 						// interpolated speed of this frame
 	int				defective; 					// 1 if this frame is defective
@@ -62,9 +65,9 @@ int 				len_osm;					// number of valid entires in osm array
 // list of vq filter output and gps files that are to be anlzyed for the specified target area
 struct s_vqlist {
 	FILE 			*vqfp; 						// vq file
-	char			vqname[MAX_NAME]; 				// vq file name
+	char			vqname[MAX_NAME]; 			// vq file name
 	FILE			*gpsfp;						// corresponding gps file
-	char			gpsname[MAX_NAME]; 				// gps file name
+	char			gpsname[MAX_NAME]; 			// gps file name
 	int				priority; 					// priority of this vq file
 } vqlist[MAX_VQ_FILES]; 
 int 				len_vqlist = 0;				// number of valid entries in the vqlist array
@@ -75,6 +78,7 @@ struct s_gps {
 	int 			mode;						// quality indicator
 	struct s_coord	coord; 						// lon, lat of the gps point (at 1Hz)
 	float			speed; 						// vehicle speed 
+	int				count; 						// number of frames that mapped into this gps coord
 } gps[MAX_GPS];
 int					len_gps = 0; 				// number of valid entries in gps array
 
@@ -83,7 +87,7 @@ int read_osm (FILE *);							// reads and error checks osm file
 
 // returns 1 if successfully able to open the vq and gps file 
 int add_to_vqlist (
-	char 			*argv[],
+	char *argv[],
 	struct s_vqlist *);							// current out index of vqlist; add_to... fills out index+1
 
 // returns number of enteries found in the gps file
@@ -124,54 +128,133 @@ int is_defective (struct s_frame *);
 // writes out the new osm bin file
 void emit_osm ();
 
-float 	search_range = -1; 						// search window to map gps coord into osm coords (in m)
+void print_usage () {
+
+	char *usage =  "Usage: -osm <file> [-w <search window in m>] [-v] [-a] [-nofc] [-f <dddd>] [-l] [-m] [-b <bit rate d.d Mbps>] [-s] -p 0 <vq file> <gps file> [-p 0/1/2/3 <vq file> <gps file>] -out <file>\n"; 
+	printf ("%s\n", usage); 
+	printf ("\t-osm: osm bin points file name\n");
+	printf ("\t-w: wats will search for bin ponts in w/2 radius from the gps points (which the frames are mapped to). Default w = 40m\n");
+	printf ("\t-v: wats will generate debug files and points in the output cvs file. Default off\n"); 
+	printf ("\t-a: wats will use annotation column from the vq file for defective frame calculation. Default off\n");
+	printf ("\t-0fst: wats will use 0fst column from the vq file for defective frame calculation. Default off\n");
+	printf ("\t-f: wats will consider frames below the specified size as defective. Default off\n");
+	printf ("\t-l: wats will use late column from the vq file for defective frame calculation. Default off\n");
+	printf ("\t-m: wats will use missing column from the vq file for defective frame calculation. Default off\n");
+	printf ("\t-b: wats will consider frames with bit rate below this value as defective. Default 0\n");
+	printf ("\t-s: wats will run in silent mode and not generate too many console messages. Default off, NOT in silent mode\n"); 
+	printf ("\t-p: priority of the vq file\n");
+	printf ("\t-out: output file name\n"); 
+
+	return;
+} // end of print_usage
+
+void print_header (FILE *fp) {
+	int i; 
+	
+	/*
+	// command line arguments
+	if (silent) fprintf (fp, "-s ");
+	if (include_late) fprintf (fp, "-l " ); 
+	if (include_anno) fprintf (fp, "-a " ); 
+	fprintf (fp, "-w %0.1f ", search_range);
+	fprintf (fp, "-b %0.1f ", -minimum_acceptable_bitrate);
+	for (i=0; i < len_vqlist; i++)
+		fprintf (fp, "-p%d %s %s ", (vqlist+i)->vqname, (vqlist+i)->gpsname);
+
+	fprintf (fp, "\n"); 
+	*/
+
+	// data line header
+	fprintf (fp, "lat,lon,color,tooltip\n");
+
+	return;
+} // end of print_header
+
+// globals
+float 	search_range = 40; 						// search window to map gps coord into osm coords (in m)
 float 	minimum_acceptable_bitrate = 0;			// below will be treated as defective
+int 	minimum_acceptable_framesize = 0;		// below will be treated as defective
 FILE	*outfp=NULL; 							// outfp - output file pointer
 int		silent=0; 								// setting to 1 suppresses warning
-#ifdef DEBUG
 FILE	*debug_gpsfp, *debug_binfp;				// debug output file
-#endif 
+int		verbose = 0; 							// if set to 1, then generate debug output
+int		include_late = 0;						// if set to 1, include latency in defective frame calculation
+int		include_anno = 0; 						// if set to 1, include annotation in defective frame calculation
+int		include_0fst = 0; 						// if set to 1, include 0fst column in defective frame calculation
+int		include_missing = 0; 					// if set to 1, include missing column in defective frame calculation
 
 int main (int argc, char *argv[]) {
 FILE	*fp; 									// temp file pointer
-	char *usage =  "Usage: -osm <file> -w <search window in m> -b <bit rate d.d Mbps> -slient -p 0 <vq file> <gps file> [-p 0/1/2/3 <vq file> <gps file>] -out <file>\n"; 
+int i;
 
 	// read and parse arguments
 	while (*++argv != NULL) {
 		// while there are more parameters to process
+
 		//usage
 		if (strcmp (*argv, "--help") == MATCH || strcmp (*argv, "-help") == MATCH) {
-			printf ("%s\n", usage); 
+			print_usage ();
 			exit (0); 
+
 		// osm file
 		} else if (strcmp (*argv, "-osm") == MATCH) {
 			if ((fp = fopen (*++argv, "r")) == NULL)
 				FATAL ("Could not open osm file: %s\n", *argv)
 			else 
 				len_osm = read_osm (fp); 
+
 		// silent mode
-		} else if (strcmp (*argv, "-silent") == MATCH) {
+		} else if (strcmp (*argv, "-s") == MATCH) {
 			silent = 1; 
+
+		// include missing 
+		} else if (strcmp (*argv, "-m") == MATCH) {
+			include_missing = 1; 
+
+		// include anno
+		} else if (strcmp (*argv, "-a") == MATCH) {
+			include_anno = 1; 
+
+		// include anno
+		} else if (strcmp (*argv, "-0fst") == MATCH) {
+			include_0fst = 1; 
+
+		// incldue latency
+		} else if (strcmp (*argv, "-l") == MATCH) {
+			include_late = 1; 
+
+		// verbose
+		} else if (strcmp (*argv, "-v") == MATCH) {
+			verbose = 1; 
+
 		// search window size
 		} else if (strcmp (*argv, "-w") == MATCH) {
 			if (sscanf (*++argv, "%f", &search_range) != 1)
 				FATAL ("-w should be followed by search window. Missing window specification%s\n", "")
+
 		// minimum acceptable bit-rate
 		} else if (strcmp (*argv, "-b") == MATCH) {
 			if (sscanf (*++argv, "%f", &minimum_acceptable_bitrate) != 1)
 				FATAL ("-b should be followed by minimum acceptable bit rate. Missing bit-rate specification%s\n", "")
+
+		// minimum acceptable frame size
+		} else if (strcmp (*argv, "-f") == MATCH) {
+			if (sscanf (*++argv, "%d", &minimum_acceptable_framesize) != 1)
+				FATAL ("-f should be followed by minimum acceptable frame size. Missing frame size specification%s\n", "")
+
 		// priority, vq and gps files
 		} else if (strcmp (*argv, "-p") == MATCH) {
 			len_vqlist += add_to_vqlist (argv, (vqlist+len_vqlist));
 			argv += 3; // for priority, vq file name and gps file name 
 			if (len_vqlist > MAX_VQ_FILES)
 				FATAL ("Input VQ files exceed maximum permissible (MAX_VQ_FILES) %d\n", len_vqlist)
+		
 		// output file
 		} else if (strcmp (*argv, "-out") == MATCH) {
 			if ((outfp = fopen (*++argv, "w")) == NULL)
 				FATAL ("Could not open out file: %s\n", *argv)
-			else // print header
-				fprintf (outfp, "lat,lon,color,tooltip\n");
+
+		// unrecognized argument
 		} else 
 			FATAL ("invalid argument: %s\n", *argv)
 	} // end of while there are more parameters to process
@@ -182,14 +265,18 @@ FILE	*fp; 									// temp file pointer
 	if (len_vqlist == 0) FATAL ("Missing vq and gps file specificaiton%s\n", "")
 	if (search_range <0) FATAL ("Invalid or unspeficied search window %f\n", search_range)
 
-#ifdef DEBUG
+	if (verbose) {
 	if ((debug_gpsfp = fopen("debug_gps.csv", "w")) == NULL)
 		FATAL ("could not open file: %s\n", "debug_gps.csv") 
-	fprintf (debug_gpsfp, "F#,F_epoch_ms,F_coord.lon,F_coord.lat,P_epoch_ms,P_coord.lon,P_coord.lat,N_epoch_ms,N_coord.lon,N_coord_lat\n");
+	fprintf (debug_gpsfp, "F#,F_epoch_ms,F_coord.lon,F_coord.lat,P_epoch_ms,P_coord.lon,P_coord.lat,N_epoch_ms,N_coord.lon,N_coord_lat,gps_index\n");
+
 	if ((debug_binfp = fopen ("debug_bin.csv", "w")) == NULL)
 		FATAL ("could not open file: %s\n", "debug_bin.csv") 
 	fprintf (debug_binfp, "F#,F_epoch_ms,F_coord.lon,F_coord.lat,dist(m),F_color,B_coord.lon,B_coord.lat,B_color\n");
-#endif
+	}
+
+	// print header lines
+	print_header(outfp); 
 
 	int vqlist_index;
 	// for each file in the vq files list
@@ -201,7 +288,7 @@ FILE	*fp; 									// temp file pointer
 		struct s_vqlist *vqp = vqlist + vqlist_index; 
 
 		// read gps file
-		len_gps = read_gps(vqp->gpsfp);
+		len_gps = read_gps(vqp->gpsfp); // reads the gps file for this vq file into global array gps
 
 		// set new file flag in osm array
 		set_new_file_flag (); 
@@ -220,16 +307,29 @@ FILE	*fp; 									// temp file pointer
 					update_osm_bin((osm+osm_index), framep, vqp);
 				} // if found osm bin for the frame
 			} // if found the gps coordinates of the frame
+
+			if ((frame_count % 1000) == 0) {
+				printf ("%s: frame %d\n", vqp->vqname, frame_count); 
+			}
+
 		} // while there are more liines in this vq file
 
-		// check if vq file has good match with gps and osm files
+		// check % match between vq file with gps and osm files
 		float ratio;
-		if ((ratio = (float) gps_match_count / (float) frame_count) < ACCEPTABLE_GPS_MATCH_RATIO)
-			printf ("Warning: only %.0f%% match between vq file %s and gps file %s\n", 
-				ratio*100, vqp->vqname, vqp->gpsname);
-		if ((ratio = (float) osm_match_count / (float) frame_count) < ACCEPTABLE_OSM_MATCH_RATIO)
-			printf ("Warning: only %.0f%% match between vq file %s and osm file\n", 
-				ratio*100, vqp->vqname);
+		ratio = (float) gps_match_count / (float) frame_count;
+		printf ("%.0f%% match between vq file %s and gps file %s\n", ratio*100, vqp->vqname, vqp->gpsname);
+		ratio = (float) osm_match_count / (float) frame_count; 
+		printf ("%.0f%% match between vq file %s and osm file\n", ratio*100, vqp->vqname);
+
+
+		if (verbose) {
+			fprintf (debug_gpsfp, "gps_index, count, lon, lat\n");
+			for (i=0; i < len_gps; i++)
+				fprintf (debug_gpsfp, "%d,%d,%lf,%lf\n",
+				i, (gps+i)->count, 
+				(gps+i)->coord.lon, (gps+i)->coord.lat);
+		} // verbose
+
 	} // for each file in the vqlist
 
 	// output new osm bin file
@@ -315,7 +415,7 @@ int add_to_vqlist (char *argv[], struct s_vqlist *vqp) {
 } // add_to_vq_list
 
 // returns number of enteries found in the gps file
-// modifies global gps. if DEBUG then writes into outfp also
+// modifies global gps. if verbose then writes into outfp also
 int read_gps (FILE *fp) {
 	char	line[MAX_LINE_SIZE], *lp = line; 
 	char	time[100];						// time field of gps file
@@ -341,11 +441,13 @@ int read_gps (FILE *fp) {
 			&gpsp->speed) != 6)
 			FATAL ("Invalid gps line - missing fields: %s\n", lp)
 		
-#ifdef DEBUG
-		char popup[20];
-		sprintf (popup, "%s %d", "gps", index);
-		fprintf (outfp, "%lf,%lf,#%06X,%s\n", gpsp->coord.lat, gpsp->coord.lon, GPS_COLOR, popup);
-#endif 
+		if (verbose) {
+			char popup[20];
+			sprintf (popup, "%s %d", "gps", index);
+			fprintf (outfp, "%lf,%lf,#%06X,%s\n", gpsp->coord.lat, gpsp->coord.lon, GPS_COLOR, popup);
+		}
+
+		gpsp->count = 0; // initialization
 		
 		// error cheecking
 		if (index == 0) continue; // on the first line; nothing to error check
@@ -372,9 +474,14 @@ int get_frame (struct s_vqlist *vqp, struct s_frame *framep) {
 	}
 
 	// skip header
-	if (line_count == 0)
+	if (line_count == 0) {
+		// header line 1
 		if (fgets (lp, MAX_LINE_SIZE, vqp->vqfp) == NULL)
 			FATAL ("Empty vq file: %s\n", vqp->vqname)
+		// header line 2
+		if (fgets (lp, MAX_LINE_SIZE, vqp->vqfp) == NULL)
+			FATAL ("Empty vq file: %s\n", vqp->vqname)
+	}
 	
 	// read next line from the file
 	if (fgets (lp, MAX_LINE_SIZE, vqp->vqfp) != NULL) {
@@ -382,13 +489,15 @@ int get_frame (struct s_vqlist *vqp, struct s_frame *framep) {
 		// parse the line
 		if (sscanf (lp, 
 		 	// format line
-			"%u, %lf, %u, %u, %f", 
+			"%u, %lf, %u, %u, %f, %u, %d, %d", 
 			&framep->num,
 			&framep->epoch_ms,
 			&framep->late,
 			&framep->missing,
 			&framep->bit_rate,
-			&framep->has_annotation) != 6) {
+			&framep->has_annotation,
+			&framep->no_fast_channel,
+			&framep->sizeB) != 8) {
 				printf ("Invalid vq format in file %s at line %d: %s\n", vqp->vqname, line_count, lp);
 				exit (-1);
 			} // if scan did not succeed
@@ -414,15 +523,16 @@ int get_gps_coord (struct s_frame *framep) {
 
 	// check if the frame time is in the range
 	if ((framep->epoch_ms < gps->epoch_ms) || (framep->epoch_ms > (gps+len_gps-1)->epoch_ms)) {
-#ifdef DEBUG
-	fprintf (debug_gpsfp, "%d,%.0lf,%lf,%lf,%.0lf,%lf,%lf,%0lf,%lf,%lf,%s\n", 
-	framep->num, framep->epoch_ms, framep->coord.lon, framep->coord.lat, 
-	gps->epoch_ms, gps->coord.lon, gps->coord.lat,
-	(gps+len_gps-1)->epoch_ms, (gps+len_gps-1)->coord.lon, (gps+len_gps-1)->coord.lat,
-	"OUT OF RANGE"); 
-#endif
+		if (verbose) {
+			fprintf (debug_gpsfp, "%d,%.0lf,%lf,%lf,%.0lf,%lf,%lf,%0lf,%lf,%lf,%s\n", 
+			framep->num, 
+			framep->epoch_ms, framep->coord.lon, framep->coord.lat, 
+			gps->epoch_ms, gps->coord.lon, gps->coord.lat,
+			(gps+len_gps-1)->epoch_ms, (gps+len_gps-1)->coord.lon, (gps+len_gps-1)->coord.lat,
+			"OUT OF RANGE"); 
+		} // verbose
 		return 0;
-	}
+	} // frame timestamp deos not map into the gps file range
 
 	// find the closest before timestamp in gps array (linear search now should be replaced with binary)
 	for (i=0; i<len_gps; i++) {
@@ -446,15 +556,23 @@ int get_gps_coord (struct s_frame *framep) {
 		framep->speed = (1-dt)*prev->speed + (dt * next->speed); 
 	} // interpolate
 
-#ifdef DEBUG
-	char popup[20];
-	sprintf (popup, "F_%d %4.1fMbps %4.1fmph", framep->num, framep->bit_rate, framep->speed);
-	fprintf (debug_gpsfp, "%d,%.0lf,%lf,%lf,%.0lf,%lf,%lf,%0lf,%lf,%lf\n", 
-	framep->num, framep->epoch_ms, framep->coord.lon, framep->coord.lat, 
-	prev->epoch_ms, prev->coord.lon, prev->coord.lat,
-	next->epoch_ms, next->coord.lon, next->coord.lat); 
-	fprintf (outfp, "%lf,%lf,#%06X,%s\n", framep->coord.lat, framep->coord.lon, FRAME_COLOR, popup);
-#endif
+	// record how frames mapped into gps coordinates for debugging
+	prev->count++;
+
+	if (verbose) {
+		fprintf (debug_gpsfp, "%d,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%d\n", 
+		framep->num, 
+		framep->epoch_ms, framep->coord.lon, framep->coord.lat, 
+		prev->epoch_ms, prev->coord.lon, prev->coord.lat,
+		next->epoch_ms, next->coord.lon, next->coord.lat, 
+		i); 
+	
+	 	/* not necessary to print this as we will print the points that don't map into osm.
+		char popup[20];
+		sprintf (popup, "F_%d %4.1fMbps %4.1fmph", framep->num, framep->bit_rate, framep->speed);
+		fprintf (outfp, "%lf,%lf,#%06X,%s\n", framep->coord.lat, framep->coord.lon, FRAME_COLOR, popup);
+		*/
+	} // verbose
 
 		return 1;
 } // end of get_gps_coord
@@ -510,15 +628,21 @@ int find_osm_bin (struct s_frame *framep) {
 	// note down the distance for debugging purposes
 	framep->distance = min_distance; 
 
-#ifdef DEBUG
-	if (min_index == -1) // did not find a bin that maps to the frame
-		fprintf (debug_binfp, "%d,%lf,%lf,%lf,%s,#%06X\n", 
-			framep->num, framep->epoch_ms, framep->coord.lon, framep->coord.lat, "NO_MATCH", framep->color); 
-	else // found a mapping to a bin
-		fprintf (debug_binfp, "%d,%lf,%lf,%lf,%.1f,#%06X,%lf,%lf,#%06X\n", 
-			framep->num, framep->epoch_ms, framep->coord.lon, framep->coord.lat, framep->distance, framep->color, 
-			(osm+min_index)->coord.lon, (osm+min_index)->coord.lat, (osm+min_index)->color);
-#endif
+	if (verbose) {
+		if (min_index == -1) { // did not find a bin that maps to the frame
+			char buffer[100]; 
+			static int no_match_count = 0;
+			sprintf (buffer, "NO MATCH %d", no_match_count++);
+			fprintf (debug_binfp, "%d,%lf,%lf,%lf,%s,%d,#%06X\n", 
+				framep->num, framep->epoch_ms, framep->coord.lon, framep->coord.lat, "NO_MATCH", no_match_count, framep->color); 
+			fprintf (outfp, "%lf,%lf,#%06X,%s\n", framep->coord.lat, framep->coord.lon, NO_BIN_MATCH_COLOR, buffer);
+		}
+		else // found a mapping to a bin
+			fprintf (debug_binfp, "%d,%lf,%lf,%lf,%.1f,#%06X,%lf,%lf,#%06X\n", 
+				framep->num, framep->epoch_ms, framep->coord.lon, framep->coord.lat, framep->distance, framep->color, 
+				(osm+min_index)->coord.lon, (osm+min_index)->coord.lat, (osm+min_index)->color);
+
+	} // verbose
 
 	return min_index; // will be -1 if did not find a bin point closer than the search window
 } // end of find_osm_bin
@@ -538,29 +662,31 @@ double compute_distance ( struct s_coord *pt1, struct s_coord *pt2)  {
 // fills out color, pop up text etc. for the bin point located at osmp using the framep from files pointed to by vqp
 void update_osm_bin(struct s_osm *osmp, struct s_frame *framep, struct s_vqlist *vqp) {
 	char			s_color[10];  			// color assigned to the poput
-	char			s_popup[1000]; 			// length of the popu string
+	char			s_popup[5000]; 			// length of the popu string
 	int				does_not_fit = 0; 		// 1 if the popup message exceeds the length of the popup string
 	int				higher_priority = (osmp->priority == -1) /* not assigned yet */ || 
 						(vqp->priority < osmp->priority); /* lower number is higher priority */
 
 	// popup message string 
 	if (framep->defective) 
-		strcpy (s_color, "BAD");
+		strcpy (s_color, "B");
 	else 
-		strcpy (s_color, "GOOD");
-	if ((osmp->new_file)) {
-#ifndef DEBUG
+		strcpy (s_color, "G");
+
+	// print vq file nmae if new vq file
+	if ((osmp->new_file)) { // the osm bin point has not been tranversed by this vqfile; so print vq file name in popup message
 		sprintf (s_popup, "VQ:%s GPS:%s F#:%d %s ", vqp->vqname, vqp->gpsname, framep->num, s_color);
-#else
-		sprintf (s_popup, "VQ:%s GPS:%s F#:%d %.1fm %s ", vqp->vqname, vqp->gpsname, framep->num, framep->distance, s_color);
-#endif
 		osmp->new_file = 0;
-	} else // do not print the file names again to save space. 
-#ifndef DEBUG
+	} // if new vqfile
+	else // do not print the file names again to save space. 
 		sprintf (s_popup, "F#:%d %s ", framep->num, s_color);
-#else
-		sprintf (s_popup, "F#:%d %.1fm %s ", framep->num, framep->distance, s_color);
-#endif
+
+	if (verbose) {
+		char buffer[100]; 
+		sprintf (buffer, "%.1fm ", framep->distance); // print distance from the bin point
+		strcat (s_popup, buffer);
+	}
+
 	if (does_not_fit = (strlen(s_popup) > /* remaining space in popup storage */ (sizeof(osmp->popup)-(strlen(osmp->popup)-1))))
 		WARN ("Warning: Message does not fit into popup storage size MAX_POP_CHAR: %s. Discarding\n", s_popup)
 
@@ -585,7 +711,16 @@ void update_osm_bin(struct s_osm *osmp, struct s_frame *framep, struct s_vqlist 
 
 // returns 1 if the frame is defective else 0
 int is_defective (struct s_frame *framep) {
-	return (framep->late !=0) || (framep->missing !=0) || (framep->bit_rate < minimum_acceptable_bitrate) || framep->has_annotation; 
+	if (framep->num < IGNORE_FIRST_xxx_FRAMES)
+		return 0;
+	else 
+		return 
+			include_late * (framep->late !=0) || 
+			include_missing * (framep->missing !=0) || 
+			(framep->bit_rate < minimum_acceptable_bitrate) || 
+			(framep->sizeB < minimum_acceptable_framesize) || 
+			include_anno * framep->has_annotation ||
+			include_0fst * framep->no_fast_channel; 
 } // is_defective 
 
 // writes out the new osm bin file
