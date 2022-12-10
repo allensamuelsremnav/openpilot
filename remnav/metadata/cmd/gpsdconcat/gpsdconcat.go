@@ -142,6 +142,9 @@ func main() {
 	rawRootFlag := flag.String("raw_root",
 		"/home/user/6TB/remconnect/archive",
 		"archive storage directory for raw gpsd logs")
+	dryRunFlag := flag.Bool("dryrun",
+		false,
+		"dry run, no effects")
 	verboseFlag := flag.Bool("verbose",
 		false,
 		"verbose output")
@@ -199,6 +202,14 @@ func main() {
 		}
 
 		outDir := filepath.Join(*archiveRootFlag, sessionId, storage.GNSSSubdir)
+		if *dryRunFlag {
+			log.Printf("dry run only, skipping write to %s:\n", outDir)
+			for _, s := range logSources {
+				log.Printf("%s\n", s)
+			}
+			continue
+		}
+
 		err := os.MkdirAll(outDir, 0775)
 		if err != nil {
 			log.Fatalf("%s: %s while creating directory %s",
