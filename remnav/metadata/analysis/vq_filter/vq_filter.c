@@ -89,6 +89,7 @@ struct frame {
     int         repeat_count;               // number of times this frame caused a previous frame to be repeated
     int         skip_count;                 // if 1 then this frame will cause previous frame to be skipped
     float       c2d_frames;                 // camera to display latency in units of frame time
+    int         fast_channel_count;         // number of packets in the frame that had a fast channel available
 }; 
 
 struct stats {
@@ -227,6 +228,8 @@ void skip_carrier_md_file_header (FILE *fp, char *cname);
 
 void skip_combined_md_file_header (FILE *fp);
 
+void print_command_line (FILE *fp);
+
 // globals
 FILE    *md_fp = NULL;                          // meta data file name
 FILE    *an_fp = NULL;                          // annotation file name
@@ -251,7 +254,7 @@ int     rx_jitter_buffer_ms = 10;               // buffer to mitigate skip/repea
 int     fast_channel_t2r = 40;                  // channels with latency lower than this are considered fast
 int     fast_frame_t2r = 60;                    // frames with latency lower than this are considered fast
 int     frame_size_modulation_latency = 3;      // number of frames the size is expected to be modulated up or down
-int     frame_size_modulation_threshold = 6000; // size in bytes the frame size is expected to be modulated below or above
+int     frame_size_modulation_threshold = 6000; // size in bytes the frame size is expected to be modulated below or aboveo
 
 int main (int argc, char* argv[]) {
     unsigned    waiting_for_first_frame;        // set to 1 till first clean frame start encountered
@@ -618,7 +621,7 @@ int check_annotation (unsigned frame_num) {
 
 // prints program usage
 void print_usage (void) {
-    char    *usage = "Usage: vqfilter [-l <ddd>] [-b <dd.d>] [-fc <ddd>] [-ff <ddd>] [-j <dd>] [-v] [-ns1|ns2] [-a <file name>] -ml <d> -mt <dddd> -md|mdc <input prefix> [-help] -out <output prefix> ";
+    char    *usage = "Usage: vqfilter [-l <ddd>] [-b <dd.d>] [-fc <ddd>] [-ff <ddd>] [-j <dd>] [-v] [-ns1|ns2] [-a <file name>] [-sa] [-ml <d>] [-mt <dddd>] -md|mdc <input prefix> [-help] -out <output prefix> ";
     printf ("%s\n", usage);
     printf ("\t-l <ddd> is the maximumum acceptable camera to rx latency in ms. Default 110ms. Frames with longer lantency marked late.\n");
     printf ("\t-b <dd.d> is the minimum acceptable bit rate in Mbps. Default 0.5Mbps. Only used for session stats generation.\n");
@@ -629,6 +632,7 @@ void print_usage (void) {
     printf ("\t-j <dd> jitter buffer to reduce skip/repeat. this latency gets added to the Camera to display path. Default 10ms\n");
     printf ("\t-ns1/2 sender time format specification. ns1 = no occ, ns2 = with occ. Default 2\n");
     printf ("\t-a <file name>. manual annotation file name. See POR for syntax\n");
+    printf ("\t-sa enables self annotation to augment file based annotation. Currently 0 fast channel only\n"); 
     printf ("\t-v enables full output - all 3 files. Default 1 (enabled)\n");
     printf ("\t-md|mdc <file name> is the prefix of the metadata csv file to be read. see VQ filter POR for format\n");
     printf ("\t\t -mdc shouild be used if per channel meta data is also avalible. Name of the per channel file shoudl <prefix>_ch0/1/2\n");
@@ -711,6 +715,7 @@ void init_frame (
     fp->late = cmdp->rx_epoch_ms > (fp->camera_epoch_ms + maximum_acceptable_c2rx_latency);
     fp->packet_count = fp->latest_packet_count = 1; 
     fp->latest_packet_num = cmdp->packet_num; 
+    fp->fast_channel_count = 0;
 
 } // end of init_frame
 
@@ -745,9 +750,15 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "Miss, ");
     fprintf (fp, "Mbps, ");
     fprintf (fp, "anno, ");
-    fprintf (fp, "1st Pkt, ");
-    fprintf (fp, "SzP, ");
+    fprintf (fp, "0fst, ");
     fprintf (fp, "SzB, ");
+    fprintf (fp, "Rpt, ");
+    fprintf (fp, "skp, ");
+    fprintf (fp, "c2d, ");
+    fprintf (fp, "dlv, ulv, ");     // modulation down / up latency violation
+
+    fprintf (fp, "SzP, ");
+    fprintf (fp, "1st Pkt, ");
     fprintf (fp, "LPC, ");
     fprintf (fp, "LPN, ");
     fprintf (fp, "retx, ");
@@ -755,10 +766,6 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "t2r, ");
     fprintf (fp, "c2r, ");
     fprintf (fp, "ooo, ");
-    fprintf (fp, "Rpt, ");
-    fprintf (fp, "skp, ");
-    fprintf (fp, "c2d, ");
-    fprintf (fp, "dlv, ulv, ");     // modulation down / up latency violation
     
     // time stamps at the end 
     fprintf (fp, "1st TX_TS, ");
@@ -829,65 +836,8 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
         c2p->t2r = 30; // default value before the first packet is transmiited by this carrier
     }
 
-    if (verbose) {
-        if ((ssp->frame_count % 1000) == 0)
-            printf ("at frame %d\n", ssp->frame_count); 
-    }
-
-    //
-    // frame stats 
-    //
-    // for wats tool
-    fprintf (fs_fp, "%u, ", ssp->frame_count);
-    fprintf (fs_fp, "%.0lf, ", p->camera_epoch_ms);
-    fprintf (fs_fp, "%u, ", p->late);
-    fprintf (fs_fp, "%u, ", p->missing);
-    fprintf (fs_fp, "%.1f, ", p->nm1_bit_rate);
-    fprintf (fs_fp, "%u, ", p->has_annotation);
-
-    // other frame stats
-    float frame_t2r = p->rx_epoch_ms_latest_packet - p->tx_epoch_ms_1st_packet;
-    fprintf (fs_fp, "%u, ", p->first_packet_num);
-    fprintf (fs_fp, "%u, ", p->packet_count);
-    fprintf (fs_fp, "%u, ", p->size);
-    fprintf (fs_fp, "%u, ", p->latest_packet_count);
-    fprintf (fs_fp, "%u, ", p->latest_packet_num);
-    fprintf (fs_fp, "%u, ", p->latest_retx);
-    fprintf (fs_fp, "%.1f, ", p->tx_epoch_ms_1st_packet - p->camera_epoch_ms);
-    fprintf (fs_fp, "%.1f, ", frame_t2r);
-    fprintf (fs_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->camera_epoch_ms);
-    fprintf (fs_fp, "%u, ", p->out_of_order);
-    fprintf (fs_fp, "%u, ", p->repeat_count);
-    fprintf (fs_fp, "%u, ", p->skip_count);
-    fprintf (fs_fp, "%.1f, ", p->c2d_frames);
-
-    // analytics
-    // frame size modulation analytics
-    int fast_frame = frame_t2r < fast_frame_t2r;
-    fast_to_slow_edge_count = fast_frame? 0: fast_to_slow_edge_count + 1;
-    slow_to_fast_edge_count = fast_frame? slow_to_fast_edge_count + 1 : 0; 
-
-    if (( fast_to_slow_edge_count > frame_size_modulation_latency)  // don't have fast channel for a while
-        && (p->size > frame_size_modulation_threshold)) // but the frame size has not been modulated down
-        fprintf (fs_fp, "%d, ", 1);
-    else
-        fprintf (fs_fp, "%d, ", 0); 
-
-    if (( slow_to_fast_edge_count > frame_size_modulation_latency)  // don't have fast channel for a while
-        && (p->size < frame_size_modulation_threshold)) // but the frame size has not been modulated up
-        fprintf (fs_fp, "%d, ", 1);
-    else
-        fprintf (fs_fp, "%d, ", 0); 
-
-    // time stamps
-    fprintf (fs_fp, "%.0lf, ", p->tx_epoch_ms_1st_packet);
-    fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_last_packet);
-    fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_earliest_packet);
-    fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_latest_packet);
-    fprintf (fs_fp, "%.0lf, ", p->cdisplay_epoch_ms);
-    fprintf (fs_fp, "%.0lf, ", p->ndisplay_epoch_ms);
-
-    fprintf (fs_fp, "\n");
+    if ((ssp->frame_count % 1000) == 0)
+        printf ("at frame %d\n", ssp->frame_count); 
 
     //
     // packet stats
@@ -907,7 +857,7 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
         current_index = (starting_index + i) % MD_BUFFER_SIZE;
         struct meta_data *mdp = &md[current_index]; 
 
-        // Frame metadata
+        // Frame metadata for reference (repeated for every packet)
         fprintf (lf_fp, "%u, ", ssp->frame_count);
         fprintf (lf_fp, "%u, ", mdp->packet_num);
 	    if (p->latest_packet_num == mdp->packet_num) fprintf (lf_fp, "%u, ", p->latest_packet_num); else fprintf (lf_fp, ", "); 
@@ -987,12 +937,70 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
             fprintf (lf_fp, "%d, ", c0fast+c1fast+c2fast == 2? 1: 0);
             fprintf (lf_fp, "%d, ", c0fast+c1fast+c2fast == 1? 1: 0);
             fprintf (lf_fp, "%d, ", c0fast+c1fast+c2fast == 0? 1: 0);
+        
+            // update fast_channel_count;
+            p->fast_channel_count += c0fast || c1fast || c2fast; 
 
         } // have carrier meta data 
-
         fprintf (lf_fp, "\n");
-        
+
     } // for every packet in the frame
+
+    //
+    // frame stats 
+    //
+    // for wats tool
+    fprintf (fs_fp, "%u, ", ssp->frame_count);
+    fprintf (fs_fp, "%.0lf, ", p->camera_epoch_ms);
+    fprintf (fs_fp, "%u, ", p->late);
+    fprintf (fs_fp, "%u, ", p->missing);
+    fprintf (fs_fp, "%.1f, ", p->nm1_bit_rate);
+    fprintf (fs_fp, "%u, ", p->has_annotation);
+    fprintf (fs_fp, "%d, ", (p->fast_channel_count != p->packet_count)); 
+    fprintf (fs_fp, "%u, ", p->size);
+    fprintf (fs_fp, "%u, ", p->repeat_count);
+    fprintf (fs_fp, "%u, ", p->skip_count);
+    fprintf (fs_fp, "%.1f, ", p->c2d_frames);
+
+    // dlv and ulv
+    // frame size modulation analytics
+    float frame_t2r = p->rx_epoch_ms_latest_packet - p->tx_epoch_ms_1st_packet;
+    int fast_frame = frame_t2r < fast_frame_t2r;
+    fast_to_slow_edge_count = fast_frame? 0: fast_to_slow_edge_count + 1;
+    slow_to_fast_edge_count = fast_frame? slow_to_fast_edge_count + 1 : 0; 
+    // dlv
+    if (( fast_to_slow_edge_count > frame_size_modulation_latency)  // don't have fast channel for a while
+        && (p->size > frame_size_modulation_threshold)) // but the frame size has not been modulated down
+        fprintf (fs_fp, "%d, ", 1);
+    else
+        fprintf (fs_fp, "%d, ", 0); 
+    // ulv
+    if (( slow_to_fast_edge_count > frame_size_modulation_latency)  // don't have fast channel for a while
+        && (p->size < frame_size_modulation_threshold)) // but the frame size has not been modulated up
+        fprintf (fs_fp, "%d, ", 1);
+    else
+        fprintf (fs_fp, "%d, ", 0); 
+
+    // other frame stats
+    fprintf (fs_fp, "%u, ", p->packet_count);
+    fprintf (fs_fp, "%u, ", p->first_packet_num);
+    fprintf (fs_fp, "%u, ", p->latest_packet_count);
+    fprintf (fs_fp, "%u, ", p->latest_packet_num);
+    fprintf (fs_fp, "%u, ", p->latest_retx);
+    fprintf (fs_fp, "%.1f, ", p->tx_epoch_ms_1st_packet - p->camera_epoch_ms);
+    fprintf (fs_fp, "%.1f, ", frame_t2r);
+    fprintf (fs_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->camera_epoch_ms);
+    fprintf (fs_fp, "%u, ", p->out_of_order);
+
+    // time stamps
+    fprintf (fs_fp, "%.0lf, ", p->tx_epoch_ms_1st_packet);
+    fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_last_packet);
+    fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_earliest_packet);
+    fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_latest_packet);
+    fprintf (fs_fp, "%.0lf, ", p->cdisplay_epoch_ms);
+    fprintf (fs_fp, "%.0lf, ", p->ndisplay_epoch_ms);
+
+    fprintf (fs_fp, "\n");
             
     return; 
 } // end of emit_frame_stats
