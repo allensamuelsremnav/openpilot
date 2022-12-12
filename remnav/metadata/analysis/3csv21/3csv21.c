@@ -176,11 +176,6 @@ void emit_combined (
         return;
     }
     
-    // check consistency of common fields
-    check_consistency (packet_num, c0_mdp, c1_mdp);
-    check_consistency (packet_num, c0_mdp, c2_mdp); 
-    check_consistency (packet_num, c1_mdp, c2_mdp); 
-
     emit_common (0, packet_num, 
         // get common info from a channel involved in transmission
         c0_mdp->match? c0_mdp : c1_mdp->match? c1_mdp : c2_mdp, 
@@ -200,6 +195,9 @@ void print_usage (void) {
     printf ("%s\n", usage);
 }
 
+
+#define MD_BUFFER_SIZE 2
+
 int main (int argc, char* argv[]) {
     FILE *c0_fp = NULL;                     // carrier 0 meta data file
     FILE *c1_fp = NULL;                     // carrier 0 meta data file
@@ -208,7 +206,10 @@ int main (int argc, char* argv[]) {
     FILE *warn_fp = NULL;                   // combined output file 
     int silent = 0;                         // if 1 then warnigns are not printed
     int c0_eof, c1_eof, c2_eof;             // set to 1 if end of file readched
-    struct s_carrier c0_md, *c0_mdp = &c0_md, c1_md, *c1_mdp = &c1_md, c2_md, *c2_mdp = &c2_md;
+    int c0_md_index = 0, c1_md_index = 0, c2_md_index = 0; 
+    struct s_carrier c0_md[MD_BUFFER_SIZE], *c0_mdp = &(c0_md[c0_md_index]);
+    struct s_carrier c1_md[MD_BUFFER_SIZE], *c1_mdp = &(c1_md[c1_md_index]);
+    struct s_carrier c2_md[MD_BUFFER_SIZE], *c2_mdp = &(c2_md[c2_md_index]);
     unsigned packet_num = 0; 
 
     //  read command line arguments
@@ -268,23 +269,33 @@ int main (int argc, char* argv[]) {
     // and the pkt_num is the next packet to be transmitted
     while ( !(c0_eof || c1_eof || c2_eof) ) {
         int retransmission = 0; 
-
+        /*
+        retransmission 
+        */
         // first check if a channel wants to retransmit last packet
-        c0_mdp->match = c0_mdp->packet_num == (packet_num-1); 
-        c1_mdp->match = c1_mdp->packet_num == (packet_num-1); 
-        c2_mdp->match = c2_mdp->packet_num == (packet_num-1); 
+        // c0_mdp->match = c0_mdp->packet_num == (packet_num-1); 
+        // c1_mdp->match = c1_mdp->packet_num == (packet_num-1); 
+        // c2_mdp->match = c2_mdp->packet_num == (packet_num-1); 
+        if (c0_mdp->match = c0_mdp->packet_num == (packet_num-1)) 
+            check_consistency (c0_mdp->packet_num, c0_mdp, &c0_md[(c0_md_index + MD_BUFFER_SIZE -1) % MD_BUFFER_SIZE]); 
+        if (c1_mdp->match = c1_mdp->packet_num == (packet_num-1)) 
+            check_consistency (c1_mdp->packet_num, c1_mdp, &c1_md[(c1_md_index + MD_BUFFER_SIZE -1) % MD_BUFFER_SIZE]); 
+        if (c2_mdp->match = c2_mdp->packet_num == (packet_num-1)) 
+            check_consistency (c2_mdp->packet_num, c2_mdp, &c2_md[(c2_md_index + MD_BUFFER_SIZE -1) % MD_BUFFER_SIZE]); 
         switch (c0_mdp->match + c1_mdp->match + c2_mdp->match) {
-            case 0: { // normal case: packet should not be transmitted twice
+            case 0: { // no one wants to retransmit
                 break; 
             } // case 0
-            case 1: case 2: case 3: { // one channel wants to re-transmit this packet
+            case 1: case 2: case 3: { // one or more channels want to re-transmit this packet
                 FWARN (warn_fp, "Packet num %u re-transmitted by one or more carrier\n", packet_num-1)
                 retransmission = 1; 
                 goto EMIT_OUTPUT;
-                ; 
             } // end of case1, 2 and 3
         } // end of switch (c0_match + c1_match + c2_match)
 
+        /*
+        not a retransmission 
+        */
         // check that the files are sorted by incresaing packet number
         if ((packet_num > c0_mdp->packet_num) || (packet_num > c1_mdp->packet_num) || (packet_num > c2_mdp->packet_num))
             FATAL ("The input files MUST be sorted in increasing packet number. Check around packet %d\n", packet_num)
@@ -314,13 +325,18 @@ int main (int argc, char* argv[]) {
             } // case 3
         } // end of switch (c0_match + c1_match + c2_match)
 
+        // check consistency of common fields
+        check_consistency (packet_num, c0_mdp, c1_mdp);
+        check_consistency (packet_num, c0_mdp, c2_mdp); 
+        check_consistency (packet_num, c1_mdp, c2_mdp); 
+
         EMIT_OUTPUT:
         emit_combined (0, retransmission? packet_num-1: packet_num, c0_mdp, c1_mdp, c2_mdp, out_fp); 
 
         // read next lines for the channels that participated in this transaction
-        if (c0_mdp->match) c0_eof = read_line (0, c0_fp, c0_mdp);
-        if (c1_mdp->match) c1_eof = read_line (0, c1_fp, c1_mdp);
-        if (c2_mdp->match) c2_eof = read_line (0, c2_fp, c2_mdp);
+        if (c0_mdp->match) {c0_md_index = (c0_md_index + 1) % MD_BUFFER_SIZE; c0_mdp = &(c0_md[c0_md_index]); c0_eof = read_line (0, c0_fp, c0_mdp);}
+        if (c1_mdp->match) {c1_md_index = (c1_md_index + 1) % MD_BUFFER_SIZE; c1_mdp = &(c1_md[c1_md_index]); c1_eof = read_line (0, c1_fp, c1_mdp);}
+        if (c2_mdp->match) {c2_md_index = (c2_md_index + 1) % MD_BUFFER_SIZE; c2_mdp = &(c2_md[c2_md_index]); c2_eof = read_line (0, c2_fp, c2_mdp);}
 
         if (retransmission)
             ; // have not process the current packet number so don't increment it
