@@ -3,7 +3,7 @@
 #include	<string.h>
 #include	<math.h>
 
-#define		MAX_POP_CHAR	1000				// largest text string in the pop up 
+#define		MAX_POP_CHAR	2000				// largest text string in the pop up 
 #define 	MAX_OSM			25000				// maximum entries in the OSM file. fatal if there are more.
 #define 	MAX_GPS			25000				// maximum entries in the gps file. fatal if there are more.
 #define 	MAX_VQ_FILES	50					// maximum number of vq (and gps) files
@@ -20,9 +20,16 @@
 #define		GPS_COLOR		0x00FFFF			// color of the gps file points; will be overwritten by frame colors for the matches
 #define		NO_BIN_MATCH_COLOR	0xFF00FF		// color of the frames that did not match the osm points
 #define		R_EARTH_KM		6378.1
+#define		DEFECT_LATE_INDEX 0
+#define		DEFECT_MISSING_INDEX 1
+#define		DEFECT_BIT_RATE_INDEX 2
+#define		DEFECT_FRAME_SIZE_INDEX 3
+#define		DEFECT_ANNO_INDEX 4
+#define		DEFECT_0FST_INDEX 5
+
 #define		FATAL(STR, ARG) {printf (STR, ARG); exit(-1);}
 #define		WARN(STR, ARG) {if (!silent) printf (STR, ARG);}
-#define		IGNORE_FIRST_xxx_FRAMES 100			// first xxx will not be marked defective
+#define		IGNORE_FIRST_xxx_FRAMES 0			// first xxx will not be marked defective
 
 struct s_coord {
 	double	lon;
@@ -48,19 +55,23 @@ struct s_frame {
 	int				no_fast_channel;			// 1 if there was atleast one packet in this frame with no fast channel
 	float			distance;					// distance of the frame from the nearest bin point; invalid if not in search window
 	float			speed; 						// interpolated speed of this frame
-	int				defective; 					// 1 if this frame is defective
+	unsigned		defective; 					// non-zero if this frame is defective
 	unsigned		color; 						// BAD_COLOR if defective else GOOD_COLOR
 }; 
 
-// osm data based for the target area
+struct s_vqlist_attributes {
+	int	min_frame; 								// smallest frame number that is mapped to the bin point
+	int	max_frame; 								// largest frame number that is mapped to the bin point
+};
+
+// osm data based for the target area (global)
 struct s_osm {
 	struct s_coord	coord;						// OSM bin point coordinate
 	unsigned		color;						// color sassigned to this point
 	int 			priority;					// 0 highest, -1 if this point has not been assigned to
 	char			popup[MAX_POP_CHAR]; 		// pop up text
 	int				new_file; 					// 1 if this point has not been updated for the vq/gps file being processed; else 0
-} osm[MAX_OSM];
-int 				len_osm;					// number of valid entires in osm array
+} osm[MAX_OSM]; int len_osm = 0;				// osm array and number of valid entires in osm array
 
 // list of vq filter output and gps files that are to be anlzyed for the specified target area
 struct s_vqlist {
@@ -69,8 +80,7 @@ struct s_vqlist {
 	FILE			*gpsfp;						// corresponding gps file
 	char			gpsname[MAX_NAME]; 			// gps file name
 	int				priority; 					// priority of this vq file
-} vqlist[MAX_VQ_FILES]; 
-int 				len_vqlist = 0;				// number of valid entries in the vqlist array
+} vqlist[MAX_VQ_FILES]; int len_vqlist = 0;		// vq/gps list and number of valid entries in the vqlist array
 
 // gps data corresponding to the current vq_filter output file
 struct s_gps {
@@ -79,8 +89,7 @@ struct s_gps {
 	struct s_coord	coord; 						// lon, lat of the gps point (at 1Hz)
 	float			speed; 						// vehicle speed 
 	int				count; 						// number of frames that mapped into this gps coord
-} gps[MAX_GPS];
-int					len_gps = 0; 				// number of valid entries in gps array
+} gps[MAX_GPS]; int	len_gps; 					// gps data array number of valid entries in gps array
 
 // returns number of entries found in the osm bin file
 int read_osm (FILE *);							// reads and error checks osm file
@@ -123,7 +132,7 @@ void update_osm_bin(
 	struct s_vqlist *vqp);
 
 // returns 1 if the frame is defective else 0
-int is_defective (struct s_frame *); 
+unsigned is_defective (struct s_frame *); 
 
 // writes out the new osm bin file
 void emit_osm ();
@@ -659,30 +668,52 @@ double compute_distance ( struct s_coord *pt1, struct s_coord *pt2)  {
 	return sqrt (dx*dx + dy*dy); 
 } // end of compute_distance 
 
+void append_defect_string (char *dest, char *src, int index, struct s_frame *fp) {
+	if ((fp->defective >> index) & 0x1)
+		strcat (dest, src);
+	return; 
+} // append_defect_string
+
 // fills out color, pop up text etc. for the bin point located at osmp using the framep from files pointed to by vqp
 void update_osm_bin(struct s_osm *osmp, struct s_frame *framep, struct s_vqlist *vqp) {
-	char			s_color[10];  			// color assigned to the poput
-	char			s_popup[5000]; 			// length of the popu string
-	int				does_not_fit = 0; 		// 1 if the popup message exceeds the length of the popup string
-	int				higher_priority = (osmp->priority == -1) /* not assigned yet */ || 
-						(vqp->priority < osmp->priority); /* lower number is higher priority */
+	char	s_color[10];  			// color assigned to the poput
+	char 	buffer[100]; 
+	char	s_popup[5000]; 			// length of the popu string
+	int		does_not_fit = 0; 		// 1 if the popup message exceeds the length of the popup string
+	int		higher_priority = (osmp->priority == -1) /* not assigned yet */ || 
+				(vqp->priority < osmp->priority); /* lower number is higher priority */
 
-	// popup message string 
-	if (framep->defective) 
-		strcpy (s_color, "B");
-	else 
-		strcpy (s_color, "G");
-
-	// print vq file nmae if new vq file
-	if ((osmp->new_file)) { // the osm bin point has not been tranversed by this vqfile; so print vq file name in popup message
-		sprintf (s_popup, "VQ:%s GPS:%s F#:%d %s ", vqp->vqname, vqp->gpsname, framep->num, s_color);
+	// if osm bin point has not been tranversed by this vqfile, print vq file name in popup message
+	if ((osmp->new_file)) { 
+		sprintf (s_popup, "VQ:%s GPS:%s F#:%d ", vqp->vqname, vqp->gpsname, framep->num);
 		osmp->new_file = 0;
-	} // if new vqfile
-	else // do not print the file names again to save space. 
-		sprintf (s_popup, "F#:%d %s ", framep->num, s_color);
+	} // new vq file
+	else sprintf (s_popup, ""); 
+
+	// if frame is defective, add details 
+	if (framep->defective) {
+		sprintf (buffer, "F# %d ", framep->num); 
+		strcat (s_popup, buffer); 
+	}
+	sprintf (buffer, "Late "); 
+	append_defect_string (s_popup, buffer, DEFECT_LATE_INDEX, framep);
+
+	sprintf (buffer, "Missing "); 
+	append_defect_string (s_popup, buffer, DEFECT_MISSING_INDEX, framep);
+
+	sprintf (buffer, "Bit rate %d ", framep->bit_rate); 
+	append_defect_string (s_popup, buffer, DEFECT_BIT_RATE_INDEX, framep);
+
+	sprintf (buffer, "Frame Size %d ", framep->sizeB); 
+	append_defect_string (s_popup, buffer, DEFECT_FRAME_SIZE_INDEX, framep);
+
+	sprintf (buffer, "Anno "); 
+	append_defect_string (s_popup, buffer, DEFECT_ANNO_INDEX, framep);
+
+	sprintf (buffer, "0FST "); 
+	append_defect_string (s_popup, buffer, DEFECT_0FST_INDEX, framep);
 
 	if (verbose) {
-		char buffer[100]; 
 		sprintf (buffer, "%.1fm ", framep->distance); // print distance from the bin point
 		strcat (s_popup, buffer);
 	}
@@ -691,18 +722,16 @@ void update_osm_bin(struct s_osm *osmp, struct s_frame *framep, struct s_vqlist 
 		WARN ("Warning: Message does not fit into popup storage size MAX_POP_CHAR: %s. Discarding\n", s_popup)
 
 	// if this update is higher priority then replace previous
-	if (higher_priority) { //  
+	if (higher_priority) {
 		osmp->color = framep->color;
 		osmp->priority = vqp->priority; 
-		if (!does_not_fit) 
-			sprintf (osmp->popup, "%s", s_popup);
+		if (!does_not_fit) sprintf (osmp->popup, "%s", s_popup);
 	} 
 	// else if this update is the same priority as existing update then fuse
 	else if (vqp->priority == osmp->priority) {
 		if (framep->color != osmp->color)
 		osmp->color = MIXED_COLOR; 
-		if (!does_not_fit)
-			strcat (osmp->popup, s_popup);
+		if (!does_not_fit) strcat (osmp->popup, s_popup);
 	}
 	// else this update is lower priority than existing, then do nothing 
 	
@@ -710,17 +739,30 @@ void update_osm_bin(struct s_osm *osmp, struct s_frame *framep, struct s_vqlist 
 } // upate_osm_bin
 
 // returns 1 if the frame is defective else 0
-int is_defective (struct s_frame *framep) {
+unsigned is_defective (struct s_frame *framep) {
 	if (framep->num < IGNORE_FIRST_xxx_FRAMES)
 		return 0;
-	else 
-		return 
-			include_late * (framep->late !=0) || 
-			include_missing * (framep->missing !=0) || 
-			(framep->bit_rate < minimum_acceptable_bitrate) || 
-			(framep->sizeB < minimum_acceptable_framesize) || 
-			include_anno * framep->has_annotation ||
-			include_0fst * framep->no_fast_channel; 
+	else {
+		unsigned defective =  
+			((include_late * (framep->late !=0)) 			<< DEFECT_LATE_INDEX) +
+			((include_missing * (framep->missing !=0)) 		<< DEFECT_MISSING_INDEX) +
+			((framep->bit_rate < minimum_acceptable_bitrate)<< DEFECT_BIT_RATE_INDEX) +
+			((framep->sizeB < minimum_acceptable_framesize) << DEFECT_FRAME_SIZE_INDEX) + 
+			((include_anno * framep->has_annotation) 		<< DEFECT_ANNO_INDEX) +
+			((include_0fst * framep->no_fast_channel) 		<< DEFECT_0FST_INDEX); 
+
+  /*
+		if (framep->num == 1389) {
+			printf ("%d \n", ((include_late * (framep->late !=0)) 			<< DEFECT_LATE_INDEX));
+			printf ("%d \n", ((include_missing * (framep->missing !=0)) 		<< DEFECT_MISSING_INDEX));
+			printf ("%d \n", ((framep->bit_rate < minimum_acceptable_bitrate)<< DEFECT_BIT_RATE_INDEX));
+			printf ("%d \n", ((framep->sizeB < minimum_acceptable_framesize) << DEFECT_FRAME_SIZE_INDEX));
+			printf ("%d \n", ((include_anno * framep->has_annotation) 		<< DEFECT_ANNO_INDEX));
+			printf ("%d \n", ((include_0fst * framep->no_fast_channel) 		<< DEFECT_0FST_INDEX));
+		}
+	*/
+		return defective;
+	}
 } // is_defective 
 
 // writes out the new osm bin file
