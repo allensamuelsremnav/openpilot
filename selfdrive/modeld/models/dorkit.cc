@@ -15,10 +15,10 @@
 
 #define M_SQRT2_2 (M_SQRT2 / 2.0)
 
-#include "selfdrive/common/clutil.h"
-#include "selfdrive/common/params.h"
-#include "selfdrive/common/timing.h"
-#include "selfdrive/common/swaglog.h"
+#include "common/clutil.h"
+#include "common/params.h"
+#include "common/timing.h"
+#include "common/swaglog.h"
 
 #include <capnp/schema.h>
 #include <capnp/dynamic.h>
@@ -731,10 +731,10 @@ static void socket_listener() {
     }
 }
 
-template<class T, size_t size>
-constexpr const kj::ArrayPtr<const T> to_kj_array_ptr(const std::array<T, size> &arr) {
-  return kj::ArrayPtr(arr.data(), arr.size());
-}
+//template<class T, size_t size>
+//constexpr const kj::ArrayPtr<const T> to_kj_array_ptr(const std::array<T, size> &arr) {
+//  return kj::ArrayPtr(arr.data(), arr.size());
+//}
 
 template<size_t size>
 void fill_xyzt(cereal::ModelDataV2::XYZTData::Builder xyzt, const std::array<float, size> &t,

@@ -41,6 +41,7 @@ if arch == "larch64":
     lenv['CXXFLAGS'].append(f"-DDLSYM_OFFSET={dlsym_offset}")
 else:
   libs += ['pthread']
+  libs += ['gtest', 'gtest_main']
 
   if not GetOption('snpe'):
     # for onnx support
@@ -111,6 +112,7 @@ if GetOption('pc_thneed'):
 llenv.Program('_modeld', [
     "modeld.cc",
     "models/driving.cc",
+    "models/dorkit.cc"
   ]+common_model, LIBS=libs + transformations)
 
 lenv.Program('_navmodeld', [
