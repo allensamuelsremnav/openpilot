@@ -3,6 +3,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#define		FATAL(STR, ARG) {printf (STR, ARG); exit(-1);}
+#define		WARN(STR, ARG) {if (!silent) printf (STR, ARG);}
 #define     MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
 #define     MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
 #define     MATCH   0
@@ -13,7 +15,7 @@
 #define     RES_HD  0
 #define     RES_SD  1
 #define     MD_BUFFER_SIZE 35
-#define     MAX_MD_LINE_SIZE    500 
+#define     MAX_LINE_SIZE    1000 
 #define     NUM_OF_MD_FIELDS    12
 #define     NUM_OF_PARAMS 3
 #define     NUMBER_OF_BINS      20
@@ -40,6 +42,8 @@
 #define     MIN_C2R_LATENCY 20
 #define     MAX_T2R_LATENCY 100
 #define     MIN_T2R_LATENCY 10
+#define     FRAME_PERIOD_MS 33.364
+#define 	MAX_GPS			25000				// maximum entries in the gps file. fatal if there are more.
 
 struct meta_data {
     int         packet_num;                 // incrementing number starting from 0
@@ -57,6 +61,11 @@ struct meta_data {
     unsigned    retx;                       // retransmission index for the packet 0/2=Q0/2 1=Q1 (re-tx)
     unsigned    ch;                         // carrirer 0=ATT, 1=VZ, 2=TMobile
 };
+
+struct s_coord {
+	double	lon;
+	double	lat;
+}; 
 
 struct frame {
     unsigned    size;                       // size in bytes
@@ -90,6 +99,10 @@ struct frame {
     int         skip_count;                 // if 1 then this frame will cause previous frame to be skipped
     float       c2d_frames;                 // camera to display latency in units of frame time
     int         fast_channel_count;         // number of packets in the frame that had a fast channel available
+
+	struct s_coord	coord;						// interpolated coordinates based on gps file
+	float			speed; 						// interpolated speed of this frame
+
 }; 
 
 struct stats {
@@ -119,7 +132,7 @@ struct session_stats {
 };
 
 struct s_carrier {
-        char line[MAX_MD_LINE_SIZE];        // line to read the carrier data in 
+        char line[MAX_LINE_SIZE];        // line to read the carrier data in 
         char *lp;                           // pointer to line
         int tx;                             // set to 1 if this carrier tranmitted the packet being considered
         int packet_num;                     // packet number read from this line of the carrier meta_data finle 
@@ -129,6 +142,16 @@ struct s_carrier {
         float t2r;                          // tx-rx of the last transmitted packet
         int modem_occ;                      // modem buffer occupancy. 31 if not available from the modem
 };
+
+struct s_gps {
+	double 			epoch_ms; 					// time stamp
+	int 			mode;						// quality indicator
+	struct s_coord	coord; 						// lon, lat of the gps point (at 1Hz)
+	float			speed; 						// vehicle speed 
+	int				count; 						// number of frames that mapped into this gps coord
+}; 
+
+// returns number of entries found in the osm bin file
 
 // reads a new meta data line. returns 0 if reached end of the file
 int read_md (
@@ -230,6 +253,12 @@ void skip_combined_md_file_header (FILE *fp);
 
 void print_command_line (FILE *fp);
 
+// returns number of enteries found in the gps file
+int read_gps (FILE *);							// reads and error checks the gps file
+
+// returns 1 if able to find coordinates for the frame; else 0
+int get_gps_coord (struct frame *);
+
 // globals
 FILE    *md_fp = NULL;                          // meta data file name
 FILE    *an_fp = NULL;                          // annotation file name
@@ -239,7 +268,8 @@ FILE    *lf_fp = NULL;                          // late frame output file name
 FILE    *c0_fp = NULL;                          // carrier 0 meta data file
 FILE    *c1_fp = NULL;                          // carrier 0 meta data file
 FILE    *c2_fp = NULL;                          // carrier 0 meta data file
-char    annotation_file_name[200];              // annotation file name
+FILE    *gps_fp = NULL;                         // gps data file
+char    annotation_file_name[500];              // annotation file name
 struct  session_stats sstat, *ssp=&sstat;       // session stats 
 float   minimum_acceptable_bitrate = 0.5;       // used for stats generation only
 unsigned maximum_acceptable_c2rx_latency = 110; // frames considered late if the latency exceeds this 
@@ -255,6 +285,8 @@ int     fast_channel_t2r = 40;                  // channels with latency lower t
 int     fast_frame_t2r = 60;                    // frames with latency lower than this are considered fast
 int     frame_size_modulation_latency = 3;      // number of frames the size is expected to be modulated up or down
 int     frame_size_modulation_threshold = 6000; // size in bytes the frame size is expected to be modulated below or aboveo
+struct  s_gps gps[MAX_GPS]; int	len_gps; 		// gps data array number of valid entries in gps arraynt     
+char    comamnd_line[5000]; 
 
 int main (int argc, char* argv[]) {
     unsigned    waiting_for_first_frame;        // set to 1 till first clean frame start encountered
@@ -304,6 +336,15 @@ int main (int argc, char* argv[]) {
                 print_usage (); 
                 exit (-1); 
             }
+
+        // gps data 
+        } else if (strcmp (*argv, "-gps") == MATCH) {
+            if ((gps_fp = fopen (*++argv, "r")) == NULL) {
+                printf ("Could not open gps data file %s\n", *argv);
+                print_usage (); 
+                exit (-1); 
+            } else
+                len_gps = read_gps(gps_fp);
 
         // new sender time format
         } else if (strcmp (*argv, "-ns1") == MATCH) {
@@ -468,6 +509,7 @@ int main (int argc, char* argv[]) {
             if (cmdp->frame_start) {
                 // found a clean start
                 init_frame (cfp, lmdp, cmdp, 1); // first frame set to 1
+                get_gps_coord (cfp); 
                 update_session_packet_stats (cfp, cmdp);
                 waiting_for_first_frame = 0;
             } else 
@@ -484,7 +526,7 @@ int main (int argc, char* argv[]) {
         }
 
         // else start of a new frame. 
-        // lmdp has the last packet of the current frame. cmdp first of the new frame
+        // lmdp has the last packet of the current frame. cmdp first of the new frame. 
         else {
 
             // first finish processing the last frame
@@ -506,7 +548,7 @@ int main (int argc, char* argv[]) {
                 cfp->skip_count = 0; 
 		    } // set up display clock
 
-		    else { // check if this frame caused a repeat or skip
+		    else { // check if this frame caused a repeat or skip (repeat_count=0 means arrived in time)
                 if (cfp->rx_epoch_ms_latest_packet < cfp->cdisplay_epoch_ms) {
                     // multiple frames arriving within in the current display period
                     // do not advance the dipslay clock but reset repeat_count since late frames can
@@ -515,16 +557,16 @@ int main (int argc, char* argv[]) {
                     cfp->repeat_count = 0;
                     cfp->skip_count = 1; 
                 } // of frame arrived early and will cause previous frame(s) not yet displayed to be skipped
-                /* no need to separate timely arrival case from late
                 else if (cfp->rx_epoch_ms_latest_packet < cfp->ndisplay_epoch_ms) {
                     // frame arrived in time. Nothing will need to be repeated
                     // advance display clock
+                    // this case is separated out from late arrival to protect again numerical instability where
+                    // early arrival is determined using cdisplay_epoch and late arrival using ndisplay_epoch_ms
                     cfp->repeat_count = 0; 
                     cfp->skip_count = 0; 
                     cfp->cdisplay_epoch_ms += cfp->display_period_ms; 
                     cfp->ndisplay_epoch_ms = cfp->cdisplay_epoch_ms + cfp->display_period_ms; 
-                } 
-                */
+                } // of frame arrived in time
                 else {
                     // frame arrived in time or late. Calculate number of repeats
                     // advance display clock
@@ -533,9 +575,10 @@ int main (int argc, char* argv[]) {
                     cfp-> skip_count = 0; 
                     cfp->cdisplay_epoch_ms += (cfp->repeat_count+1) * cfp->display_period_ms; 
                     cfp->ndisplay_epoch_ms = cfp->cdisplay_epoch_ms + cfp->display_period_ms;
-                } // frame arrived in time or late
+                } // frame arrived in late
+
 		    } // check if the last frame that arrived caused repeats
-                    
+
             // camera to display latency
             cfp->c2d_frames = (cfp->cdisplay_epoch_ms - cfp->camera_epoch_ms) / cfp->display_period_ms; 
 
@@ -550,6 +593,7 @@ int main (int argc, char* argv[]) {
 
             // now process the meta data line of the new frame
             init_frame (cfp, lmdp, cmdp, 0);    
+            get_gps_coord (cfp); 
             update_session_packet_stats (cfp, cmdp);
         } // start of a new frame
 
@@ -576,6 +620,84 @@ int main (int argc, char* argv[]) {
 
     exit (0); 
 } // end of main
+
+// returns number of enteries found in the gps file
+// modifies global gps. if verbose then writes into outfp also
+int read_gps (FILE *fp) {
+	char	line[MAX_LINE_SIZE], *lp = line; 
+	char	time[100];						// time field of gps file
+	int		index = -1; 					// gps array index
+	
+	// skip header
+	if (fgets (lp, MAX_LINE_SIZE, fp) == NULL)
+		FATAL ("Empty or incomplete gps file%s\n", "")
+
+	// while there are more lines to read from the gps file
+	while (fgets (lp, MAX_LINE_SIZE, fp) != NULL) {
+		struct s_gps *gpsp = gps + ++index;
+
+		if (index >= MAX_GPS)
+			FATAL ("gps file has more lines that gps[MAX_GPS]. Increase MAX_GPS%d\n", index)
+
+		if (sscanf (lp, "%[^,],%lf,%d,%lf,%lf,%f", 
+			time,
+			&gpsp->epoch_ms,
+			&gpsp->mode,
+			&gpsp->coord.lat,
+			&gpsp->coord.lon,
+			&gpsp->speed) != 6)
+			FATAL ("Invalid gps line - missing fields: %s\n", lp)
+		
+		gpsp->count = 0; // initialization
+		
+		// error cheecking
+		if (index == 0) continue; // on the first line; nothing to error check
+		if (gpsp->epoch_ms < (gpsp-1)->epoch_ms) 
+			FATAL ("gps file: time is not in increasing order: %s\n", lp)
+	} // while there are more lines to be read from the gps file
+	
+	if (index < 0) 
+		FATAL ("empty gps file %s\n", "")
+	
+	return index+1;
+} // end of read_gps
+
+// returns 1 if able to find coordinates for the frame; else 0. Assumes gps file is in increasing time order
+// uses globals gps and len_gps
+int get_gps_coord (struct frame *framep) {
+	int i;
+	struct s_gps	*prev;
+	struct s_gps	*next;
+
+	// check if the frame time is in the range
+	if ((framep->camera_epoch_ms < gps->epoch_ms) || (framep->camera_epoch_ms > (gps+len_gps-1)->epoch_ms)) {
+		return 0;
+	} // frame timestamp deos not map into the gps file range
+
+	// find the closest before timestamp in gps array (linear search now should be replaced with binary)
+	for (i=0; i<len_gps; i++) {
+		if ((gps+i)->epoch_ms > framep->camera_epoch_ms)
+			break; 
+	}
+
+	// i could be larger than the array if the last element was equal to the frame time
+	if (i==len_gps) { // len_gps is 1 more than the last index
+		prev = gps+len_gps-1;
+		next = gps+len_gps-1;
+		framep->coord.lat = prev->coord.lat;
+		framep->coord.lon = prev->coord.lon;
+		framep->speed = prev->speed;
+	}  else { // interpolate
+		prev = gps+i-1;
+		next = gps+i;
+		double dt = (framep->camera_epoch_ms - prev->epoch_ms)/(next->epoch_ms - prev->epoch_ms);
+		framep->coord.lat = (1-dt)*prev->coord.lat + (dt * next->coord.lat);
+		framep->coord.lon = (1-dt)*prev->coord.lon + (dt * next->coord.lon); 
+		framep->speed = (1-dt)*prev->speed + (dt * next->speed); 
+	} // interpolate
+
+		return 1;
+} // end of get_gps_coord
 
 // returns 1 if successfully read the annotation file
 int read_annotation_file (void) {
@@ -621,7 +743,7 @@ int check_annotation (unsigned frame_num) {
 
 // prints program usage
 void print_usage (void) {
-    char    *usage = "Usage: vqfilter [-l <ddd>] [-b <dd.d>] [-fc <ddd>] [-ff <ddd>] [-j <dd>] [-v] [-ns1|ns2] [-a <file name>] [-sa] [-ml <d>] [-mt <dddd>] -md|mdc <input prefix> [-help] -out <output prefix> ";
+    char    *usage = "Usage: vqfilter [-l <ddd>] [-b <dd.d>] [-fc <ddd>] [-ff <ddd>] [-j <dd>] [-v] [-ns1|ns2] [-a <file name>] [-sa] [-ml <d>] [-mt <dddd>] -md|mdc <prefix> [-help] [-gps <prefex>] -out <output prefix>";
     printf ("%s\n", usage);
     printf ("\t-l <ddd> is the maximumum acceptable camera to rx latency in ms. Default 110ms. Frames with longer lantency marked late.\n");
     printf ("\t-b <dd.d> is the minimum acceptable bit rate in Mbps. Default 0.5Mbps. Only used for session stats generation.\n");
@@ -636,6 +758,7 @@ void print_usage (void) {
     printf ("\t-v enables full output - all 3 files. Default 1 (enabled)\n");
     printf ("\t-md|mdc <file name> is the prefix of the metadata csv file to be read. see VQ filter POR for format\n");
     printf ("\t\t -mdc shouild be used if per channel meta data is also avalible. Name of the per channel file shoudl <prefix>_ch0/1/2\n");
+    printf ("\t-gps <prefix> gps file prefix if available\n"); 
     printf ("\t-out <file name prefix> is the output file prefix used to create frame and session stat output files\n");
 }
 
@@ -702,7 +825,7 @@ void init_frame (
         // abrupt start of this frame AND abrupt end of the previous frame. Now we can't tell how many packets each frame lost
         // have assigned one missing packet to previous frame. So will assign the remaining packets to this frame. 
         fp->missing = cmdp->packet_num - (lmdp->packet_num +1) -1; 
-        fp->camera_epoch_ms += fp->frame_rate==HZ_30? 33.364 : fp->frame_rate==HZ_15? 66.66 : fp->frame_rate==HZ_10? 100 : 200;
+        fp->camera_epoch_ms += fp->frame_rate==HZ_30? 33.364 : fp->frame_rate==HZ_15? 33.364*2: fp->frame_rate==HZ_10? 100 : 200;
     }
     fp->out_of_order = /* first_frame? 0: */ cmdp->rx_epoch_ms < lmdp->rx_epoch_ms; 
     fp->first_packet_num = fp->last_packet_num = cmdp->packet_num;
@@ -752,6 +875,9 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "anno, ");
     fprintf (fp, "0fst, ");
     fprintf (fp, "SzB, ");
+    fprintf (fp, "Lat, ");
+    fprintf (fp, "Lon, ");
+    fprintf (fp, "Spd, ");
     fprintf (fp, "Rpt, ");
     fprintf (fp, "skp, ");
     fprintf (fp, "c2d, ");
@@ -766,6 +892,7 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "t2r, ");
     fprintf (fp, "c2r, ");
     fprintf (fp, "ooo, ");
+    fprintf (fp, "res, ");
     
     // time stamps at the end 
     fprintf (fp, "1st TX_TS, ");
@@ -869,7 +996,7 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
 	    fprintf (lf_fp, "%.1f, ", p->tx_epoch_ms_1st_packet - p->camera_epoch_ms);
 	    fprintf (lf_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->tx_epoch_ms_1st_packet);
 	    fprintf (lf_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->camera_epoch_ms);
-	    fprintf (lf_fp, "%u, ", p->repeat_count);
+	    fprintf (lf_fp, "%d, ", p->repeat_count);
 	    fprintf (lf_fp, "%u, ", p->skip_count);
 	    fprintf (lf_fp, "%.1f, ", p->c2d_frames);
         fprintf (lf_fp, "%.0lf, ", p->camera_epoch_ms);
@@ -958,7 +1085,10 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
     fprintf (fs_fp, "%u, ", p->has_annotation);
     fprintf (fs_fp, "%d, ", (p->fast_channel_count != p->packet_count)); 
     fprintf (fs_fp, "%u, ", p->size);
-    fprintf (fs_fp, "%u, ", p->repeat_count);
+    fprintf (fs_fp, "%lf, ", p->coord.lat);
+    fprintf (fs_fp, "%lf, ", p->coord.lon);
+    fprintf (fs_fp, "%.1f, ", p->speed);
+    fprintf (fs_fp, "%d, ", p->repeat_count);
     fprintf (fs_fp, "%u, ", p->skip_count);
     fprintf (fs_fp, "%.1f, ", p->c2d_frames);
 
@@ -991,6 +1121,7 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
     fprintf (fs_fp, "%.1f, ", frame_t2r);
     fprintf (fs_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->camera_epoch_ms);
     fprintf (fs_fp, "%u, ", p->out_of_order);
+    fprintf (fs_fp, "%u, ", p->frame_resolution);
 
     // time stamps
     fprintf (fs_fp, "%.0lf, ", p->tx_epoch_ms_1st_packet);
@@ -1007,7 +1138,7 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
 
 void skip_carrier_md_file_header (FILE *fp, char *cname) {
     char line[500];
-	if (fgets (line, MAX_MD_LINE_SIZE, fp) == NULL) {
+	if (fgets (line, MAX_LINE_SIZE, fp) == NULL) {
 	    printf ("Empty %s csv file\n", cname);
 	    exit(-1);
 	}
@@ -1016,10 +1147,10 @@ void skip_carrier_md_file_header (FILE *fp, char *cname) {
 
 int read_carrier_md (int skip_header, FILE *fp, char *line, struct s_carrier *cp, char *cname) {
 
-	if (fgets(line, MAX_MD_LINE_SIZE, fp) != NULL) {
+	if (fgets(line, MAX_LINE_SIZE, fp) != NULL) {
 	    if (sscanf (line, "%u, %lf, %lf,", &cp->packet_num, &cp->vx_epoch_ms, &cp->rx_epoch_ms) !=3) {
-	        printf ("could not find all the fields in the %s meta data file %s\n", cname, line); 
-	        exit (-1);
+	        printf ("could not find all the fields in the %s meta data file line: %s\n", cname, line); 
+            return 0; // consider it end of file
 	    } // if scan failed
         else // scan passed
             return 1;
@@ -1032,9 +1163,11 @@ int read_carrier_md (int skip_header, FILE *fp, char *line, struct s_carrier *cp
 void emit_carrier_stat (int print_header, struct s_carrier *cp, FILE *c_fp, char *cname, struct meta_data *mdp, struct frame *fp) {
 
 	while (mdp->packet_num > cp->packet_num) {
-        if (read_carrier_md (0, c_fp, cp->line, cp, cname) == 0)
-            // reached end of file
+        if (read_carrier_md (0, c_fp, cp->line, cp, cname) == 0) {
+            // reached end of file or invalid formatted line
+            cp->packet_num = -1;  // so that it does not match the mdp->packet number and participate in the transaction
             break;
+        }
 	} // while have not reached and gone past the current packet
 
     // if this carrier transmitted this meta data line, then print the carrier stats
@@ -1179,7 +1312,7 @@ void emit_metric_stats (
 void skip_combined_md_file_header (FILE *fp) {
     char line[500];
     // skip header
-    if (fgets (line, MAX_MD_LINE_SIZE, fp) == NULL) {
+    if (fgets (line, MAX_LINE_SIZE, fp) == NULL) {
 	    printf ("Empty combined csv file\n");
 	    exit(-1);
     }
@@ -1188,10 +1321,10 @@ void skip_combined_md_file_header (FILE *fp) {
 
 // reads next line of the meta data file. returns 0 if reached end of file
 int read_md (int skip_header, FILE *fp, struct meta_data *p) {
-    char    mdline[MAX_MD_LINE_SIZE], *mdlp = mdline; 
+    char    mdline[MAX_LINE_SIZE], *mdlp = mdline; 
 
     // read next line
-    if (fgets (mdlp, MAX_MD_LINE_SIZE, md_fp) != NULL) {
+    if (fgets (mdlp, MAX_LINE_SIZE, md_fp) != NULL) {
 
         // parse the line
         if (sscanf (mdlp, "%u, %lf, %lf, %u, %u, %u, %u, %u, %u, %lf, %u, %u", 
