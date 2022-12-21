@@ -932,7 +932,8 @@ void emit_packet_header (FILE *lf_fp) {
     fprintf (lf_fp, "ch, ");
     fprintf (lf_fp, "tx_TS, ");
     fprintf (lf_fp, "rx_TS, ");
-    fprintf (lf_fp, "Pc2R, ");
+    fprintf (lf_fp, "Pt2r, ");
+    fprintf (lf_fp, "Pc2r, ");
     
     // per carrier meta data
     fprintf (lf_fp, "C0: c2v, v2t, t2r, c2r, occ, tx_TS, "); 
@@ -1006,6 +1007,7 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
         fprintf (lf_fp, "%u, ", mdp->ch);
         fprintf (lf_fp, "%.0lf, ", mdp->tx_epoch_ms);
         fprintf (lf_fp, "%.0lf, ", mdp->rx_epoch_ms);
+        fprintf (lf_fp, "%.1f, ", mdp->rx_epoch_ms - mdp->tx_epoch_ms);
         fprintf (lf_fp, "%.1f, ", mdp->rx_epoch_ms - p->camera_epoch_ms);
 
         // Per carrier meta data
@@ -1117,9 +1119,9 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
     fprintf (fs_fp, "%u, ", p->latest_packet_count);
     fprintf (fs_fp, "%u, ", p->latest_packet_num);
     fprintf (fs_fp, "%u, ", p->latest_retx);
-    fprintf (fs_fp, "%.1f, ", p->tx_epoch_ms_1st_packet - p->camera_epoch_ms);
-    fprintf (fs_fp, "%.1f, ", frame_t2r);
-    fprintf (fs_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->camera_epoch_ms);
+    fprintf (fs_fp, "%.1f, ", p->tx_epoch_ms_1st_packet - p->camera_epoch_ms);      // c2t
+    fprintf (fs_fp, "%.1f, ", frame_t2r);                                           // t2r
+    fprintf (fs_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->camera_epoch_ms);   // Fc2r
     fprintf (fs_fp, "%u, ", p->out_of_order);
     fprintf (fs_fp, "%u, ", p->frame_resolution);
 
