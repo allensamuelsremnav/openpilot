@@ -95,6 +95,7 @@ struct frame {
     double      cdisplay_epoch_ms;          // the time stamp (current) where this frame is expeceted to be displayed
     double      ndisplay_epoch_ms;          // the time stamp when this frame's display will end. Next frame should arrive by this itme.
     double      display_period_ms;          // 1/frame rate
+    double      early_ms;                   // how early did this frame arrived relative to start of display of previous
     int         repeat_count;               // number of times this frame caused a previous frame to be repeated
     int         skip_count;                 // if 1 then this frame will cause previous frame to be skipped
     float       c2d_frames;                 // camera to display latency in units of frame time
@@ -538,7 +539,7 @@ int main (int argc, char* argv[]) {
                 else 
                     cfp->missing += 1; // not the correct number of missing packets but can't do better
 
-            // check if the last frame arrived too late and would have caused repeats at the display
+            // check when the frame arrived and will it cause repeats or skips
 		    if (ssp->frame_count < 1) { // we just reached the end of first frame
 		        // set up display clock
                 // by definition the first frame does not have repeat/skip
@@ -546,19 +547,24 @@ int main (int argc, char* argv[]) {
 		        cfp->ndisplay_epoch_ms = cfp->cdisplay_epoch_ms + cfp->display_period_ms;
 		        cfp->repeat_count = 0; // nothing repeated yet
                 cfp->skip_count = 0; 
+                cfp->early_ms = 0;  // by definition not early
 		    } // set up display clock
 
 		    else { // check if this frame caused a repeat or skip (repeat_count=0 means arrived in time)
-                if (cfp->rx_epoch_ms_latest_packet < cfp->cdisplay_epoch_ms) {
-                    // multiple frames arriving within in the current display period
-                    // do not advance the dipslay clock but reset repeat_count since late frames can
-                    // advance the display clock by arbitrarly large amount and next frame may arrive 
+
+                cfp->early_ms = cfp->rx_epoch_ms_latest_packet - cfp->cdisplay_epoch_ms;
+
+                // check if frame arrived early
+                if (cfp->rx_epoch_ms_latest_packet < (cfp->cdisplay_epoch_ms - rx_jitter_buffer_ms)) {
+                    // do not advance the display clock but reset repeat_count since late frames can
+                    // advance the display clock by arbitrarily large amount and next frame may arrive 
                     // earlier than this simulated display
                     cfp->repeat_count = 0;
                     cfp->skip_count = 1; 
                 } // of frame arrived early and will cause previous frame(s) not yet displayed to be skipped
+
+                // check if frame arrived in time
                 else if (cfp->rx_epoch_ms_latest_packet < cfp->ndisplay_epoch_ms) {
-                    // frame arrived in time. Nothing will need to be repeated
                     // advance display clock
                     // this case is separated out from late arrival to protect again numerical instability where
                     // early arrival is determined using cdisplay_epoch and late arrival using ndisplay_epoch_ms
@@ -567,8 +573,9 @@ int main (int argc, char* argv[]) {
                     cfp->cdisplay_epoch_ms += cfp->display_period_ms; 
                     cfp->ndisplay_epoch_ms = cfp->cdisplay_epoch_ms + cfp->display_period_ms; 
                 } // of frame arrived in time
+                
+                // frame arrived late. Calculate number of repeats
                 else {
-                    // frame arrived in time or late. Calculate number of repeats
                     // advance display clock
                     double delta = cfp->rx_epoch_ms_latest_packet - cfp->ndisplay_epoch_ms; 
                     cfp->repeat_count = ceil (delta/cfp->display_period_ms); 
@@ -577,7 +584,7 @@ int main (int argc, char* argv[]) {
                     cfp->ndisplay_epoch_ms = cfp->cdisplay_epoch_ms + cfp->display_period_ms;
                 } // frame arrived in late
 
-		    } // check if the last frame that arrived caused repeats
+		    } // check if the last frame that arrived caused repeats or skips
 
             // camera to display latency
             cfp->c2d_frames = (cfp->cdisplay_epoch_ms - cfp->camera_epoch_ms) / cfp->display_period_ms; 
@@ -901,6 +908,7 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "latest Rx_TS, ");
     fprintf (fp, "cdsp_TS, ");
     fprintf (fp, "ndsp_TS, ");
+    fprintf (fp, "early, ");
     
     fprintf (fp, "\n"); 
 
@@ -1132,6 +1140,7 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
     fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_latest_packet);
     fprintf (fs_fp, "%.0lf, ", p->cdisplay_epoch_ms);
     fprintf (fs_fp, "%.0lf, ", p->ndisplay_epoch_ms);
+    fprintf (fs_fp, "%.01f, ", p->early_ms);
 
     fprintf (fs_fp, "\n");
             
@@ -1165,12 +1174,20 @@ int read_carrier_md (int skip_header, FILE *fp, char *line, struct s_carrier *cp
 void emit_carrier_stat (int print_header, struct s_carrier *cp, FILE *c_fp, char *cname, struct meta_data *mdp, struct frame *fp) {
 
 	while (mdp->packet_num > cp->packet_num) {
+        int last_packet_num = cp->packet_num; 
         if (read_carrier_md (0, c_fp, cp->line, cp, cname) == 0) {
             // reached end of file or invalid formatted line
             cp->packet_num = -1;  // so that it does not match the mdp->packet number and participate in the transaction
             break;
         }
-	} // while have not reached and gone past the current packet
+        else { // do sanity check
+            if (last_packet_num > cp->packet_num) { // check that channel meta data file is sorted by packet number
+                printf ("Meta data file for carrier %s is not sorted. Check line: %s", cname, cp->line);
+                exit (-1); 
+            } // channel meta data file is not sorte by packet number
+        } // sanity check
+
+	} // while have not reached end of file or gone past the current packet
 
     // if this carrier transmitted this meta data line, then print the carrier stats
 	if (cp->packet_num == mdp->packet_num) {
