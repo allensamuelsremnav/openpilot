@@ -1026,11 +1026,12 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
 	        emit_carrier_stat (print_header, c2p, c2_fp, "c2", mdp, p);
 	
             //
-            // analytics
+            // packet analytics
             //
-		    // compute difference in the tx times of the channels attempting this packet
+
+		    // dtx: difference in the tx times of the channels attempting this packet
 		    double latest_tx, earliest_tx;
-            if ((c0p->tx + c1p->tx + c2p->tx) > 1) {
+            if ((c0p->tx + c1p->tx + c2p->tx) > 1) { // more than one channel transmitting
 			    if (c0p->tx==0) { // c0 is not transmitting
 			       latest_tx = MAX(c1p->tx_epoch_ms, c2p->tx_epoch_ms);
 			       earliest_tx = MIN(c1p->tx_epoch_ms, c2p->tx_epoch_ms);
@@ -1039,28 +1040,34 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
 			       latest_tx = MAX(c0p->tx_epoch_ms, c2p->tx_epoch_ms);
 			       earliest_tx = MIN(c0p->tx_epoch_ms, c2p->tx_epoch_ms);
 			    } // c1 is not transmitting
-			    else { // c2 is not transmitting
+			    else if (c2p->tx==0) { // c2 is not transmitting
 			        latest_tx = MAX(c0p->tx_epoch_ms, c1p->tx_epoch_ms);
 			        earliest_tx = MIN(c0p->tx_epoch_ms, c1p->tx_epoch_ms);
 			    } // c2 is not transmitting
+                else { // all 3 channels are transmitting
+			        latest_tx = MAX(MAX(c0p->tx_epoch_ms, c1p->tx_epoch_ms), c2p->tx_epoch_ms);
+			        earliest_tx = MIN(MIN(c0p->tx_epoch_ms, c1p->tx_epoch_ms), c2p->tx_epoch_ms);
+                } // all 3 channels transmitting this packet
 			    fprintf (lf_fp, "%0.1f, ", latest_tx-earliest_tx); 
             } // atleast 2 channels are transmitting this packet
             else
                 fprintf (lf_fp, ", "); 
 	
-	        // fast channel availabiliyt and efficiency
+	        // fch: fast channel availability
 	        float fastest_tx_to_rx = MIN(c0p->t2r, MIN(c1p->t2r, c2p->t2r));
 	        float c2v_latency = MAX(c0p->tx*(c0p->vx_epoch_ms - p->camera_epoch_ms), 
 	            MAX(c1p->tx*(c1p->vx_epoch_ms - p->camera_epoch_ms), c2p->tx*(c2p->vx_epoch_ms - p->camera_epoch_ms))); 
 	        fprintf (lf_fp, "%0.1f, ", fastest_tx_to_rx);
+
+            // eff: time wasted between encoding and transmission
 	        fprintf (lf_fp, "%0.1f, ", (mdp->rx_epoch_ms-p->camera_epoch_ms) - fastest_tx_to_rx - c2v_latency); 
 	
-	        // update session packet stats (wrong place for this code. 
+	        // update session packet stats (wrong place for this code)
 	        // update_metric_stats (ssp->c2vp, 0, c2v_latency, MAX_C2V_LATENCY, MIN_C2V_LATENCY);
 	        update_metric_stats (ssp->best_t2rp, 0, fastest_tx_to_rx, MAX_T2R_LATENCY, MIN_T2R_LATENCY);
 
-            // was fastest channel used to transfer this packet
-            if ((mdp->rx_epoch_ms-mdp->tx_epoch_ms) == fastest_tx_to_rx) // slight dangerous to compare floats but the range is low
+            // opt: was fastest channel used to transfer this packet
+            if ((mdp->rx_epoch_ms-mdp->tx_epoch_ms) < (fastest_tx_to_rx + 2)) // slightly dangerous to compare floats but the range is low
                 fprintf (lf_fp, "1, "); 
             else
                 fprintf (lf_fp, "0, "); 
