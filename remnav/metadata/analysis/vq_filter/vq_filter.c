@@ -950,7 +950,7 @@ void emit_packet_header (FILE *lf_fp) {
 
     // packet analytics 
     fprintf (lf_fp, "dtx, fch, eff, opt, "); 
-    fprintf (lf_fp, "3fch, 2fch, 1fch, 0fch, ");
+    fprintf (lf_fp, "3fch, 2fch, 1fch, 0fch, cUse, ");
 
     fprintf (lf_fp, "\n");
     return;
@@ -965,10 +965,13 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
     // initialization
     if (ssp->frame_count == 1) {
         c0p->packet_num = -1; // have not read any lines yet
+        c0p->modem_occ =0; // assume nothing in the buffer
         c0p->t2r = 30; // default value before the first packet is transmiited by this carrier
         c1p->packet_num = -1; // have not read any lines yet
+        c1p->modem_occ =0; // assume nothing in the buffer
         c1p->t2r = 30; // default value before the first packet is transmiited by this carrier
         c2p->packet_num = -1; // have not read any lines yet
+        c2p->modem_occ =0; // assume nothing in the buffer
         c2p->t2r = 30; // default value before the first packet is transmiited by this carrier
     }
 
@@ -1029,34 +1032,37 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
             // packet analytics
             //
 
-		    // dtx: difference in the tx times of the channels attempting this packet
-		    double latest_tx, earliest_tx;
-            if ((c0p->tx + c1p->tx + c2p->tx) > 1) { // more than one channel transmitting
-			    if (c0p->tx==0) { // c0 is not transmitting
-			       latest_tx = MAX(c1p->tx_epoch_ms, c2p->tx_epoch_ms);
-			       earliest_tx = MIN(c1p->tx_epoch_ms, c2p->tx_epoch_ms);
-			    } // c0 is not transmitting
-			    else if (c1p->tx==0) { // c1 is not transmitting
-			       latest_tx = MAX(c0p->tx_epoch_ms, c2p->tx_epoch_ms);
-			       earliest_tx = MIN(c0p->tx_epoch_ms, c2p->tx_epoch_ms);
-			    } // c1 is not transmitting
-			    else if (c2p->tx==0) { // c2 is not transmitting
-			        latest_tx = MAX(c0p->tx_epoch_ms, c1p->tx_epoch_ms);
-			        earliest_tx = MIN(c0p->tx_epoch_ms, c1p->tx_epoch_ms);
-			    } // c2 is not transmitting
-                else { // all 3 channels are transmitting
-			        latest_tx = MAX(MAX(c0p->tx_epoch_ms, c1p->tx_epoch_ms), c2p->tx_epoch_ms);
-			        earliest_tx = MIN(MIN(c0p->tx_epoch_ms, c1p->tx_epoch_ms), c2p->tx_epoch_ms);
-                } // all 3 channels transmitting this packet
-			    fprintf (lf_fp, "%0.1f, ", latest_tx-earliest_tx); 
-            } // atleast 2 channels are transmitting this packet
-            else
-                fprintf (lf_fp, ", "); 
-	
-	        // fch: fast channel availability
-	        float fastest_tx_to_rx = MIN(c0p->t2r, MIN(c1p->t2r, c2p->t2r));
+		    double latest_tx, earliest_tx, fastest_tx_to_rx;
 	        float c2v_latency = MAX(c0p->tx*(c0p->vx_epoch_ms - p->camera_epoch_ms), 
 	            MAX(c1p->tx*(c1p->vx_epoch_ms - p->camera_epoch_ms), c2p->tx*(c2p->vx_epoch_ms - p->camera_epoch_ms))); 
+		    if (c0p->tx==0) { // c0 is not transmitting
+		       latest_tx = MAX(c1p->tx_epoch_ms, c2p->tx_epoch_ms);
+		       earliest_tx = MIN(c1p->tx_epoch_ms, c2p->tx_epoch_ms);
+               // fastest_tx_to_rx = MIN(c1p->t2r, c2p->t2r);
+		    } // c0 is not transmitting
+		    else if (c1p->tx==0) { // c1 is not transmitting
+		       latest_tx = MAX(c0p->tx_epoch_ms, c2p->tx_epoch_ms);
+		       earliest_tx = MIN(c0p->tx_epoch_ms, c2p->tx_epoch_ms);
+               // fastest_tx_to_rx = MIN(c0p->t2r, c2p->t2r);
+		    } // c1 is not transmitting
+		    else if (c2p->tx==0) { // c2 is not transmitting
+		        latest_tx = MAX(c0p->tx_epoch_ms, c1p->tx_epoch_ms);
+		        earliest_tx = MIN(c0p->tx_epoch_ms, c1p->tx_epoch_ms);
+                // fastest_tx_to_rx = MIN(c0p->t2r, c1p->t2r);
+		    } // c2 is not transmitting
+            else { // all 3 channels are transmitting
+		        latest_tx = MAX(MAX(c0p->tx_epoch_ms, c1p->tx_epoch_ms), c2p->tx_epoch_ms);
+		        earliest_tx = MIN(MIN(c0p->tx_epoch_ms, c1p->tx_epoch_ms), c2p->tx_epoch_ms);
+                // fastest_tx_to_rx = MIN(c0p->t2r, MIN(c1p->t2r, c2p->t2r));
+            } // all 3 channels transmitting this packet
+
+		    // dtx: difference in the tx times of the channels attempting this packet
+		    fprintf (lf_fp, "%0.1f, ", latest_tx-earliest_tx); 
+	
+	        // fch: fast channel availability
+            // fastest tx_to_rx computed regardless of a channel was transmitting or not to capture the case where a fast
+            // channel was avaialble but was not used
+            fastest_tx_to_rx = MIN(c0p->t2r, MIN(c1p->t2r, c2p->t2r));
 	        fprintf (lf_fp, "%0.1f, ", fastest_tx_to_rx);
 
             // eff: time wasted between encoding and transmission
@@ -1067,7 +1073,7 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
 	        update_metric_stats (ssp->best_t2rp, 0, fastest_tx_to_rx, MAX_T2R_LATENCY, MIN_T2R_LATENCY);
 
             // opt: was fastest channel used to transfer this packet
-            if ((mdp->rx_epoch_ms-mdp->tx_epoch_ms) < (fastest_tx_to_rx + 2)) // slightly dangerous to compare floats but the range is low
+            if ((mdp->rx_epoch_ms - mdp->tx_epoch_ms) < (fastest_tx_to_rx + 2))  // 2 is arbitrary grace duration
                 fprintf (lf_fp, "1, "); 
             else
                 fprintf (lf_fp, "0, "); 
@@ -1084,6 +1090,9 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
         
             // update fast_channel_count;
             p->fast_channel_count += c0fast || c1fast || c2fast; 
+
+            // channels used
+            fprintf (lf_fp, "%d, ", c0p->tx + c1p->tx + c2p->tx); 
 
         } // have carrier meta data 
         fprintf (lf_fp, "\n");
@@ -1198,18 +1207,20 @@ void emit_carrier_stat (int print_header, struct s_carrier *cp, FILE *c_fp, char
 
     // if this carrier transmitted this meta data line, then print the carrier stats
 	if (cp->packet_num == mdp->packet_num) {
+        int last_reported_modem_occ = cp->modem_occ; 
+
         cp->tx = 1; 
         decode_sendtime (&cp->vx_epoch_ms, &cp->tx_epoch_ms, &cp->modem_occ);
+	    if (cp->modem_occ == 31) /* no info */ cp->modem_occ = last_reported_modem_occ; 
+
 	    fprintf (lf_fp, "%0.1f, ", cp->vx_epoch_ms - fp->camera_epoch_ms);
 	    fprintf (lf_fp, "%0.1f, ", cp->tx_epoch_ms - cp->vx_epoch_ms);
 	    fprintf (lf_fp, "%0.1f, ", cp->rx_epoch_ms - cp->tx_epoch_ms);
 	    fprintf (lf_fp, "%0.1f, ", cp->rx_epoch_ms - fp->camera_epoch_ms);
-	    if (cp->modem_occ == 31) /* no info */ fprintf (lf_fp, ", "); else fprintf (lf_fp, "%d, ", cp->modem_occ);
-	    // fprintf (lf_fp, "%d, ", cp->modem_occ);
+        fprintf (lf_fp, "%d, ", cp->modem_occ);
 	    fprintf (lf_fp, "%.0lf, ", cp->tx_epoch_ms);
 
         cp->t2r = cp->rx_epoch_ms - cp->tx_epoch_ms; 
-
     } // if this carrier transmitted this meta data line, then print the carrier stats 
 	else {// stay silent except indicate the channel quality through t2r
         cp->tx = 0; 
