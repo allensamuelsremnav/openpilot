@@ -6,7 +6,7 @@
 #define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
 #define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
 #define MAX_MD_LINE_SIZE 500
-#define MD_BUFFER_SIZE 2
+#define MD_BUFFER_SIZE (20*60*1000)
 #define MAX_SPIKES 1000
 
 // globals
@@ -27,8 +27,9 @@ struct s_carrier {
         double camera_epoch_ms;
         int retx;
         int check_packet_num;
-        double t2r_latency_ms;      // rx_epoch_ms = tx_epoch_ms
+        double t2r_latency_ms;          // rx_epoch_ms - tx_epoch_ms
 };
+struct s_carrier *md, *mdp; 
 
 struct s_latency {
         double latency;
@@ -53,7 +54,9 @@ struct s_ospike {
     double duration_ms;         // duration
 }; 
 
-#define		FATAL(STR, ARG) {printf (STR, ARG); exit(-1);}
+int my_exit (int);
+
+#define		FATAL(STR, ARG) {printf (STR, ARG); my_exit(-1);}
 #define		WARN(STR, ARG) {if (!silent) printf (STR, ARG);}
 #define		FWARN(FILE, STR, ARG) {if (!silent) fprintf (FILE, STR, ARG);}
 
@@ -93,8 +96,8 @@ FILE *open_file (char *file_namep, char *modep) {
     return fp; 
 } // end of open_file
 
-// reads and parses a meta data line from the specified file. returns 0 if end of file reached or if the scan for all the fields fails due
-// to an incomplete line as in last line of the file.
+// reads and parses a meta data line from the specified file. 
+// returns 0 if end of file reached or if the scan for all the fields fails due to an incomplete line as in last line of the file.
 int read_line (int read_header, FILE *fp, struct s_carrier *mdp) {
 
     char mdline[MAX_MD_LINE_SIZE], *mdlinep = mdline; 
@@ -196,8 +199,37 @@ void print_usage (void) {
     printf ("\t -s: Turns on silent, no console warning. Default off.\n"); 
     printf ("\t -pre: filename without the extension\n"); 
     return; 
-} // print_usage`
+} // print_usage
 
+int my_exit (int n) {
+    if (md != NULL) free (md); 
+    exit (n);
+} // my_exit
+
+void sort_by_tx (struct s_carrier *mdp, int len) {
+    int i, j; 
+    for (i=1; i<len; i++) {
+        j = i; 
+        while (j != 0) {
+            if ((mdp+j)->tx_epoch_ms < (mdp+j-1)->tx_epoch_ms) {
+                // slide jth element up by 1
+                struct s_carrier temp = *(mdp+j-1); 
+                *(mdp+j-1) = *(mdp+j);
+                *(mdp+j) = temp; 
+            } // if slide up
+            else 
+                // done sliding up
+                break;
+            j--;
+        } // end of while jth elment is smaller than one above it
+
+        if (i%1000 == 0)
+            printf ("Sort reached line %d\n", i); 
+
+    } // for elements in the metadata array
+
+    return;
+} // end of sort
 
 int main (int argc, char* argv[]) {
     int occ_threshold = 10;                 // occupancy threshold for degraded channel
@@ -207,7 +239,9 @@ int main (int argc, char* argv[]) {
     FILE *aux_fp = NULL;                    // auxiliary output with decoded occ etc. 
     FILE *warn_fp = NULL;                   // warnings output file
     int md_index = 0;                       
-    struct s_carrier md[MD_BUFFER_SIZE], *mdp = &(md[md_index]);
+//    struct s_carrier md[MD_BUFFER_SIZE], *mdp = md; 
+//     struct s_carrier *md = (struct s_carrier *) malloc (sizeof (struct s_carrier) * MD_BUFFER_SIZE);
+//     struct s_carrier *mdp = md; 
     int len_mdfile = 0;                     // lines in meta data file not including header line
     double last_tx_epoch_ms;                // remembers tx of the last md line
     int last_modem_occ;                     // remembers occ from the last update from modem
@@ -232,7 +266,7 @@ int main (int argc, char* argv[]) {
         // help/usage
         if (strcmp (*argv, "--help")==MATCH || strcmp (*argv, "-help")==MATCH) {
             print_usage (); 
-            exit (-1); 
+            my_exit (-1); 
         }
 
         // occ limit
@@ -240,7 +274,7 @@ int main (int argc, char* argv[]) {
             if (sscanf (*++argv, "%d", &occ_threshold) != 1) {
                 printf ("Missing specification of the occupancy threshold\n");
                 print_usage (); 
-                exit (-1); 
+                my_exit (-1); 
             }
         } // occ limit
         
@@ -249,7 +283,7 @@ int main (int argc, char* argv[]) {
             if (sscanf (*++argv, "%d", &latency_threshold) != 1) {
                 printf ("Missing specification of the latency threshold\n");
                 print_usage (); 
-                exit (-1); 
+                my_exit (-1); 
             }
         } // latency limit
         
@@ -294,11 +328,33 @@ int main (int argc, char* argv[]) {
     if ((md_fp == NULL) || (out_fp == NULL) || (aux_fp == NULL) || (warn_fp == NULL)) {
         printf ("Missing or could not open input file\n"); 
         print_usage (); 
-        exit (-1); 
+        my_exit (-1); 
     }
 
     // initialization
     int i; 
+
+    // allocate storage
+    md = (struct s_carrier *) malloc (sizeof (struct s_carrier) * MD_BUFFER_SIZE);
+    if (md==NULL)
+        FATAL("Could not allocate storage to read the meta data file in an array%s\n", "")
+    mdp = md; 
+
+    // read meta data file into array and sort it
+    len_mdfile = 0; 
+    read_line (1, md_fp, mdp); // skip header
+    while (read_line (0, md_fp, mdp)) {
+        len_mdfile++;
+        if (len_mdfile == MD_BUFFER_SIZE)
+            FATAL ("Meta data array is not large enough to ready the meta data file. Increase MD_BUFFER_SIZE%S\n", "");
+        mdp++;
+    } // while there are more lines to be read
+    if (len_mdfile == 0)
+        FATAL("Meta data file is empty%s", "\n")
+
+    // sort by tx_epoch_ms
+    sort_by_tx (md, len_mdfile); 
+    
 
     // latency distribution by occupancy table
     for (i=0; i <31; i++) {
@@ -318,26 +374,27 @@ int main (int argc, char* argv[]) {
     len_ospike_table = 0; 
     ospikep = &ospike_table[len_ospike_table]; 
 
-    len_mdfile = 0; 
     last_tx_epoch_ms = 0; 
     last_modem_occ = 0; 
     last_packet_num = 0; 
 
     // skip header. print header
-    read_line (1, md_fp, mdp);
     emit_aux (1, mdp, aux_fp); 
+    emit_output (1, 0, &latency_table_by_occ[0], 0, &lspike_table[0], 0, &ospike_table[0], out_fp); 
+
     
     // while there is a line to be read from any of the input files
-    while (read_line (0, md_fp, mdp)) {
-        len_mdfile++;
+    for (i=0, mdp=md; i<len_mdfile; i++, mdp++) {
+//     while (read_line (0, md_fp, mdp)) {
+//         len_mdfile++;
 
         // auxiliary output
         emit_aux (0, mdp, aux_fp);
 
         // occupancy
         if ((mdp->modem_occ < 0) || (mdp->modem_occ > 31)) {
-            printf ("INvalid occupancy %d at line %d\n", mdp->modem_occ, len_mdfile /* +1 for header line*/ + 1); 
-            exit (-1);
+            printf ("INvalid occupancy %d for packet %d\n", mdp->modem_occ, mdp->packet_num); 
+            my_exit (-1);
         }
         if (mdp->modem_occ == 31) // new modem occupancy not available with this packet
             mdp->modem_occ = last_modem_occ; 
@@ -347,7 +404,7 @@ int main (int argc, char* argv[]) {
          
         // latency spike 
         if (mdp->tx_epoch_ms < last_tx_epoch_ms)
-            FATAL("Metadata file not sorted by tx time order at line %d\n", len_mdfile /* +1 for header line */ +1);
+            FATAL("Metadata file not sorted by tx time order at packet %d\n", mdp->packet_num);
 
         switch (lspikep->active) {
             case 0: // spike inactive
@@ -420,18 +477,22 @@ int main (int argc, char* argv[]) {
         last_tx_epoch_ms = mdp->tx_epoch_ms; 
         last_modem_occ = mdp->modem_occ; 
         last_packet_num = mdp->packet_num; 
-        md_index = (md_index + 1) % MD_BUFFER_SIZE; 
-        mdp = &md[md_index]; 
+//         md_index = (md_index + 1) % MD_BUFFER_SIZE; 
+//         mdp = &md[md_index]; 
         
-        if (len_mdfile % 1000 == 0)
-            printf ("Reached line %d\n", len_mdfile); 
+        if (i % 1000 == 0)
+            printf ("Reached line %d\n", i); 
     } // while there are more files to be read
 
     // if a spike is still active when the file end is reached, then close it.
     if (lspikep->active || ospikep->active) {
+
+        printf ("Spike was active when EOF was reached\n"); 
+
         // roll back mdp to point to the last data line
-        md_index = (md_index + 1) % MD_BUFFER_SIZE; 
-        mdp = &md[md_index]; 
+//        md_index = (md_index + MD_BUFFER_SIZE -1 ) % MD_BUFFER_SIZE; 
+//        mdp = &md[md_index]; 
+        mdp--; 
         
         if (lspikep->active) {
             lspikep->stop_packet_num = mdp->packet_num; 
@@ -450,9 +511,6 @@ int main (int argc, char* argv[]) {
     } // spike was active when the end of the file was reached
 
     // print output
-    // header
-    emit_output (1, 0, &latency_table_by_occ[0], 0, &lspike_table[0], 0, &ospike_table[0], out_fp); 
-
     int num_of_output_lines = MAX(len_ospike_table, MAX(31, len_lspike_table));
     for (i=0; i < num_of_output_lines; i++){
         emit_output (0, i, 
@@ -462,5 +520,5 @@ int main (int argc, char* argv[]) {
             out_fp); 
     } // for all oputput lines
 
-    exit (0); 
+    my_exit (0); 
 } // end of main
