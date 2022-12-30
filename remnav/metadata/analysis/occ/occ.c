@@ -8,9 +8,15 @@
 #define MAX_MD_LINE_SIZE 500
 #define MD_BUFFER_SIZE (20*60*1000)
 #define MAX_SPIKES 1000
+#define MAX_FILES 100
 
 // globals
 int silent = 0;                         // if 1 then dont generate any warnings on the console
+
+struct s_files {
+    char input_directory[500];
+    char file_prefix[500]; 
+};
 
 struct s_carrier {
         int packet_num;                 // packet number read from this line of the carrier meta_data finle 
@@ -38,7 +44,9 @@ struct s_latency {
 
 struct s_lspike {
     int active;                 // 1 if in middle of a spike, 0 otherwise
-    int below_occ_threshold;    // 1 if the occupancy stayed below the occ_threshold druing the entire spike duraction 
+    int max_occ;                // highest occ during this spike
+    double max_latency;         // highest latency during this spike
+    int max_lat_packet_num;     // packet number of the packet that suffered maximum latency
     int start_packet_num;       // first packet number in inactive state where the latency exceeded latency_threshold 
     double start_tx_epoch_ms;   // tx time stamp of the starting packet
     int stop_packet_num;        // last packet number in active state where the latency exceeded latency_threshold 
@@ -47,7 +55,7 @@ struct s_lspike {
 
 struct s_ospike {
     int active;                 // 1 if in middle of a spike, 0 otherwise
-    int occ;                    // highest occ value during this spike
+    int max_occ;                // highest occ value during this spike
     int start_packet_num;       // first packet number in inactive state where occupancy is greater than threshold
     int stop_packet_num;        // last packet number in active state where occupancy is greater than threshold
     double start_tx_epoch_ms;   // tx time stamp of the starting packet
@@ -151,14 +159,16 @@ void emit_output (int print_header, int index,
                                                         else fprintf (fp, "%.0f, ", lp->latency/lp->count);
 
     // latency spike
-    if (print_header) fprintf (fp, "L: lt occ th, ");   else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%d,", lsp->below_occ_threshold);
+    if (print_header) fprintf (fp, "L: occ, ");         else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%d,", lsp->max_occ);
     if (print_header) fprintf (fp, "start, ");          else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%d,", lsp->start_packet_num); 
     if (print_header) fprintf (fp, "stop, ");           else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%d,", lsp->stop_packet_num); 
     if (print_header) fprintf (fp, "duration_pkts, ");  else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%d,", lsp->stop_packet_num - lsp->start_packet_num + 1); 
     if (print_header) fprintf (fp, "duration_ms, ");    else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%.0lf,", lsp->duration_ms); 
+    if (print_header) fprintf (fp, "max t2r, ");        else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%.0lf,", lsp->max_latency); 
+    if (print_header) fprintf (fp, "max t2r pnum, ");   else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%d,", lsp->max_lat_packet_num); 
 
     // occupancy spike
-    if (print_header) fprintf (fp, "O: occ,");          else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%d,", osp->occ); 
+    if (print_header) fprintf (fp, "O: occ,");          else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%d,", osp->max_occ); 
     if (print_header) fprintf (fp, "start,");           else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%d,", osp->start_packet_num); 
     if (print_header) fprintf (fp, "stop,");            else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%d,", osp->stop_packet_num); 
     if (print_header) fprintf (fp, "duration_pkts,");   else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%d,", osp->stop_packet_num - osp->start_packet_num + 1); 
@@ -175,6 +185,7 @@ void emit_aux (int print_header, struct s_carrier *cp, FILE *fp) {
     if (print_header) fprintf (fp, "tx_epoch_ms,");         else fprintf (fp, "%.0lf,", cp->tx_epoch_ms); 
     if (print_header) fprintf (fp, "rx_epoch_ms,");         else fprintf (fp, "%.0lf,", cp->rx_epoch_ms); 
     if (print_header) fprintf (fp, "camera_epoch_ms,");     else fprintf (fp, "%.0lf,", cp->camera_epoch_ms); 
+    if (print_header) fprintf (fp, "t2r latency,");         else fprintf (fp, "%.0lf,", cp->t2r_latency_ms); 
     if (print_header) fprintf (fp, "modem_occ,");           else fprintf (fp, "%d, ", cp->modem_occ); 
     if (print_header) fprintf (fp, "packet_len,");          else fprintf (fp, "%d, ", cp->packet_len); 
     if (print_header) fprintf (fp, "frame_start,");         else fprintf (fp, "%d, ", cp->frame_start); 
@@ -192,12 +203,14 @@ void emit_aux (int print_header, struct s_carrier *cp, FILE *fp) {
 
 // prints program usage
 void print_usage (void) {
-    char *usage = "Usage: occ [-help] [-o <dd>] [-l <dd>] [-s]-pre <prefix>";
+    char *usage = "Usage: occ [-help] [-o <dd>] [-l <dd>] [-s] -ipath <dir> -opath <dir> -file_pre <prefix> [-file_pre <prefix>] [-ipath <dir>]";
     printf ("%s\n", usage);
     printf ("\t -o: occupancy threshold for degraded channel. Default 10.\n"); 
     printf ("\t -l: latency threshold for degraded channel. Default 60ms.\n"); 
     printf ("\t -s: Turns on silent, no console warning. Default off.\n"); 
-    printf ("\t -pre: filename without the extension\n"); 
+    printf ("\t -ipath: input path directory. last ipath name applies to next input file\n"); 
+    printf ("\t -opath: out path directory \n"); 
+    printf ("\t -file_pre: filename without the extension.\n"); 
     return; 
 } // print_usage
 
@@ -223,8 +236,49 @@ void sort_by_tx (struct s_carrier *mdp, int len) {
             j--;
         } // end of while jth elment is smaller than one above it
 
-        if (i%1000 == 0)
-            printf ("Sort reached line %d\n", i); 
+    } // for elements in the metadata array
+
+    return;
+} // end of sort_by_tx
+
+void sort_lspike (struct s_lspike *sp, int len) {
+    int i, j; 
+    for (i=1; i<len; i++) {
+        j = i; 
+        while (j != 0) {
+            if ((sp+j)->max_occ < (sp+j-1)->max_occ) {
+                // slide jth element up by 1
+                struct s_lspike temp = *(sp+j-1); 
+                *(sp+j-1) = *(sp+j);
+                *(sp+j) = temp; 
+            } // if slide up
+            else 
+                // done sliding up
+                break;
+            j--;
+        } // end of while jth elment is smaller than one above it
+
+    } // for elements in the metadata array
+
+    return;
+} // end of sort_lspike
+
+void sort_ospike (struct s_ospike *sp, int len) {
+    int i, j; 
+    for (i=1; i<len; i++) {
+        j = i; 
+        while (j != 0) {
+            if ((sp+j)->max_occ < (sp+j-1)->max_occ) {
+                // slide jth element up by 1
+                struct s_ospike temp = *(sp+j-1); 
+                *(sp+j-1) = *(sp+j);
+                *(sp+j) = temp; 
+            } // if slide up
+            else 
+                // done sliding up
+                break;
+            j--;
+        } // end of while jth elment is smaller than one above it
 
     } // for elements in the metadata array
 
@@ -238,11 +292,7 @@ int main (int argc, char* argv[]) {
     FILE *out_fp = NULL;                    // output file 
     FILE *aux_fp = NULL;                    // auxiliary output with decoded occ etc. 
     FILE *warn_fp = NULL;                   // warnings output file
-    int md_index = 0;                       
-//    struct s_carrier md[MD_BUFFER_SIZE], *mdp = md; 
-//     struct s_carrier *md = (struct s_carrier *) malloc (sizeof (struct s_carrier) * MD_BUFFER_SIZE);
-//     struct s_carrier *mdp = md; 
-    int len_mdfile = 0;                     // lines in meta data file not including header line
+    int len_mdfile;                         // lines in meta data file not including header line
     double last_tx_epoch_ms;                // remembers tx of the last md line
     int last_modem_occ;                     // remembers occ from the last update from modem
     int last_packet_num;                    // remembers packet number of the last md line
@@ -250,15 +300,17 @@ int main (int argc, char* argv[]) {
     struct s_latency latency_table_by_occ[31];
     struct s_lspike lspike_table[MAX_SPIKES];
     struct s_ospike ospike_table[MAX_SPIKES];
-    int len_lspike_table = 0;
-    int len_ospike_table = 0;
+    int len_lspike_table;
+    int len_ospike_table;
     struct s_lspike lspike, *lspikep = &lspike; 
     struct s_ospike ospike, *ospikep = &ospike; 
 
     char buffer[1000], *bp=buffer; 
-    char ipath[100], *ipathp = ipath; 
-    char opath[100], *opathp = opath; 
-    char file_pre[100], *file_prep = file_pre; 
+    char ipath[500], *ipathp = ipath; 
+    char opath[500], *opathp = opath; 
+
+    struct s_files file_name_table[MAX_FILES];
+    int len_file_name_table = 0; 
 
     //  read command line arguments
     while (*++argv != NULL) {
@@ -302,7 +354,9 @@ int main (int argc, char* argv[]) {
         }
 
         else if (strcmp (*argv, "-file_pre") == MATCH) {
-            strcpy (file_prep, *++argv); 
+            strcpy (file_name_table[len_file_name_table].input_directory, ipathp); 
+            strcpy (file_name_table[len_file_name_table].file_prefix, *++argv); 
+            len_file_name_table++;
         }
 
         // invalid option
@@ -313,16 +367,18 @@ int main (int argc, char* argv[]) {
     } // while there are more arguments to process
 
     // open files
-    sprintf (bp, "%s%s.csv", ipathp, file_prep); 
+    int file_name_index = 0; 
+PROCESS_EACH_FILE:
+    sprintf (bp, "%s%s.csv", file_name_table[file_name_index].input_directory, file_name_table[file_name_index].file_prefix); 
 	md_fp = open_file (bp, "r");
 
-    sprintf (bp, "%s%s_out.csv", opath, file_pre); 
+    sprintf (bp, "%s%s_out.csv", opath, file_name_table[file_name_index].file_prefix); 
 	out_fp = open_file (bp, "w");
 
-    sprintf (bp, "%s%s_aux.csv", opath, file_pre); 
+    sprintf (bp, "%s%s_aux.csv", opath, file_name_table[file_name_index].file_prefix); 
 	aux_fp = open_file (bp, "w");
 
-    sprintf (bp, "%s%s_warnings.txt", opath, file_pre); 
+    sprintf (bp, "%s%s_warnings.txt", opath, file_name_table[file_name_index].file_prefix); 
 	warn_fp = open_file (bp, "w");
 
     if ((md_fp == NULL) || (out_fp == NULL) || (aux_fp == NULL) || (warn_fp == NULL)) {
@@ -411,7 +467,9 @@ int main (int argc, char* argv[]) {
                 if (mdp->t2r_latency_ms > latency_threshold) {
                     // start of a spike
                     lspikep->active = 1;
-                    lspikep->below_occ_threshold = mdp->modem_occ <= occ_threshold; 
+                    lspikep->max_occ = mdp->modem_occ;
+                    lspikep->max_latency = mdp->t2r_latency_ms; 
+                    lspikep->max_lat_packet_num = mdp->packet_num; 
                     lspikep->stop_packet_num = lspikep->start_packet_num = mdp->packet_num; 
                     lspikep->start_tx_epoch_ms = mdp->tx_epoch_ms; 
                 } // start of a spike
@@ -420,11 +478,12 @@ int main (int argc, char* argv[]) {
             case 1: // spike active
                 // check for continuation 
                 if (mdp->t2r_latency_ms > latency_threshold) { // spike continues
-                    // check if the occupancy exceeded threshold
-                    if (mdp->modem_occ > occ_threshold) {
-                        // if the occupancy exceeded threshold anytime during the spike, it is considered high occupancy spike
-                        lspikep->below_occ_threshold = 0; 
-                    } // high occ spike
+                    if (lspikep->max_occ < mdp->modem_occ) 
+                        lspikep->max_occ = mdp->modem_occ;
+                    if (lspikep->max_latency < mdp->t2r_latency_ms) {
+                        lspikep->max_latency = mdp->t2r_latency_ms; 
+                        lspikep->max_lat_packet_num = mdp->packet_num; 
+                    }
                 } // spike continues
 
                 // else spike completed
@@ -447,7 +506,7 @@ int main (int argc, char* argv[]) {
                     // start of a spike
                     ospikep->active = 1;
                     ospikep->stop_packet_num = ospikep->start_packet_num = mdp->packet_num; 
-                    ospikep->occ = mdp->modem_occ; 
+                    ospikep->max_occ = mdp->modem_occ; 
                     ospikep->start_tx_epoch_ms = mdp->tx_epoch_ms; 
                 } // start of a spike
                 // else stay inactive
@@ -456,8 +515,8 @@ int main (int argc, char* argv[]) {
                 // check for continuation of the spike
                 if (mdp->modem_occ > occ_threshold) { // spike continues
                     // update spike occ value if occ value increased 
-                    if (mdp->modem_occ > ospikep->occ) {
-                        ospikep->occ = mdp->modem_occ; 
+                    if (mdp->modem_occ > ospikep->max_occ) {
+                        ospikep->max_occ = mdp->modem_occ; 
                     }
                 } // spike continues
 
@@ -477,8 +536,6 @@ int main (int argc, char* argv[]) {
         last_tx_epoch_ms = mdp->tx_epoch_ms; 
         last_modem_occ = mdp->modem_occ; 
         last_packet_num = mdp->packet_num; 
-//         md_index = (md_index + 1) % MD_BUFFER_SIZE; 
-//         mdp = &md[md_index]; 
         
         if (i % 1000 == 0)
             printf ("Reached line %d\n", i); 
@@ -490,8 +547,6 @@ int main (int argc, char* argv[]) {
         printf ("Spike was active when EOF was reached\n"); 
 
         // roll back mdp to point to the last data line
-//        md_index = (md_index + MD_BUFFER_SIZE -1 ) % MD_BUFFER_SIZE; 
-//        mdp = &md[md_index]; 
         mdp--; 
         
         if (lspikep->active) {
@@ -511,6 +566,8 @@ int main (int argc, char* argv[]) {
     } // spike was active when the end of the file was reached
 
     // print output
+    sort_lspike (lspike_table, len_lspike_table);
+    sort_ospike (ospike_table, len_ospike_table);
     int num_of_output_lines = MAX(len_ospike_table, MAX(31, len_lspike_table));
     for (i=0; i < num_of_output_lines; i++){
         emit_output (0, i, 
@@ -519,6 +576,11 @@ int main (int argc, char* argv[]) {
             len_ospike_table, &ospike_table[i], 
             out_fp); 
     } // for all oputput lines
+
+    // close files and check if there are more files to be processed
+    fclose (md_fp); fclose(out_fp); fclose(aux_fp); fclose(warn_fp); 
+    if (++file_name_index < len_file_name_table)
+        goto PROCESS_EACH_FILE;    
 
     my_exit (0); 
 } // end of main
