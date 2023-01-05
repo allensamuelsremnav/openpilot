@@ -306,7 +306,7 @@ int main (int argc, char* argv[]) {
         c2_mdp->match = c2_mdp->packet_num == packet_num; 
 
         switch (c0_mdp->match + c1_mdp->match + c2_mdp->match) {
-            case 0: { // thsi packet not transmitted by any channel
+            case 0: { // this packet not transmitted by any channel
                 // skip this packet 
                 FWARN (warn_fp, "Packet num %u NOT transmitted by ANY carrier\n", packet_num)
                 packet_num++;
@@ -316,6 +316,7 @@ int main (int argc, char* argv[]) {
                 FWARN (warn_fp, "Packet num %u transmitted by one carrier ONLY\n", packet_num)
                 break; 
             } // case 1
+            /* modified to accommpdate 3-q algo where 1, 2 or 3 channels may participate in tranmitting a packet
             case 2: { // normal case: each packet shoueld be transmitted by two channels 
                 break;
             } // case 2
@@ -323,6 +324,8 @@ int main (int argc, char* argv[]) {
                 FWARN (warn_fp, "Packet num %u transmitted by MORE than 2 channels\n", packet_num)
                 break; 
             } // case 3
+            */
+            default: break; 
         } // end of switch (c0_match + c1_match + c2_match)
 
         // check consistency of common fields
