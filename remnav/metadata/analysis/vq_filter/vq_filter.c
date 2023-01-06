@@ -2,7 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
-#define		FATAL(STR, ARG) {printf (STR, ARG); exit(-1);}
+#define		FATAL(STR, ARG) {printf (STR, ARG); my_exit(-1);}
 #define		WARN(STR, ARG) {if (!silent) printf (STR, ARG);}
 #define		FWARN(FILE, STR, ARG) {if (!silent) fprintf (FILE, STR, ARG);}
 #define     MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
@@ -117,6 +117,15 @@ struct stats {
     double      distr[NUMBER_OF_BINS]; 
 };
 
+struct s_txlog {
+// uplink_queue. ch: 2, timestamp: 1672344732193, queue_size: 23, elapsed_time_since_last_queue_update: 29, actual_rate: 1545, stop_sending_flag: 0, zeroUplinkQueue_flag: 0, lateFlag: 1
+    int channel;                    // channel number 0, 1 or 2
+    double epoch_ms;                // time modem occ was sampled
+    int occ;                        // occupancy 0-30
+    int time_since_last_update;     // of occupancy for the same channel
+    int actual_rate;
+};
+                    
 struct session_stats {
     unsigned        frame_count;            // total fames in the session
     struct stats    pc, *pcp;               // packet count stats: count=total packets in the session, rest per frame
@@ -146,6 +155,12 @@ struct s_carrier {
         int socc;                           // sampled occupancy either from the tx log or the rx metadata file
         int iocc;                           // interpolated occupancy from tx log
         double socc_epoch_ms;               // time when the occupacny for this packet was sampled
+
+        struct s_txlog *tdp;                // pointer to the tx data array
+        int len_td;                         // number of entries in the td array
+
+        FILE *fp;                           // carrier metadata file pointer
+        char name[100];                     // carrier name
 };
 
 struct s_gps {
@@ -156,7 +171,8 @@ struct s_gps {
 	int				count; 						// number of frames that mapped into this gps coord
 }; 
 
-// returns number of entries found in the osm bin file
+// frees up storage before exiting
+int my_exit (int n);
 
 // reads a new meta data line. returns 0 if reached end of the file
 int read_md (
@@ -228,15 +244,6 @@ void emit_metric_stats (
     double          range_max,              // min and max range this metric can take in a frame
     double          range_min);
 
-struct s_txlog {
-// uplink_queue. ch: 2, timestamp: 1672344732193, queue_size: 23, elapsed_time_since_last_queue_update: 29, actual_rate: 1545, stop_sending_flag: 0, zeroUplinkQueue_flag: 0, lateFlag: 1
-    int channel;                    // channel number 0, 1 or 2
-    double epoch_ms;                // time modem occ was sampled
-    int occ;                        // occupancy 0-30
-    int time_since_last_update;     // of occupancy for the same channel
-    int actual_rate;
-};
-                    
 // outputs session  stats
 void emit_session_stats (void);
 
@@ -255,8 +262,7 @@ void decode_sendtime (double *vx_epoch_ms, double *tx_epoch_ms, int *socc);
 // outputs per carrier stats
 void emit_carrier_stat (
     int print_header, 
-    struct s_carrier *cp, FILE *c_fp, char *cname, 
-    struct s_txlog *tdp, int len_tdfile, 
+    struct s_carrier *cp, 
     struct meta_data *mdp, 
     struct frame *fp);
 
@@ -319,8 +325,8 @@ int     frame_size_modulation_latency = 3;      // number of frames the size is 
 int     frame_size_modulation_threshold = 6000; // size in bytes the frame size is expected to be modulated below or aboveo
 struct  s_gps gps[MAX_GPS]; int	len_gps; 		// gps data array number of valid entries in gps arraynt     
 char    comamnd_line[5000]; 
-struct s_txlog *td0, *td1, *td2;                // transmit log file stored in this array
-int     len_td0, len_td1, len_td2;              // len of the transmit data logfile
+struct  s_txlog *td0=NULL, *td1=NULL, *td2=NULL;// transmit log file stored in this array
+int     len_td0=0, len_td1=0, len_td2=0;        // len of the transmit data logfile
 
 int main (int argc, char* argv[]) {
     unsigned    waiting_for_first_frame;        // set to 1 till first clean frame start encountered
@@ -390,7 +396,7 @@ int main (int argc, char* argv[]) {
             if (sscanf (*++argv, "%u", &maximum_acceptable_c2rx_latency) != 1) {
                 printf ("missing maximum acceptable camera->rx latency specification\n");
                 print_usage (); 
-                exit (-1); 
+                my_exit (-1); 
             }
         }
 
@@ -399,7 +405,7 @@ int main (int argc, char* argv[]) {
             if (sscanf (*++argv, "%f", &minimum_acceptable_bitrate) != 1) {
                 printf ("missing minimum acceptable bit rate specification\n");
                 print_usage (); 
-                exit (-1); 
+                my_exit (-1); 
             }
         }
         
@@ -408,7 +414,7 @@ int main (int argc, char* argv[]) {
             if (sscanf (*++argv, "%d", &fast_frame_t2r) != 1) {
                 printf ("Missing specification of the fast latency of frames\n");
                 print_usage (); 
-                exit (-1); 
+                my_exit (-1); 
             }
         }
         
@@ -417,7 +423,7 @@ int main (int argc, char* argv[]) {
             if (sscanf (*++argv, "%d", &frame_size_modulation_latency) != 1) {
                 printf ("Missing specification of the frame_size_modulation_latency\n");
                 print_usage (); 
-                exit (-1); 
+                my_exit (-1); 
             }
         }
         
@@ -426,7 +432,7 @@ int main (int argc, char* argv[]) {
             if (sscanf (*++argv, "%d", &frame_size_modulation_threshold) != 1) {
                 printf ("Missing specification of the frame_size_modulation_threshold\n");
                 print_usage (); 
-                exit (-1); 
+                my_exit (-1); 
             }
         }
         
@@ -435,7 +441,7 @@ int main (int argc, char* argv[]) {
             if (sscanf (*++argv, "%d", &fast_channel_t2r) != 1) {
                 printf ("Missing specification of the fast latency of channels\n");
                 print_usage (); 
-                exit (-1); 
+                my_exit (-1); 
             }
         }
         
@@ -444,21 +450,21 @@ int main (int argc, char* argv[]) {
             if (sscanf (*++argv, "%d", &rx_jitter_buffer_ms) != 1) {
                 printf ("missing frame arrival jitter buffer length specification \n");
                 print_usage (); 
-                exit (-1); 
+                my_exit (-1); 
             }
         }
 
         // help/usage
         else if (strcmp (*argv, "--help")==MATCH || strcmp (*argv, "-help")==MATCH) {
             print_usage (); 
-            exit (0); 
+            my_exit (0); 
         }
 
         // invalid argument
         else {
             printf ("Invalid argument %s\n", *argv);
             print_usage (); 
-            exit (-1); 
+            my_exit (-1); 
         }
     } // while there are more arguments to process
 
@@ -490,21 +496,20 @@ int main (int argc, char* argv[]) {
 
     } // per carrier meta data files
 
-    // frame and session stat output files
+    // output files
+    sprintf (bp, "%s%s_packet_vqfilter.csv",opath, rx_prep); 
+    lf_fp = open_file (bp, "w");
 
-    sprintf (bp, "%s%s_frame_stats.csv", opath, rx_prep);
+    sprintf (bp, "%s%s_frame_vqfilter.csv", opath, rx_prep);
     fs_fp = open_file (bp, "w");
             
-    sprintf (bp, "%s%s_session_stats.csv", opath, rx_prep);
+    sprintf (bp, "%s%s_session_vqfilter.csv", opath, rx_prep);
     ss_fp = open_file (bp, "w");
-
-    sprintf (bp, "%s%s_late_frames.csv",opath, rx_prep); 
-    lf_fp = open_file (bp, "w");
 
     // check if any missing arguments
     if (md_fp==NULL || fs_fp==NULL || ss_fp==NULL || lf_fp==NULL) {
         print_usage (); 
-        exit (-1);
+        my_exit (-1);
     }
 
     // control initialization
@@ -640,7 +645,7 @@ int main (int argc, char* argv[]) {
 
     if (waiting_for_first_frame) { // something horribly wrong
         printf ("ERROR: no frames found in this metadata file\n");
-        exit (-1); 
+        my_exit (-1); 
     } 
     
     // update stats for the last frame
@@ -654,8 +659,18 @@ int main (int argc, char* argv[]) {
     emit_frame_stats(0, cfp, 1);
     emit_session_stats();
 
-    exit (0); 
+    my_exit (0); 
 } // end of main
+
+// free up storage before exiting
+int my_exit (int n) {
+
+    if (td0 != NULL) free (td0); 
+    if (td1 != NULL) free (td1); 
+    if (td2 != NULL) free (td2); 
+    exit (n);
+
+} // my_exit
 
 FILE *open_file (char *filep, char *modep) {
     FILE *fp;
@@ -852,7 +867,7 @@ int read_annotation_file (void) {
     // skip header
     if (fgets (line, 100, an_fp) == NULL) {
         printf ("Empty annotation file\n");
-        exit (-1); 
+        my_exit (-1); 
     }
 
     // read annotation line
@@ -860,13 +875,13 @@ int read_annotation_file (void) {
         if (sscanf (line, "%u, %u", &anlist[len_anlist][0], &anlist[len_anlist][1]) == 2) {
             if (anlist[len_anlist][1] < anlist[len_anlist][0]) {
                 printf ("Invalid annotation. Start frame is bigger than then End\n");
-                exit (-1);
+                my_exit (-1);
             }
         } else if (sscanf (line, "%u", &anlist[len_anlist][0]) == 1)
             anlist[len_anlist][1] = anlist[len_anlist][0];
         else {
             printf ("Invalid annnotation format %s\n", line); 
-            exit(-1); 
+            my_exit(-1); 
         }
         len_anlist++;
     } // while there are more lines to be read
@@ -1114,12 +1129,26 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
         c0p->packet_num = -1;               // have not read any lines yet
         c0p->socc =0;                       // assume nothing in the buffer
         c0p->t2r = 30;                      // default value before the first packet is transmiited by this carrier
+        c0p->tdp = td0;                     // tx data array
+        c0p->len_td = len_td0;              // lenght of the tx data array
+        c0p->fp = c0_fp;
+        sprintf (c0p->name, "ch0"); 
+
         c1p->packet_num = -1;               // have not read any lines yet
         c1p->socc =0;                       // assume nothing in the buffer
         c1p->t2r = 30;                      // default value before the first packet is transmiited by this carrier
+        c1p->tdp = td1;                     // tx data array
+        c1p->len_td = len_td1;              // lenght of the tx data array
+        c1p->fp = c1_fp;
+        sprintf (c1p->name, "ch1"); 
+
         c2p->packet_num = -1;               // have not read any lines yet
         c2p->socc =0;                       // assume nothing in the buffer
         c2p->t2r = 30;                      // default value before the first packet is transmiited by this carrier
+        c2p->tdp = td2;                     // tx data array
+        c2p->len_td = len_td2;              // lenght of the tx data array
+        c2p->fp = c2_fp;
+        sprintf (c2p->name, "ch2"); 
     }
 
     if ((ssp->frame_count % 1000) == 0)
@@ -1171,9 +1200,9 @@ void emit_frame_stats (int print_header, struct frame *p, int last) {     // las
         // Per carrier meta data
         if (have_carrier_metadata) {
 
-	        emit_carrier_stat (print_header, c0p, c0_fp, "c0", td0, len_td0, mdp, p);
-	        emit_carrier_stat (print_header, c1p, c1_fp, "c1", td1, len_td1, mdp, p);
-	        emit_carrier_stat (print_header, c2p, c2_fp, "c2", td2, len_td2, mdp, p);
+	        emit_carrier_stat (print_header, c0p, mdp, p);
+	        emit_carrier_stat (print_header, c1p, mdp, p);
+	        emit_carrier_stat (print_header, c2p, mdp, p);
 	
             //
             // packet analytics
@@ -1317,7 +1346,7 @@ void skip_carrier_md_file_header (FILE *fp, char *cname) {
     char line[500];
 	if (fgets (line, MAX_LINE_SIZE, fp) == NULL) {
 	    printf ("skip_carrier_md_file_header: Empty %s csv file\n", cname);
-	    exit(-1);
+	    my_exit(-1);
 	}
     return;
 } // skip_carrier_md_header 
@@ -1346,6 +1375,7 @@ int interpolate_occ (double tx_epoch_ms, struct s_txlog *current, struct s_txlog
         return ((left_fraction * current->occ) + ((1-left_fraction) * next->occ));
 
 } // interpolate occ
+
 // find_occ_frim_tdfile  returns the sampled occupancy at the closest time smaller than the specified tx_epoch_ms and that time i
 // and // interpolated occupancy, interporated between the sampled occupancy above and the next (later) sample
 void find_occ_from_tdfile (int packet_num, double tx_epoch_ms, struct s_txlog *tdp, int len_tdfile, int *iocc, int *socc, double *socc_epoch_ms) {
@@ -1383,30 +1413,28 @@ void find_occ_from_tdfile (int packet_num, double tx_epoch_ms, struct s_txlog *t
 // outputs per carrier stats
 void emit_carrier_stat (
     int print_header, 
-    struct s_carrier *cp, FILE *c_fp, char *cname, 
-    struct s_txlog *tdp, int len_tdfile, 
+    struct s_carrier *cp, 
     struct meta_data *mdp, 
     struct frame *fp) {
 
-	while (mdp->packet_num > cp->packet_num) {
+	while (mdp->packet_num > cp->packet_num) { // step over retransmitted previous packets
         int last_packet_num = cp->packet_num; 
-        if (read_carrier_md (0, c_fp, cp->line, cp, cname) == 0) {
+        if (read_carrier_md (0, cp->fp, cp->line, cp, cp->name) == 0) {
             // reached end of file or invalid formatted line
             cp->packet_num = -1;  // so that it does not match the mdp->packet number and participate in the transaction
             break;
-        }
+        } // if not able to read a line
         else { // do sanity check
             if (last_packet_num > cp->packet_num) { // check that channel meta data file is sorted by packet number
-                printf ("Meta data file for carrier %s is not sorted. Check line: %s", cname, cp->line);
-                exit (-1); 
+                printf ("Meta data file for carrier %s is not sorted. Check line: %s", cp->name, cp->line);
+                my_exit (-1); 
             } // channel meta data file is not sorte by packet number
-        } // sanity check
-
+        } // end of sanity check
 	} // while have not reached end of file or gone past the current packet
 
-    // **** WHILE exits on reaching the first packet that matches mdp packet num. If there are additional retransmitted packets
-    // ***** they are ignored. THis is a bug and needs to be fixed. 
-
+    // **** WHILE exits on reaching the first packet that matches mdp packet num assuming that the first line has the earliest
+    // rx_timestamp, If there are additional retransmitted packets they are ignored and disccarded during next packet read. 
+    // This is a bug and needs to be fixed. the code should search for the earliest rather than assuming.
 
     // if this carrier transmitted this meta data line, then print the carrier stats
 	if (cp->packet_num == mdp->packet_num) {
@@ -1417,8 +1445,8 @@ void emit_carrier_stat (
 	    if (cp->socc == 31) /* no info */ cp->socc = last_reported_socc; 
 
         // if tx log exists then overwrite occupancy from tx log file
-        if (len_tdfile) { // log file exists
-            find_occ_from_tdfile (mdp->packet_num, cp->tx_epoch_ms, tdp, len_tdfile, &(cp->iocc), &(cp->socc), &(cp->socc_epoch_ms));
+        if (cp->len_td) { // log file exists
+            find_occ_from_tdfile (mdp->packet_num, cp->tx_epoch_ms, cp->tdp, cp->len_td, &(cp->iocc), &(cp->socc), &(cp->socc_epoch_ms));
         }
 
         cp->t2r = cp->rx_epoch_ms - cp->tx_epoch_ms; 
@@ -1428,17 +1456,17 @@ void emit_carrier_stat (
 	    fprintf (lf_fp, "%0.1f, ", cp->t2r);
 	    fprintf (lf_fp, "%0.1f, ", cp->rx_epoch_ms - fp->camera_epoch_ms);
         fprintf (lf_fp, "%d, ", cp->socc);
-        if (len_tdfile) fprintf (lf_fp, "%d, ", cp->iocc); else fprintf (lf_fp, ", "); 
-	    if (len_tdfile) fprintf (lf_fp, "%.0lf, ", cp->socc_epoch_ms); else fprintf (lf_fp, ", "); 
+        if (cp->len_td) fprintf (lf_fp, "%d, ", cp->iocc); else fprintf (lf_fp, ", "); 
+	    if (cp->len_td) fprintf (lf_fp, "%.0lf, ", cp->socc_epoch_ms); else fprintf (lf_fp, ", "); 
 	    fprintf (lf_fp, "%.0lf, ", cp->tx_epoch_ms);
 
     } // if this carrier transmitted this meta data line, then print the carrier stats 
 
 	else {// stay silent except indicate the channel quality through t2r and occ
         cp->tx = 0; 
-        if (len_tdfile) {
+        if (cp->len_td) {
             // find socc using mdp->tx_epoch_ms since cp->tx_epoch_ms is not avaialble as the channel did not transmit
-            find_occ_from_tdfile (mdp->packet_num, mdp->tx_epoch_ms, tdp, len_tdfile, &(cp->iocc), &(cp->socc), &(cp->socc_epoch_ms));
+            find_occ_from_tdfile (mdp->packet_num, mdp->tx_epoch_ms, cp->tdp, cp->len_td, &(cp->iocc), &(cp->socc), &(cp->socc_epoch_ms));
 	        fprintf (lf_fp, ", , %0.1f, ,%d ,%d ,%0.lf , , ", cp->t2r, cp->socc, cp->iocc, cp->socc_epoch_ms);
         }
         else
@@ -1467,14 +1495,14 @@ void update_session_stats (struct frame *p) {
     latency = p->rx_epoch_ms_latest_packet - p->camera_epoch_ms; 
     if (latency < 0) {
         printf ("Negative transit latency %.1f for frame %u starting at %.0lf\n", latency, ssp->frame_count, p->tx_epoch_ms_1st_packet); 
-        exit (-1);
+        my_exit (-1);
     }
     update_metric_stats (ssp->lp, 0, latency, MAX_TRANSIT_LATENCY_OF_A_FRAME, MIN_TRANSIT_LATENCY_OF_A_FRAME);
 
     // frame byte count stats
     if (p->size <= 0) {
         printf ("Invalid frame size %u for frame %u starting at %.0lf\n", p->size, ssp->frame_count, p->tx_epoch_ms_1st_packet);
-        exit (-1);
+        my_exit (-1);
     }
     update_metric_stats (ssp->bcp, p->size, p->size, MAX_BYTES_IN_A_FRAME, MIN_BYTES_IN_A_FRAME);
 
@@ -1486,7 +1514,7 @@ void update_session_stats (struct frame *p) {
     // bit rate stat
     if (p->nm1_bit_rate<=0) {
         printf ("Invalid bit rate %.1f for frame %u starting at %.0lf\n", p->nm1_bit_rate, ssp->frame_count, p->tx_epoch_ms_1st_packet); 
-        exit (-1); 
+        my_exit (-1); 
     }
     update_metric_stats (ssp->brp, p->nm1_bit_rate < minimum_acceptable_bitrate, p->nm1_bit_rate, MAX_BIT_RATE_OF_A_FRAME, MIN_BIT_RATE_OF_A_FRAME); 
     
@@ -1571,7 +1599,7 @@ void skip_combined_md_file_header (FILE *fp) {
     // skip header
     if (fgets (line, MAX_LINE_SIZE, fp) == NULL) {
 	    printf ("skip_combined_file_header: Empty combined csv file\n");
-	    exit(-1);
+	    my_exit(-1);
     }
     return;
 } // skip_combined_md_file_header
@@ -1598,7 +1626,7 @@ int read_md (int skip_header, FILE *fp, struct meta_data *p) {
             &p->retx, 
             &p->ch) != NUM_OF_MD_FIELDS) {
             printf ("Insufficient number of fields in line: %s\n", mdlp);
-            exit(1);
+            my_exit(1);
         } // scan did not succeed
 
         else { // successful scan
@@ -1697,7 +1725,7 @@ void update_metric_stats (
 
     if (bin_size < 0) {
         printf("Invalid bin size: max=%.2f min=%.2f", range_max, range_min);
-        exit (-1); 
+        my_exit (-1); 
     }
     p->count += count;
     p->mean += value;                       // storing sum (X) till the end
