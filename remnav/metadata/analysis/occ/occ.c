@@ -139,8 +139,8 @@ int interpolate_occ (double tx_epoch_ms, struct s_txlog *current, struct s_txlog
 
 } // interpolate occ
 
-// find_occ_frim_tdfile  returns the sampled occupancy at the closest time smaller than the specified tx_epoch_ms and that time i
-// and // interpolated occupancy, interporated between the sampled occupancy above and the next (later) sample
+// find_occ_frim_tdfile  returns the sampled occupancy at the closest time smaller than the specified tx_epoch_ms and 
+// and interpolated occupancy, interpolated between the sampled occupancy above and the next (later) sample
 void find_occ_from_tdfile (int packet_num, double tx_epoch_ms, struct s_txlog *tdp, int len_tdfile, int *iocc, int *socc, double *socc_epoch_ms) {
     struct s_txlog *left, *right, *current;    // current, left and right index of the search
 
@@ -405,13 +405,13 @@ void print_usage (void) {
     printf ("\t -ipath: input path directory. last ipath name applies to next input file\n"); 
     printf ("\t -opath: out path directory \n"); 
     printf ("\t -no_tx|tx_pre: tranmsmit side log filename without the extension .log. Use -no_tx if no tx side file.\n"); 
-    printf ("\t -ch: 0, 1 or 2. Requrired if tx_pre is specified\n"); 
-    printf ("\t -rx_pre: receive side log filename without the extension .csv\n"); 
+    printf ("\t -rx_pre: receive side metadata filename without the extension .csv\n"); 
     return; 
 } // print_usage
 
 int my_exit (int n) {
     if (md != NULL) free (md); 
+    if (td != NULL) free (td); 
     exit (n);
 } // my_exit
 
@@ -602,9 +602,10 @@ int main (int argc, char* argv[]) {
     char buffer[1000], *bp=buffer; 
     char ipath[500], *ipathp = ipath; 
     char opath[500], *opathp = opath; 
+    char rx_prefix[500], *rx_prefixp = rx_prefix; 
     char tx_prefix[500], *tx_prefixp = tx_prefix; 
     int tx_specified = 0; 
-    int ch_specified = 0;
+//     int ch_specified = 0;
     int ch;                                         // channel number to use from the tx log file
 
     struct s_files file_table[MAX_FILES];
@@ -660,6 +661,7 @@ int main (int argc, char* argv[]) {
             tx_specified = 0; 
         }
 
+        /*
         else if (strcmp (*argv, "-ch") == MATCH) {
             if (sscanf (*++argv, "%d", &ch) != 1) {
                 printf ("Missing specification of the channel number\n");
@@ -668,20 +670,21 @@ int main (int argc, char* argv[]) {
             }
             ch_specified = 1; 
         }
+        */
 
         else if (strcmp (*argv, "-rx_pre") == MATCH) {
-            strcpy (file_table[len_file_table].input_directory, ipathp); 
-            strcpy (file_table[len_file_table].rx_prefix, *++argv); 
-            if (tx_specified) {
-                strcpy (file_table[len_file_table].tx_prefix, tx_prefix); 
-                file_table[len_file_table].tx_specified = 1;
-            }
-            if (ch_specified)
-                file_table[len_file_table].channel = ch; 
-            else
-                file_table[len_file_table].channel = -1; 
-
-            len_file_table++;
+            strcpy (rx_prefix, *++argv); 
+            int i; 
+            for (i=0; i<3; i++) {
+	            strcpy (file_table[len_file_table].input_directory, ipathp); 
+	            sprintf (file_table[len_file_table].rx_prefix, "%s_ch%d", rx_prefix, i); 
+	            if (tx_specified) {
+	                strcpy (file_table[len_file_table].tx_prefix, tx_prefix); 
+	                file_table[len_file_table].tx_specified = 1;
+	            }
+	            file_table[len_file_table].channel = i; 
+	            len_file_table++;
+            } // initialize file table for each channel 
         } // -rx_pre
 
         // invalid option
@@ -701,23 +704,25 @@ PROCESS_EACH_FILE:
     sprintf (bp, "%s%s.csv", file_table[file_index].input_directory, file_table[file_index].rx_prefix); 
 	md_fp = open_file (bp, "r");
 
-    sprintf (bp, "%s%s_out.csv", opath, file_table[file_index].rx_prefix); 
+    sprintf (bp, "%s%s_out_occ.csv", opath, file_table[file_index].rx_prefix); 
 	out_fp = open_file (bp, "w");
 
-    sprintf (bp, "%s%s_aux.csv", opath, file_table[file_index].rx_prefix); 
+    sprintf (bp, "%s%s_aux_occ.csv", opath, file_table[file_index].rx_prefix); 
 	aux_fp = open_file (bp, "w");
 
-    sprintf (bp, "%s%s_warnings.txt", opath, file_table[file_index].rx_prefix); 
+    sprintf (bp, "%s%s_warnings_occ.txt", opath, file_table[file_index].rx_prefix); 
    	warn_fp = open_file (bp, "w");
 
     if ((md_fp == NULL) || (out_fp == NULL) || (aux_fp == NULL) || (warn_fp == NULL)) {
-        printf ("Missing or could not open input file\n"); 
+        printf ("Missing or could not open input or output file\n"); 
         print_usage (); 
         my_exit (-1); 
     }
 
+    /*
     if (tx_specified && !ch_specified)
         FATAL ("When using transmit side log, channel number must be specifed through -ch.\n", "")
+    */
 
     // initialization
     int i; 
