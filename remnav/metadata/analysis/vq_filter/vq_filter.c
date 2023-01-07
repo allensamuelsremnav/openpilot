@@ -45,6 +45,7 @@
 #define     FRAME_PERIOD_MS 33.364
 #define 	MAX_GPS			25000				// maximum entries in the gps file. fatal if there are more.
 #define     TX_BUFFER_SIZE (20*60*1000)
+#define     CD_BUFFER_SIZE (20*60*1000)
 
 struct meta_data {
     int         packet_num;                 // incrementing number starting from 0
@@ -125,6 +126,13 @@ struct s_txlog {
     int time_since_last_update;     // of occupancy for the same channel
     int actual_rate;
 };
+
+struct s_cmetadata {
+    int packet_num;                     // packet number read from this line of the carrier meta_data finle 
+    double vx_epoch_ms; 
+    double tx_epoch_ms; 
+    double rx_epoch_ms;
+}; 
                     
 struct s_session {
     unsigned        frame_count;            // total fames in the session
@@ -144,7 +152,7 @@ struct s_session {
 };
 
 struct s_carrier {
-        char line[MAX_LINE_SIZE];        // line to read the carrier data in 
+        char line[MAX_LINE_SIZE];           // line to read the carrier data in 
         char *lp;                           // pointer to line
         int tx;                             // set to 1 if this carrier tranmitted the packet being considered
         int packet_num;                     // packet number read from this line of the carrier meta_data finle 
@@ -159,8 +167,11 @@ struct s_carrier {
         struct s_txlog *tdp;                // pointer to the tx data array
         int len_td;                         // number of entries in the td array
 
-        FILE *fp;                           // carrier metadata file pointer
-        char name[100];                     // carrier name
+        struct s_cmetadata *cdp;            // pointer to the carrier metadata array
+        int len_cd;                         // number of enteries in the cd array
+
+//         FILE *fp;                           // carrier metadata file pointer
+//         char name[100];                     // carrier name
 };
 
 struct s_gps {
@@ -261,7 +272,6 @@ void decode_sendtime (double *vx_epoch_ms, double *tx_epoch_ms, int *socc);
 
 // outputs per carrier stats
 void emit_carrier_stat (
-    int print_header, 
     struct s_carrier *cp, 
     struct meta_data *mdp, 
     struct frame *fp);
@@ -281,8 +291,11 @@ void print_command_line (FILE *fp);
 // returns number of enteries found in the gps file
 int read_gps (FILE *);							// reads and error checks the gps file
 
-// returns number of entries in the transmit log datat file
-int read_td (FILE *);
+// reads per carrier metadat into cd array and returns number of entries 
+void read_cd (char *);
+
+// reads transmit log file into td array and returns number of entries 
+void read_td (FILE *);
 
 // returns 1 if able to find coordinates for the frame; else 0
 int get_gps_coord (struct frame *);
@@ -324,8 +337,10 @@ int     fast_frame_t2r = 60;                    // frames with latency lower tha
 int     frame_size_modulation_latency = 3;      // number of frames the size is expected to be modulated up or down
 int     frame_size_modulation_threshold = 6000; // size in bytes the frame size is expected to be modulated below or aboveo
 struct  s_gps gps[MAX_GPS]; int	len_gps; 		// gps data array number of valid entries in gps arraynt     
-char    comamnd_line[5000]; 
-struct  s_txlog *td0=NULL, *td1=NULL, *td2=NULL;// transmit log file stored in this array
+char    comamnd_line[5000];                     // string store the command line 
+struct  s_cmetadata *cd0p=NULL, *cd1p=NULL, *cd2p=NULL; // per carrier metadata file stored in this array
+int     len_cd0=0, len_cd1=0, len_cd2=0;        // len of the transmit data logfile
+struct  s_txlog *td0p=NULL, *td1p=NULL, *td2p=NULL;// transmit log file stored in this array
 int     len_td0=0, len_td1=0, len_td2=0;        // len of the transmit data logfile
 
 int main (int argc, char* argv[]) {
@@ -470,7 +485,6 @@ int main (int argc, char* argv[]) {
 
     // open remaining input and output files
     // transmit log file
-    len_td0 = len_td1 = len_td2 = 0; 
     if (have_tx_log) {
          sprintf (bp, "%s%s.log", ipathp, tx_prep); 
         if ((td_fp = open_file (bp, "r")) != NULL) {
@@ -484,16 +498,8 @@ int main (int argc, char* argv[]) {
         
     // per carrier meta data files
     if (have_carrier_metadata) {
-
-        sprintf (bp, "%s%s_ch0.csv", ipathp, rx_prep); 
-        c0_fp = open_file (bp, "r");
-
-        sprintf (bp, "%s%s_ch1.csv", ipathp, rx_prep);
-        c1_fp = open_file (bp, "r");
-
-        sprintf (bp, "%s%s_ch2.csv", ipathp, rx_prep);
-        c2_fp = open_file (bp, "r");
-
+        sprintf (bp, "%s%s", ipathp, rx_prep); 
+        read_cd (bp); 
     } // per carrier meta data files
 
     // output files
@@ -527,11 +533,6 @@ int main (int argc, char* argv[]) {
 
     // skip/print headers
     skip_combined_md_file_header (md_fp);
-    if (have_carrier_metadata) {
-        skip_carrier_md_file_header (c0_fp, "C0");
-        skip_carrier_md_file_header (c1_fp, "C1");
-        skip_carrier_md_file_header (c2_fp, "C2");
-    }
     emit_frame_header (fs_fp);
     emit_packet_header (ps_fp);
     print_command_line (ss_fp);
@@ -665,9 +666,9 @@ int main (int argc, char* argv[]) {
 // free up storage before exiting
 int my_exit (int n) {
 
-    if (td0 != NULL) free (td0); 
-    if (td1 != NULL) free (td1); 
-    if (td2 != NULL) free (td2); 
+    if (td0p != NULL) free (td0p); 
+    if (td1p != NULL) free (td1p); 
+    if (td2p != NULL) free (td2p); 
     exit (n);
 
 } // my_exit
@@ -784,15 +785,15 @@ void sort_td (struct s_txlog *tdp, int len) {
     return;
 } // end of sort_td
 
-// returns number of entries in the transmit log datat file. Modifiels global td array
-int read_td (FILE *fp) {
+// reads transmit log file into 3 td arrays 
+void read_td (FILE *fp) {
 
     // allocate storage for tx log
-    td0 = (struct s_txlog *) malloc (sizeof (struct s_txlog) * TX_BUFFER_SIZE);
-    td1 = (struct s_txlog *) malloc (sizeof (struct s_txlog) * TX_BUFFER_SIZE);
-    td2 = (struct s_txlog *) malloc (sizeof (struct s_txlog) * TX_BUFFER_SIZE);
+    td0p = (struct s_txlog *) malloc (sizeof (struct s_txlog) * TX_BUFFER_SIZE);
+    td1p = (struct s_txlog *) malloc (sizeof (struct s_txlog) * TX_BUFFER_SIZE);
+    td2p = (struct s_txlog *) malloc (sizeof (struct s_txlog) * TX_BUFFER_SIZE);
 
-    if (td0==NULL || td1==NULL || td2==NULL)
+    if (td0p==NULL || td1p==NULL || td2p==NULL)
         FATAL("Could not allocate storage to read the tx log file in an array%s\n", "")
 
     int i; 
@@ -800,7 +801,7 @@ int read_td (FILE *fp) {
         struct s_txlog *tdp; 
 	    int *len_td;
 
-        tdp = i==0? td0 : i==1? td1 : td2; 
+        tdp = i==0? td0p : i==1? td1p : td2p; 
         len_td = i==0? &len_td0 : i==1? &len_td1 : &len_td2; 
 
 		// read tx log file into array and sort it
@@ -822,6 +823,147 @@ int read_td (FILE *fp) {
     } // for each carrier
 
 } // read_td
+
+// reads a line from the carrier metadata file. returns 0 at the end of file.
+int read_cd_line (int skip_header, FILE *fp, struct s_cmetadata *cdp) {
+
+    char line[MAX_LINE_SIZE];
+
+    if (skip_header) {
+	    fgets(line, MAX_LINE_SIZE, fp);
+        return 1; 
+    }
+
+	if (fgets(line, MAX_LINE_SIZE, fp) != NULL) {
+	    if (sscanf (line, "%u, %lf, %lf,", &cdp->packet_num, &cdp->vx_epoch_ms, &cdp->rx_epoch_ms) !=3) {
+	        printf ("read_cd_line: could not find all the fields in the meta data file line: %s\n", line); 
+            return 0; // consider it end of file
+	    } // if scan failed
+        else // scan passed
+            return 1;
+    } 
+    else // reached end of file
+        return 0;
+} // read_cd_line
+
+void sort_cd (struct s_cmetadata *cdp, int len) {
+
+    int i, j; 
+
+    for (i=1; i<len; i++) {
+        j = i; 
+        while (j != 0) {
+            if ((cdp+j)->packet_num < (cdp+j-1)->packet_num) {
+                // slide jth element up by 1
+                struct s_cmetadata temp = *(cdp+j-1); 
+                *(cdp+j-1) = *(cdp+j);
+                *(cdp+j) = temp; 
+            } // if slide up
+            else 
+                // done sliding up
+                break;
+            j--;
+        } // end of while jth elment is smaller than one above it
+    } // for elements in the log data array
+
+    return;
+} // end of sort_cd
+
+
+// reads carrier metadata files in cd arrays
+void read_cd (char *fnamep) {
+
+    // allocate storage for tx log
+    cd0p = (struct s_cmetadata *) malloc (sizeof (struct s_txlog) * CD_BUFFER_SIZE);
+    cd1p = (struct s_cmetadata *) malloc (sizeof (struct s_txlog) * CD_BUFFER_SIZE);
+    cd2p = (struct s_cmetadata *) malloc (sizeof (struct s_txlog) * CD_BUFFER_SIZE);
+
+    if (cd0p==NULL || cd1p==NULL || cd2p==NULL)
+        FATAL("Could not allocate storage to read the tx log file in an array%s\n", "")
+
+    int i; 
+    for (i=0; i<3; i++) {
+        struct s_cmetadata *cdp; 
+	    int *len_cd;
+        char bp[1000];
+        FILE *fp; 
+
+        sprintf (bp, "%s_ch%d.csv", fnamep, i);
+        if ((fp = open_file (bp, "r")) == NULL)
+            FATAL("read_cd: Could not open carrier metadata file %s", bp)
+        printf ("Reading carrier meta data file %s\n", bp); 
+
+        switch (i) {
+            case 0:
+                cdp = cd0p; len_cd = &len_cd0;
+                break;
+            case 1:
+                cdp = cd1p; len_cd = &len_cd1;
+                break; 
+            default: 
+                cdp = cd2p; len_cd = &len_cd2; 
+                break;
+        } // of switch
+
+		// read tx log file into array and sort it
+        read_cd_line (1, fp, cdp);      // skip header
+		while (read_cd_line (0, fp, cdp)) {
+		    (*len_cd)++;
+		    if (*len_cd == CD_BUFFER_SIZE)
+		        FATAL ("read_cd: CD data array is not large enough to read the tx log file. Increase CD_BUFFER_SIZE%s\n", "")
+		    cdp++;
+		} // while there are more lines to be read
+
+		if (*len_cd == 0)
+		    FATAL("read_cd: Meta data file %sis empty\n", bp);
+
+		// sort by packet number
+        sort_cd (cdp, *len_cd); 
+    } // for each carrier
+
+    return; 
+} // read_cd
+
+// find_packet_in_cd fills out the vx_epoch, rx_epoch from the packet in the carrier metadata array 
+// with the earliest rx_time matching the specified packet. 
+// returns -1 if no match was found, else the specified packet num
+int find_packet_in_cd (int packet_num, struct s_cmetadata *cdp, int len_cdfile, struct s_carrier *cp) {
+
+    struct  s_cmetadata *left, *right, *current;    // current, left and right index of the search
+
+    left = cdp; right = cdp + len_cdfile - 1; 
+
+    current = left + (right - left)/2; 
+    while (current != left) { // there are more than 2 elements to search
+        if (packet_num > current->packet_num)
+            left = current;
+        else
+            right = current; 
+        current = left + (right - left)/2; 
+    } // while there are more than 2 elements left to search
+    
+    // when the while exits, the current is equal to (if current = left edge) or less than packet_num
+    if (current->packet_num == packet_num)
+        left = current; 
+    else if ((current+1)->packet_num == packet_num)
+        left = current + 1;
+    else // no match
+        return -1; 
+
+    // now search to the right and see if there is smaller rx_epoch_ms
+    struct s_cmetadata *smallest = left; 
+
+    current = left;  // assume left is the smallest
+    while ((left != (cdp+len_cdfile-1)) && ((++left)->packet_num == packet_num)) {
+        if (smallest->rx_epoch_ms > left->rx_epoch_ms) 
+            smallest = left; 
+    }
+
+    cp->vx_epoch_ms = smallest->vx_epoch_ms;
+    cp->rx_epoch_ms = smallest->rx_epoch_ms; 
+
+    return packet_num;
+} // find_packet_in_cd
 
 // returns 1 if able to find coordinates for the frame; else 0. Assumes gps file is in increasing time order
 // uses globals gps and len_gps
@@ -1118,15 +1260,19 @@ void emit_packet_header (FILE *ps_fp) {
     return;
 } // emit_packet_header
 
-void init_packet_stats (struct s_txlog *tdp, int len_td, FILE *fp, char *namep, struct s_carrier *cp) {
-        cp->packet_num = -1;              // have not read any lines yet
-        cp->socc = 0;                     // assume nothing in the buffer
-        cp->t2r = 30;                     // default value before the first packet is transmiited by this carrier
-        cp->tdp = tdp;                    // tx data array
-        cp->len_td = len_td;              // lenght of the tx data array
-        cp->fp = fp;
-        sprintf (cp->name, namep); 
-        return;
+void init_packet_stats (
+    struct s_txlog *tdp, int len_td, struct s_cmetadata *cdp, int len_cd, 
+    FILE *fp, char *namep, struct s_carrier *cp) {
+    cp->packet_num = -1;              // have not read any lines yet
+    cp->socc = 0;                     // assume nothing in the buffer
+    cp->t2r = 30;                     // default value before the first packet is transmiited by this carrier
+    cp->tdp = tdp;                    // tx data array
+    cp->len_td = len_td;              // lenght of the tx data array
+    cp->cdp = cdp; 
+    cp->len_cd = len_cd; 
+//     cp->fp = fp;
+//     sprintf (cp->name, namep); 
+    return;
 } // init_packet_stats
 
 void emit_frame_stats_for_per_packet_file (struct s_session *ssp, struct frame *fp, struct meta_data *mdp) {
@@ -1161,103 +1307,52 @@ void emit_frame_stats_for_per_packet_file (struct s_session *ssp, struct frame *
 // assumes called at the end of a frame after frame and session stats have been updated
 // emits packet stats and analytics output followed by frame stats and analytics
 void emit_frame_stats (int print_header, struct frame *p, int last) {     // last is set 1 for the last frame of the se//ssion 
-    static struct s_carrier c0, c1, c2; 
+
+    static struct s_carrier c0, c1, c2;                     // hold per packet information of each channel
     struct s_carrier *c0p=&c0, *c1p=&c1, *c2p=&c2; 
     static int fast_to_slow_edge_count = 0, slow_to_fast_edge_count = 0; 
 
     if ((ssp->frame_count % 1000) == 0)
         printf ("at frame %d\n", ssp->frame_count); 
 
-    // initialization of per packet data structure
-    if (ssp->frame_count == 1) {
-        init_packet_stats (td0, len_td0, c0_fp, "ch0", c0p);
-        init_packet_stats (td1, len_td1, c1_fp, "ch1", c1p);
-        init_packet_stats (td2, len_td2, c2_fp, "ch2", c2p);
-        /*
-        c0p->packet_num = -1;               // have not read any lines yet
-        c0p->socc =0;                       // assume nothing in the buffer
-        c0p->t2r = 30;                      // default value before the first packet is transmiited by this carrier
-        c0p->tdp = td0;                     // tx data array
-        c0p->len_td = len_td0;              // lenght of the tx data array
-        c0p->fp = c0_fp;
-        sprintf (c0p->name, "ch0"); 
-
-        c1p->packet_num = -1;               // have not read any lines yet
-        c1p->socc =0;                       // assume nothing in the buffer
-        c1p->t2r = 30;                      // default value before the first packet is transmiited by this carrier
-        c1p->tdp = td1;                     // tx data array
-        c1p->len_td = len_td1;              // lenght of the tx data array
-        c1p->fp = c1_fp;
-        sprintf (c1p->name, "ch1"); 
-
-        c2p->packet_num = -1;               // have not read any lines yet
-        c2p->socc =0;                       // assume nothing in the buffer
-        c2p->t2r = 30;                      // default value before the first packet is transmiited by this carrier
-        c2p->tdp = td2;                     // tx data array
-        c2p->len_td = len_td2;              // lenght of the tx data array
-        c2p->fp = c2_fp;
-        sprintf (c2p->name, "ch2"); 
-        */
-    }
-
     //
-    // packet stats
+    // per packet stats
     //
+
     // check if MD_BUFFER is holding all the packets of the frame
 	if (p->packet_count > MD_BUFFER_SIZE) {
         FATAL("Warning: Frame has more packets than MD_BUFFER can hold. Increase MD_BUFFER_SIZE\n", "") 
 	} 
 
+    // initialization of per packet data structure
+    if (ssp->frame_count == 1) {
+        init_packet_stats (td0p, len_td0, cd0p, len_cd0, c0_fp, "ch0", c0p);
+        init_packet_stats (td1p, len_td1, cd1p, len_cd1, c1_fp, "ch1", c1p);
+        init_packet_stats (td2p, len_td2, cd2p, len_cd2, c2_fp, "ch2", c2p);
+    }
     // for all packets in the frame
 	// md_index point to the first line of the new frame when emit_frame_stats is called
-	int i, starting_index, current_index; 
+	int i, starting_index;
 	starting_index = (md_index + MD_BUFFER_SIZE - p->packet_count) % MD_BUFFER_SIZE; 
     for (i=0; i < p->packet_count; i++) {
 
-        current_index = (starting_index + i) % MD_BUFFER_SIZE;
-        struct meta_data *mdp = &md[current_index]; 
+        struct meta_data *mdp = md + ((starting_index + i) % MD_BUFFER_SIZE);
 
         emit_frame_stats_for_per_packet_file (ssp, p, mdp); 
-        /*
-        // Frame metadata for reference (repeated for every packet)
-        fprintf (ps_fp, "%u, ", ssp->frame_count);
-        fprintf (ps_fp, "%u, ", mdp->packet_num);
-	    if (p->latest_packet_num == mdp->packet_num) fprintf (ps_fp, "%u, ", p->latest_packet_num); else fprintf (ps_fp, ", "); 
-        fprintf (ps_fp, "%u, ", p->late);
-	    fprintf (ps_fp, "%u, ", p->missing);
-	    fprintf (ps_fp, "%.1f, ", p->nm1_bit_rate);
-	    fprintf (ps_fp, "%u, ", p->packet_count);
-	    fprintf (ps_fp, "%u, ", p->size);
-	    fprintf (ps_fp, "%.1f, ", p->tx_epoch_ms_1st_packet - p->camera_epoch_ms);
-	    fprintf (ps_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->tx_epoch_ms_1st_packet);
-	    fprintf (ps_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->camera_epoch_ms);
-	    fprintf (ps_fp, "%d, ", p->repeat_count);
-	    fprintf (ps_fp, "%u, ", p->skip_count);
-	    fprintf (ps_fp, "%.1f, ", p->c2d_frames);
-        fprintf (ps_fp, "%.0lf, ", p->camera_epoch_ms);
-
-        // Delivered packet meta data
-        fprintf (ps_fp, "%u, ", mdp->retx);
-        fprintf (ps_fp, "%u, ", mdp->ch);
-        fprintf (ps_fp, "%.0lf, ", mdp->tx_epoch_ms);
-        fprintf (ps_fp, "%.0lf, ", mdp->rx_epoch_ms);
-        fprintf (ps_fp, "%.1f, ", mdp->rx_epoch_ms - mdp->tx_epoch_ms);
-        fprintf (ps_fp, "%.1f, ", mdp->rx_epoch_ms - p->camera_epoch_ms);
-    */
-
+        
         // Per carrier meta data
         if (have_carrier_metadata) {
 
-	        emit_carrier_stat (print_header, c0p, mdp, p);
-	        emit_carrier_stat (print_header, c1p, mdp, p);
-	        emit_carrier_stat (print_header, c2p, mdp, p);
+	        emit_carrier_stat (c0p, mdp, p);
+	        emit_carrier_stat (c1p, mdp, p);
+	        emit_carrier_stat (c2p, mdp, p);
 	
             //
             // packet level analytics
             //
 
             // channel state
-            
+
 
             // frame size modulation
 
@@ -1400,6 +1495,7 @@ void skip_carrier_md_file_header (FILE *fp, char *cname) {
     return;
 } // skip_carrier_md_header 
 
+/*
 int read_carrier_md (int skip_header, FILE *fp, char *line, struct s_carrier *cp, char *cname) {
 
 	if (fgets(line, MAX_LINE_SIZE, fp) != NULL) {
@@ -1413,6 +1509,7 @@ int read_carrier_md (int skip_header, FILE *fp, char *line, struct s_carrier *cp
     else // reached end of file
         return 0;
 } // read_carrier_md
+*/
 
 // interpolate_occ returns interpolated value between the current and next value of occ from the tx log file
 int interpolate_occ (double tx_epoch_ms, struct s_txlog *current, struct s_txlog *next) {
@@ -1425,18 +1522,18 @@ int interpolate_occ (double tx_epoch_ms, struct s_txlog *current, struct s_txlog
 
 } // interpolate occ
 
-// find_occ_frim_tdfile  returns the sampled occupancy at the closest time smaller than the specified tx_epoch_ms and that time i
-// and // interpolated occupancy, interporated between the sampled occupancy above and the next (later) sample
-void find_occ_from_tdfile (int packet_num, double tx_epoch_ms, struct s_txlog *tdp, int len_tdfile, int *iocc, int *socc, double *socc_epoch_ms) {
+// find_occ_from_td  returns the sampled occupancy at the closest time smaller than the specified tx_epoch_ms 
+// and interpolated occupancy, interporated between the sampled occupancy above and the next (later) sample
+void find_occ_from_td (int packet_num, double tx_epoch_ms, struct s_txlog *tdp, int len_td, int *iocc, int *socc, double *socc_epoch_ms) {
     struct s_txlog *left, *right, *current;    // current, left and right index of the search
 
-    left = tdp; right = tdp + len_tdfile -1; 
+    left = tdp; right = tdp + len_td - 1; 
 
     if (tx_epoch_ms < left->epoch_ms) // tx started before modem occupancy was read
-        FATAL("find_occ_from_tdfile: Packet %d tx_epoch_ms is smaller than first occupancy sample time\n", packet_num)
+        FATAL("find_occ_from_td: Packet %d tx_epoch_ms is smaller than first occupancy sample time\n", packet_num)
 
     if (tx_epoch_ms > right->epoch_ms + 100) // tx was done significantly later than last occ sample
-        FATAL("find_occ_from_tdfile: Packet %d tx_epoch_ms is over 100ms largert than last occupancy sample time\n", packet_num)
+        FATAL("find_occ_from_td: Packet %d tx_epoch_ms is over 100ms largert than last occupancy sample time\n", packet_num)
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
@@ -1453,19 +1550,21 @@ void find_occ_from_tdfile (int packet_num, double tx_epoch_ms, struct s_txlog *t
         current = right; 
 
     *socc = current->occ; 
-    *iocc = interpolate_occ (tx_epoch_ms, current, MIN((current+1), (tdp+len_tdfile+1)));
+    *iocc = interpolate_occ (tx_epoch_ms, current, MIN((current+1), (tdp+len_td+1)));
     *socc_epoch_ms = current->epoch_ms; 
 
     return;
-} // find_occ_from_tdfile
+} // find_occ_from_td
 
 // outputs per carrier stats
 void emit_carrier_stat (
-    int print_header, 
     struct s_carrier *cp, 
     struct meta_data *mdp, 
     struct frame *fp) {
 
+    cp->packet_num = find_packet_in_cd (mdp->packet_num, cp->cdp, cp->len_cd, cp);
+
+ /*
 	while (mdp->packet_num > cp->packet_num) { // step over retransmitted previous packets
         int last_packet_num = cp->packet_num; 
         if (read_carrier_md (0, cp->fp, cp->line, cp, cp->name) == 0) {
@@ -1485,17 +1584,19 @@ void emit_carrier_stat (
     // rx_timestamp, If there are additional retransmitted packets they are ignored and disccarded during next packet read. 
     // This is a bug and needs to be fixed. the code should search for the earliest rather than assuming.
 
+*/
+
     // if this carrier transmitted this meta data line, then print the carrier stats
 	if (cp->packet_num == mdp->packet_num) {
         int last_reported_socc = cp->socc; 
 
         cp->tx = 1; 
         decode_sendtime (&cp->vx_epoch_ms, &cp->tx_epoch_ms, &cp->socc);
-	    if (cp->socc == 31) /* no info */ cp->socc = last_reported_socc; 
+	    if (cp->socc == 31) /* no new info */ cp->socc = last_reported_socc; 
 
         // if tx log exists then overwrite occupancy from tx log file
         if (cp->len_td) { // log file exists
-            find_occ_from_tdfile (mdp->packet_num, cp->tx_epoch_ms, cp->tdp, cp->len_td, &(cp->iocc), &(cp->socc), &(cp->socc_epoch_ms));
+            find_occ_from_td (mdp->packet_num, cp->tx_epoch_ms, cp->tdp, cp->len_td, &(cp->iocc), &(cp->socc), &(cp->socc_epoch_ms));
         }
 
         cp->t2r = cp->rx_epoch_ms - cp->tx_epoch_ms; 
@@ -1515,7 +1616,7 @@ void emit_carrier_stat (
         cp->tx = 0; 
         if (cp->len_td) {
             // find socc using mdp->tx_epoch_ms since cp->tx_epoch_ms is not avaialble as the channel did not transmit
-            find_occ_from_tdfile (mdp->packet_num, mdp->tx_epoch_ms, cp->tdp, cp->len_td, &(cp->iocc), &(cp->socc), &(cp->socc_epoch_ms));
+            find_occ_from_td (mdp->packet_num, mdp->tx_epoch_ms, cp->tdp, cp->len_td, &(cp->iocc), &(cp->socc), &(cp->socc_epoch_ms));
 	        fprintf (ps_fp, ", , %0.1f, ,%d ,%d ,%0.lf , , ", cp->t2r, cp->socc, cp->iocc, cp->socc_epoch_ms);
         }
         else
