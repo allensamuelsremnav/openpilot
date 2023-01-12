@@ -13,7 +13,7 @@
 #define RES_SD  1
 #define MAX_MD_LINE_SIZE 500 
 #define TX_BUFFER_SIZE (20*60*1000)
-#define MD_BUFFER_SIZE 2
+#define MD_BUFFER_SIZE (20*60*1000)
 #define MAX_TD_LINE_SIZE 1000
 
 struct s_txlog {
@@ -26,34 +26,38 @@ struct s_txlog {
 };
 
 struct s_carrier {
-    unsigned packet_num;                // packet number read from this line of the carrier meta_data finle 
+    int packet_num;                 // packet number read from this line of the carrier meta_data finle 
     double vx_epoch_ms; 
     double tx_epoch_ms;
     double rx_epoch_ms;
-    unsigned packet_len;
-    unsigned frame_start;
-    unsigned frame_num;
-    unsigned frame_rate;
-    unsigned frame_res;
-    unsigned frame_end;
+    int packet_len;
+    int frame_start;
+    int frame_num;
+    int frame_rate;
+    int frame_res;
+    int frame_end;
     double camera_epoch_ms;
-    unsigned retx;
-    unsigned check_packet_num;
+    int retx;
+    int check_packet_num;
 
     int socc;                           // sampled occupancy either from the tx log or the rx metadata file
     int iocc;                           // interpolated occupancy from tx log
     double socc_epoch_ms;               // time when the occupacny for this packet was sampled
 
-    struct s_txlog *tdp;                 // pointer to the td array
-    int len_td;                         // lenth of the tx log array. 0 implies tx log was not specified
+//     struct s_txlog *tdp;                 // pointer to the td array
+//     int len_td;                         // lenth of the tx log array. 0 implies tx log was not specified
     int match;                          // set to 1 if this channel matches the packet num to be transmitted
 };
 
 // globals
- struct s_txlog *td0 = NULL, *td1 = NULL, *td2 = NULL;  // transmit log file stored in this array
- int len_td0 = 0, len_td1 = 0, len_td2 = 0; // len of the transmit data logfile
- int silent = 0;                        // suppresses warnings if set to a 1
- FILE *warn_fp = NULL;                  // combined output file 
+struct s_txlog *td0 = NULL, *td1 = NULL, *td2 = NULL;  // transmit log file stored in this array
+int len_td0 = 0, len_td1 = 0, len_td2 = 0; // len of the transmit data logfile
+
+struct s_carrier *c0_md = NULL, *c1_md = NULL, *c2_md = NULL; 
+int len_md0 = 0, len_md1 = 0, len_md2 = 0;
+ 
+int silent = 0;                        // suppresses warnings if set to a 1
+FILE *warn_fp = NULL;                  // combined output file 
 
 #define		FATAL(STR, ARG) {printf (STR, ARG); my_exit(-1);}
 #define		FWARN(FILE, STR, ARG) {if (!silent) fprintf (FILE, STR, ARG);}
@@ -117,16 +121,16 @@ int interpolate_occ (double tx_epoch_ms, struct s_txlog *current, struct s_txlog
 
 // find_occ_frim_tdfile  returns the sampled occupancy at the closest time smaller than the specified tx_epoch_ms and 
 // and interpolated occupancy, interpolated between the sampled occupancy above and the next (later) sample
-void find_occ_from_tdfile (int packet_num, double tx_epoch_ms, struct s_txlog *tdp, int len_tdfile, int *iocc, int *socc, double *socc_epoch_ms) {
+void find_occ_from_td (int packet_num, double tx_epoch_ms, struct s_txlog *tdp, int len_tdfile, int *iocc, int *socc, double *socc_epoch_ms) {
     struct s_txlog *left, *right, *current;    // current, left and right index of the search
 
     left = tdp; right = tdp + len_tdfile -1; 
 
     if (tx_epoch_ms < left->epoch_ms) // tx started before modem occupancy was read
-        FATAL("find_occ_from_tdfile: Packet %d tx_epoch_ms is smaller than first occupancy sample time\n", packet_num)
+        FATAL("find_occ_from_td: Packet %d tx_epoch_ms is smaller than first occupancy sample time\n", packet_num)
 
     if (tx_epoch_ms > right->epoch_ms + 100) // tx was done significantly later than last occ sample
-        FATAL("find_occ_from_tdfile: Packet %d tx_epoch_ms is over 100ms largert than last occupancy sample time\n", packet_num)
+        FATAL("find_occ_from_td: Packet %d tx_epoch_ms is over 100ms largert than last occupancy sample time\n", packet_num)
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
@@ -147,23 +151,25 @@ void find_occ_from_tdfile (int packet_num, double tx_epoch_ms, struct s_txlog *t
     *socc_epoch_ms = current->epoch_ms; 
 
     return;
-} // find_occ_from_tdfile
+} // find_occ_from_td
 
-// reads and parses a meta data line from the specified file. returns 1 if end of file reached
-int read_line (int read_header, FILE *fp, struct s_carrier *mdp) {
+// reads and parses a meta data line from the specified file. returns 0 if end of file reached
+// tx log file if exists must be read prior to reading the carrier meta data files so that
+// occupancy can be correctly initialized 
+int read_md_line (int read_header, FILE *fp, struct s_txlog *tdp, int len_td, struct s_carrier *mdp) {
 
     char mdline[MAX_MD_LINE_SIZE], *mdlinep = mdline; 
-    // packe_number	 sender_timestamp	 receiver_timestamp	 video_packet_len	 frame_start	 frame_number	 frame_rate	 frame_resolut, ion	 frame_end	 camera_timestamp	 retx	 chPacketNum
 
     if (fgets (mdline, MAX_MD_LINE_SIZE, fp) == NULL)
         // reached end of the file
-        return 1;
+        return 0;
 
     if (read_header)
-        return 0;
+        return 1;
     
     // parse the line
-    if (sscanf (mdlinep, "%u, %lf, %lf, %u, %u, %u, %u, %u, %u, %lf, %u, %u", 
+    // packe_number	 sender_timestamp	 receiver_timestamp	 video_packet_len	 frame_start	 frame_number	 frame_rate	 frame_resolut, ion	 frame_end	 camera_timestamp	 retx	 chPacketNum
+    if (sscanf (mdlinep, "%d, %lf, %lf, %d, %d, %d, %d, %d, %d, %lf, %d, %d", 
         &mdp->packet_num,
         &mdp->vx_epoch_ms,           // is actually format 2 sender time
         &mdp->rx_epoch_ms,
@@ -181,83 +187,84 @@ int read_line (int read_header, FILE *fp, struct s_carrier *mdp) {
         decode_sendtime (2, /*assume format 2 */ &mdp->vx_epoch_ms, &mdp->tx_epoch_ms, &mdp->socc);
 
         // if tx log is available then get occupancy from it
-        if (mdp->len_td) // array is not empty
-            find_occ_from_tdfile (mdp->packet_num, mdp->tx_epoch_ms, mdp->tdp, mdp->len_td, &(mdp->iocc), &(mdp->socc), &(mdp->socc_epoch_ms));
+        if (len_td) // array is not empty
+            find_occ_from_td (mdp->packet_num, mdp->tx_epoch_ms, tdp, len_td, &(mdp->iocc), &(mdp->socc), &(mdp->socc_epoch_ms));
 
-        return 0;
+        return 1;
 
-} // end of read_line
+} // end of read_md_line
 
 // checks if the paramters of the two carriers are consistent 
-void check_consistency (unsigned packet_num, struct s_carrier *mdp0, struct s_carrier *mdp1) {
+void check_consistency (int packet_num, struct s_carrier *mdp0, struct s_carrier *mdp1) {
+
     if (mdp0->match==0 || mdp1->match==0)
         // nothing to check as one of the carriers is not involved in this transmission
         return; 
     
     if (mdp0->packet_len != mdp1->packet_len)
-        FATAL ("Packet len field of Packet num %u inconsistent\n", packet_num)
+        FATAL ("Packet len field of Packet num %d inconsistent\n", packet_num)
 
     if (mdp0->frame_start != mdp1->frame_start)
-        FATAL ("frame_start field of Packet num %u inconsistent\n", packet_num)
+        FATAL ("frame_start field of Packet num %d inconsistent\n", packet_num)
 
     if (mdp0->frame_num != mdp1->frame_num)
-        FATAL ("frame_num field of Packet num %u inconsistent\n", packet_num)
+        FATAL ("frame_num field of Packet num %d inconsistent\n", packet_num)
 
     if (mdp0->frame_rate != mdp1->frame_rate)
-        FATAL ("frame_rate field of Packet rate %u inconsistent\n", packet_num)
+        FATAL ("frame_rate field of Packet rate %d inconsistent\n", packet_num)
 
     if (mdp0->frame_res != mdp1->frame_res)
-        FATAL ("frame_res field of Packet rate %u inconsistent\n", packet_num)
+        FATAL ("frame_res field of Packet rate %d inconsistent\n", packet_num)
 
     if (mdp0->frame_end != mdp1->frame_end)
-        FATAL ("frame_end field of Packet rate %u inconsistent\n", packet_num)
+        FATAL ("frame_end field of Packet rate %d inconsistent\n", packet_num)
 
     return;
 } // end of check_consistency
 
 // prints out the common stuff
-void emit_common (int print_header, unsigned packet_num, struct s_carrier *mdp, FILE *fp) {
+void emit_common (int print_header, int packet_num, struct s_carrier *mdp, FILE *fp) {
 
-    if (print_header) fprintf (fp, "F#, ");    else fprintf (fp, "%u, ", mdp->frame_num);
-    if (print_header) fprintf (fp, "P#, ");    else fprintf (fp, "%u, ", packet_num);
-    if (print_header) fprintf (fp, "P_len, "); else fprintf (fp, "%u, ", mdp->packet_len);
-    if (print_header) fprintf (fp, "F_S, ");   else fprintf (fp, "%u, ", mdp->frame_start);
-    if (print_header) fprintf (fp, "F_E, ");   else fprintf (fp, "%u, ", mdp->frame_end);
-    if (print_header) fprintf (fp, "Rate, ");  else fprintf (fp, "%u, ", mdp->frame_rate);
-    if (print_header) fprintf (fp, "Res, ");   else fprintf (fp, "%u, ", mdp->frame_res);
+    if (print_header) fprintf (fp, "F#, ");    else fprintf (fp, "%d, ", mdp->frame_num);
+    if (print_header) fprintf (fp, "P#, ");    else fprintf (fp, "%d, ", packet_num);
+    if (print_header) fprintf (fp, "P_len, "); else fprintf (fp, "%d, ", mdp->packet_len);
+    if (print_header) fprintf (fp, "F_S, ");   else fprintf (fp, "%d, ", mdp->frame_start);
+    if (print_header) fprintf (fp, "F_E, ");   else fprintf (fp, "%d, ", mdp->frame_end);
+    if (print_header) fprintf (fp, "Rate, ");  else fprintf (fp, "%d, ", mdp->frame_rate);
+    if (print_header) fprintf (fp, "Res, ");   else fprintf (fp, "%d, ", mdp->frame_res);
 
     return;
 } // end of emit_common
 
-void emit_per_carrier (int print_header, struct s_carrier *mdp, FILE *fp, char *Cx) {
+void emit_per_carrier (int print_header, int len_td, struct s_carrier *mdp, FILE *fp, char *Cx) {
 
     if (print_header) fprintf (fp, "%s, ", Cx);   else if (!mdp->match)  fprintf (fp, ", ");    else fprintf (fp, ", "); 
     if (print_header) fprintf (fp, "Cx_TS, ");    else if (!mdp->match)  fprintf (fp, ", ");    else fprintf (fp, "%lf, ", mdp->camera_epoch_ms);
     if (print_header) fprintf (fp, "vx_TS, ");    else if (!mdp->match)  fprintf (fp, ", ");    else fprintf (fp, "%lf, ", mdp->vx_epoch_ms);
     if (print_header) fprintf (fp, "tx_TS, ");    else if (!mdp->match)  fprintf (fp, ", ");    else fprintf (fp, "%lf, ", mdp->tx_epoch_ms);
     if (print_header) fprintf (fp, "rx_TS, ");    else if (!mdp->match)  fprintf (fp, ", ");    else fprintf (fp, "%lf, ", mdp->rx_epoch_ms);
-    if (print_header) fprintf (fp, "socc, ");     else if (!mdp->match)  fprintf (fp, ", ");    else fprintf (fp, "%u, ", mdp->socc);
-    if (mdp->len_td) {
-        if (print_header) fprintf (fp, "iocc, "); else if (!mdp->match)  fprintf (fp, ", ");    else fprintf (fp, "%u, ", mdp->iocc);
+    if (print_header) fprintf (fp, "socc, ");     else if (!mdp->match)  fprintf (fp, ", ");    else fprintf (fp, "%d, ", mdp->socc);
+    if (len_td) {
+        if (print_header) fprintf (fp, "iocc, "); else if (!mdp->match)  fprintf (fp, ", ");    else fprintf (fp, "%d, ", mdp->iocc);
         if (print_header) fprintf (fp, "socc_epoch_ms, "); else if (!mdp->match)  fprintf (fp, ", ");    else fprintf (fp, "%lf, ", mdp->socc_epoch_ms);
     }
-    if (print_header) fprintf (fp, "retx, ");     else if (!mdp->match)  fprintf (fp, ", ");    else fprintf (fp, "%u, ", mdp->retx);
-    if (print_header) fprintf (fp, "chkP, ");     else if (!mdp->match)  fprintf (fp, ", ");    else fprintf (fp, "%u, ", mdp->check_packet_num);
+    if (print_header) fprintf (fp, "retx, ");     else if (!mdp->match)  fprintf (fp, ", ");    else fprintf (fp, "%d, ", mdp->retx);
+    if (print_header) fprintf (fp, "chkP, ");     else if (!mdp->match)  fprintf (fp, ", ");    else fprintf (fp, "%d, ", mdp->check_packet_num);
 
 }  // emit_per_carrier
 
 void emit_combined (
     int print_header,
-    unsigned packet_num, 
+    int packet_num, 
     struct s_carrier *c0_mdp, struct s_carrier *c1_mdp, struct s_carrier *c2_mdp,
     FILE *fp) {
 
 
     if (print_header == 1) {
         emit_common (1, packet_num, c0_mdp, fp); 
-        emit_per_carrier (1, c0_mdp, fp, "c0");
-        emit_per_carrier (1, c1_mdp, fp, "c1");
-        emit_per_carrier (1, c2_mdp, fp, "c2");
+        emit_per_carrier (1, len_td0, c0_mdp, fp, "c0");
+        emit_per_carrier (1, len_td1, c1_mdp, fp, "c1");
+        emit_per_carrier (1, len_td2, c2_mdp, fp, "c2");
         fprintf (fp, "\n");
         return;
     }
@@ -267,9 +274,9 @@ void emit_combined (
         c0_mdp->match? c0_mdp : c1_mdp->match? c1_mdp : c2_mdp, 
         fp);
 
-    emit_per_carrier (0, c0_mdp, fp, "c0");
-    emit_per_carrier (0, c1_mdp, fp, "c1");
-    emit_per_carrier (0, c2_mdp, fp, "c2");
+    emit_per_carrier (0, len_td0, c0_mdp, fp, "c0");
+    emit_per_carrier (0, len_td1, c1_mdp, fp, "c1");
+    emit_per_carrier (0, len_td2, c2_mdp, fp, "c2");
     fprintf (fp, "\n");
 
     return;
@@ -326,7 +333,8 @@ int read_td_line (FILE *fp, int ch, struct s_txlog *tdp) {
     return 1;
 } // end of read_td_line
 
-void sort_td (struct s_txlog *tdp, int len) {
+// sorts td array by tx timestamp
+void sort_td_by_tx_TS (struct s_txlog *tdp, int len) {
 
     int i, j; 
 
@@ -347,7 +355,80 @@ void sort_td (struct s_txlog *tdp, int len) {
     } // for elements in the log data array
 
     return;
-} // end of sort_td
+} // end of sort_td_by_tx_TS
+
+// sorts md array by packet number
+void sort_md_by_pkt_num (struct s_carrier *mdp, int len) {
+
+    int i, j; 
+
+    for (i=1; i<len; i++) {
+        j = i; 
+        while (j != 0) {
+            if ((mdp+j)->packet_num < (mdp+j-1)->packet_num) {
+                // slide jth element up by 1
+                struct s_carrier temp = *(mdp+j-1); 
+                *(mdp+j-1) = *(mdp+j);
+                *(mdp+j) = temp; 
+            } // if slide up
+            else 
+                // done sliding up
+                break;
+            j--;
+        } // end of while jth elment is smaller than one above it
+    } // for elements in the log data array
+
+    return;
+} // end of sort_td_by_tx_TS
+
+// returns number of entries in the carrirer meta data file
+int read_md (char *prefix) {
+
+    // allocate storage for tx log
+    c0_md = (struct s_carrier *) malloc (sizeof (struct s_carrier) * MD_BUFFER_SIZE);
+    c1_md = (struct s_carrier *) malloc (sizeof (struct s_carrier) * MD_BUFFER_SIZE);
+    c2_md = (struct s_carrier *) malloc (sizeof (struct s_carrier) * MD_BUFFER_SIZE);
+
+    if (c0_md==NULL || c1_md==NULL || c2_md==NULL)
+        FATAL("Could not allocate storage to read the tx log file in an array%s\n", "")
+
+    int i; 
+    for (i=0; i<3; i++) {
+        char buffer[1000], *bp=buffer; 
+        struct s_carrier *mdp; 
+        struct s_txlog *tdp; 
+	    int *len_md, *len_td;
+        FILE *fp; 
+
+        mdp = i==0? c0_md : i==1? c1_md : c2_md; 
+        tdp = i==0? td0 : i==1? td1 : td2; 
+        len_md = i==0? &len_md0 : i==1? &len_md1 : &len_md2; 
+        len_td = i==0? &len_td0 : i==1? &len_td1 : &len_td2; 
+
+        
+        sprintf (bp, "%s_ch%d.csv", prefix, i);
+        fp = open_file (bp, "r"); 
+
+        // skip header
+        read_md_line (1, fp, tdp, *len_td, mdp);
+
+		// read tx log file into array and sort it
+		while (read_md_line (0, fp, tdp, *len_td, mdp)) {
+		    (*len_md)++;
+		    if (*len_md == MD_BUFFER_SIZE)
+		        FATAL ("MD data array is not large enough for ch%d. Increase TX_BUFFER_SIZE\n", i)
+		    mdp++;
+		} // while there are more lines to be read
+
+		if (*len_md == 0)
+		    FATAL("Ch%d meta data file is empty\n", i)
+
+		// sort by packet number
+        mdp = i==0? c0_md : i==1? c1_md : c2_md; 
+        sort_md_by_pkt_num (mdp, *len_md); 
+    } // for each carrier
+
+} // read_md
 
 // returns number of entries in the transmit log datat file. Modifiels global td array
 int read_td (FILE *fp) {
@@ -380,7 +461,8 @@ int read_td (FILE *fp) {
 		    FATAL("Meta data file is empty%s", "\n")
 
 		// sort by timestamp
-        sort_td (tdp, *len_td); 
+        tdp = i==0? td0 : i==1? td1 : td2; 
+        sort_td_by_tx_TS (tdp, *len_td); 
 
         // reset the file pointer to the start of the file for the next channel
         fseek (fp, 0, SEEK_SET);
@@ -401,12 +483,9 @@ int main (int argc, char* argv[]) {
     FILE *c1_fp = NULL;                     // carrier 0 meta data file
     FILE *c2_fp = NULL;                     // carrier 0 meta data file
     FILE *out_fp = NULL;                    // combined output file 
-    int c0_eof, c1_eof, c2_eof;             // set to 1 if end of file readched
     int c0_md_index = 0, c1_md_index = 0, c2_md_index = 0; 
-    struct s_carrier c0_md[MD_BUFFER_SIZE], *c0_mdp = &(c0_md[c0_md_index]);
-    struct s_carrier c1_md[MD_BUFFER_SIZE], *c1_mdp = &(c1_md[c1_md_index]);
-    struct s_carrier c2_md[MD_BUFFER_SIZE], *c2_mdp = &(c2_md[c2_md_index]);
-    unsigned packet_num = 0; 
+    struct s_carrier *c0_mdp, *c1_mdp, *c2_mdp; 
+    int packet_num = 0; 
 
     //  read command line arguments
     while (*++argv != NULL) {
@@ -452,62 +531,69 @@ int main (int argc, char* argv[]) {
 	sprintf (bp, "%s%s_warnings_3csv21.txt", opath, rx_prefix);
     warn_fp = open_file (bp, "w");
 
-	// open the 3 meta input data files
-	sprintf (bp, "%s%s_ch0.csv", ipath, rx_prefix);
-	c0_fp = open_file (bp, "r");
-	sprintf (bp, "%s%s_ch1.csv", ipath, rx_prefix);
-	c1_fp = open_file (bp, "r");
-	sprintf (bp, "%s%s_ch2.csv", ipath, rx_prefix);
-	c2_fp = open_file (bp, "r");
-
-    // transmit log file
+    // transmit log file. Must be ready before reading carrier meta data files
     if (tx_specified) {
          sprintf (bp, "%s%s.log", ipathp, tx_prefix); 
         if ((td_fp = open_file (bp, "r")) != NULL)
             read_td(td_fp);
     } 
-    // else if tx_specified was 0, len_td and tdp will point to 0/NULL through global variable intitialization
+    // else len_td = 0 and tdp = NULL; 
 
+	// open the 3 meta input data files. Must be read after read tx log file if specified.
+	sprintf (bp, "%s%s", ipath, rx_prefix);
+    read_md (bp); 
+
+    /*
+	sprintf (bp, "%s%s_ch0.csv", ipath, rx_prefix);
+    len_md0 = read_md(c0_fp); 
+	sprintf (bp, "%s%s_ch1.csv", ipath, rx_prefix);
+	c1_fp = open_file (bp, "r");
+    len_md1 = read_md(c1_fp); 
+	sprintf (bp, "%s%s_ch2.csv", ipath, rx_prefix);
+	c2_fp = open_file (bp, "r");
+    len_md2 = read_md(c2_fp); 
+    */
+
+    /*
     int i; 
-    for (i=0; i < MD_BUFFER_SIZE; i++) {
+    for (i=0; i < len_md0; i++) {
         (c0_md+i)->tdp = td0; (c0_md+i)->len_td = len_td0;
+    }
+    for (i=0; i < len_md1; i++) {
         (c1_md+i)->tdp = td1; (c1_md+i)->len_td = len_td1;
+    }
+    for (i=0; i < len_md2; i++) {
         (c2_md+i)->tdp = td2; (c2_md+i)->len_td = len_td2;
     }
+    */
 	
-    // check if any missing arguments
-    if ((c0_fp == NULL) || (c1_fp == NULL) || (c2_fp == NULL) || (tx_specified && (td_fp == NULL)) || (out_fp == NULL))
-        FATAL ("Could not open an input or output file", "")
-
-    // skip header. print header
-    c0_eof = read_line (1, c0_fp, c0_mdp);
-    c1_eof = read_line (1, c1_fp, c1_mdp);  
-    c2_eof = read_line (1, c2_fp, c2_mdp);
-    emit_combined (1, packet_num, c0_mdp, c1_mdp, c2_mdp, out_fp); 
+    // print header
+    emit_combined (1, packet_num, c0_md, c1_md, c2_md, out_fp); 
     
     // while loop is entered with the line to be processed already read or EOF read for a carrier
     // and the pkt_num is the next packet to be transmitted
-    c0_eof = read_line (0, c0_fp, c0_mdp);
-    c1_eof = read_line (0, c1_fp, c1_mdp);  
-    c2_eof = read_line (0, c2_fp, c2_mdp);
-    while ( !(c0_eof || c1_eof || c2_eof) ) {
+    packet_num = 0; 
+    c0_md_index = 0; c0_mdp = c0_md + c0_md_index; 
+    c1_md_index = 0; c1_mdp = c1_md + c1_md_index; 
+    c2_md_index = 0; c2_mdp = c2_md + c2_md_index; 
+    while ( (c0_md_index < len_md0) && (c1_md_index < len_md1)  && (c2_md_index < len_md2)) {
         int retransmission = 0; 
         /*
         retransmission 
         */
         // first check if a channel wants to retransmit last packet
         if (c0_mdp->match = c0_mdp->packet_num == (packet_num-1)) 
-            check_consistency (c0_mdp->packet_num, c0_mdp, &c0_md[(c0_md_index + MD_BUFFER_SIZE -1) % MD_BUFFER_SIZE]); 
+            check_consistency (c0_mdp->packet_num, c0_mdp, (c0_mdp-1)); 
         if (c1_mdp->match = c1_mdp->packet_num == (packet_num-1)) 
-            check_consistency (c1_mdp->packet_num, c1_mdp, &c1_md[(c1_md_index + MD_BUFFER_SIZE -1) % MD_BUFFER_SIZE]); 
+            check_consistency (c1_mdp->packet_num, c1_mdp, (c1_mdp-1));
         if (c2_mdp->match = c2_mdp->packet_num == (packet_num-1)) 
-            check_consistency (c2_mdp->packet_num, c2_mdp, &c2_md[(c2_md_index + MD_BUFFER_SIZE -1) % MD_BUFFER_SIZE]); 
+            check_consistency (c2_mdp->packet_num, c2_mdp, (c2_mdp-1)); 
         switch (c0_mdp->match + c1_mdp->match + c2_mdp->match) {
             case 0: { // no one wants to retransmit
                 break; 
             } // case 0
             case 1: case 2: case 3: { // one or more channels want to re-transmit this packet
-                FWARN (warn_fp, "Packet num %u re-transmitted by one or more carrier\n", packet_num-1)
+                FWARN (warn_fp, "Packet num %d re-transmitted by one or more carrier\n", packet_num-1)
                 retransmission = 1; 
                 goto EMIT_OUTPUT;
             } // end of case1, 2 and 3
@@ -517,8 +603,12 @@ int main (int argc, char* argv[]) {
         not a retransmission 
         */
         // check that the files are sorted by incresaing packet number
-        if ((packet_num > c0_mdp->packet_num) || (packet_num > c1_mdp->packet_num) || (packet_num > c2_mdp->packet_num))
+        if ((packet_num > c0_mdp->packet_num) || (packet_num > c1_mdp->packet_num) || (packet_num > c2_mdp->packet_num)) {
+            printf ("packet num %d, c0_mdp->packet_num %d\n", packet_num, c0_mdp->packet_num);
+            printf ("packet num %d, c1_mdp->packet_num %d\n", packet_num, c1_mdp->packet_num);
+            printf ("packet num %d, c2_mdp->packet_num %d\n", packet_num, c2_mdp->packet_num);
             FATAL ("The input files MUST be sorted in increasing packet number. Check around packet %d\n", packet_num)
+        }
 
         // now check which channels will transmit this packet
         c0_mdp->match = c0_mdp->packet_num == packet_num; 
@@ -528,12 +618,12 @@ int main (int argc, char* argv[]) {
         switch (c0_mdp->match + c1_mdp->match + c2_mdp->match) {
             case 0: { // this packet not transmitted by any channel
                 // skip this packet 
-                FWARN (warn_fp, "Packet num %u NOT transmitted by ANY carrier\n", packet_num)
+                FWARN (warn_fp, "Packet num %d NOT transmitted by ANY carrier\n", packet_num)
                 packet_num++;
                 continue; 
             } // case 0
             case 1: { // only one channel wants to transmit this packet
-                FWARN (warn_fp, "Packet num %u transmitted by one carrier ONLY\n", packet_num)
+                FWARN (warn_fp, "Packet num %d transmitted by one carrier ONLY\n", packet_num)
                 break; 
             } // case 1
             /* modified to accommpdate 3-q algo where 1, 2 or 3 channels may participate in tranmitting a packet
@@ -541,7 +631,7 @@ int main (int argc, char* argv[]) {
                 break;
             } // case 2
             case 3: { // should not happen
-                FWARN (warn_fp, "Packet num %u transmitted by MORE than 2 channels\n", packet_num)
+                FWARN (warn_fp, "Packet num %d transmitted by MORE than 2 channels\n", packet_num)
                 break; 
             } // case 3
             */
@@ -558,19 +648,13 @@ int main (int argc, char* argv[]) {
 
         // read next lines for the channels that participated in this transaction
         if (c0_mdp->match) {
-            c0_md_index = (c0_md_index + 1) % MD_BUFFER_SIZE; // increment md_index if the channel transmitted this packet
-            c0_mdp = &(c0_md[c0_md_index]); 
-            c0_eof = read_line (0, c0_fp, c0_mdp);
+            c0_md_index++; c0_mdp = c0_md + c0_md_index; 
         }
         if (c1_mdp->match) {
-            c1_md_index = (c1_md_index + 1) % MD_BUFFER_SIZE; // increment md_index if the channel transmitted this packet
-            c1_mdp = &(c1_md[c1_md_index]); 
-            c1_eof = read_line (0, c1_fp, c1_mdp);  
+            c1_md_index++; c1_mdp = c1_md + c1_md_index; 
         }
         if (c2_mdp->match) {
-            c2_md_index = (c2_md_index + 1) % MD_BUFFER_SIZE; // increment md_index if the channel transmitted this packet
-            c2_mdp = &(c2_md[c2_md_index]);
-            c2_eof = read_line (0, c2_fp, c2_mdp);
+            c2_md_index++; c2_mdp = c2_md + c2_md_index; 
         }
 
         if (retransmission)
