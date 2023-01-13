@@ -88,7 +88,9 @@ struct s_occ_by_lat_bins {
 // globals
 int silent = 0;                         // if 1 then dont generate any warnings on the console
 FILE *warn_fp = NULL;                   // warnings output file
-struct s_carrier *md; 
+struct s_carrier *md;                   // carrier metadata
+struct s_carrier *pd;                   // probe log data
+struct s_carrier *mpd;                  // combined metada and probe data
 struct s_txlog *td;
 
 
@@ -99,6 +101,8 @@ struct s_txlog *td;
 int my_exit (int n) {
     if (md != NULL) free (md); 
     if (td != NULL) free (td); 
+    if (pd != NULL) free (pd); 
+    if (mpd != NULL) free (mpd); 
     exit (n);
 } // my_exit
 
@@ -151,16 +155,18 @@ int interpolate_occ (double tx_epoch_ms, struct s_txlog *current, struct s_txlog
 
 // find_occ_frim_tdfile  returns the sampled occupancy at the closest time smaller than the specified tx_epoch_ms and 
 // and interpolated occupancy, interpolated between the sampled occupancy above and the next (later) sample
-void find_occ_from_tdfile (int packet_num, double tx_epoch_ms, struct s_txlog *tdp, int len_tdfile, int *iocc, int *socc, double *socc_epoch_ms) {
+void find_occ_from_tdfile (
+    double tx_epoch_ms, struct s_txlog *tdp, int len_tdfile, 
+    int *iocc, int *socc, double *socc_epoch_ms) {
     struct s_txlog *left, *right, *current;    // current, left and right index of the search
 
     left = tdp; right = tdp + len_tdfile -1; 
 
     if (tx_epoch_ms < left->epoch_ms) // tx started before modem occupancy was read
-        FATAL("find_occ_from_tdfile: Packet %d tx_epoch_ms is smaller than first occupancy sample time\n", packet_num)
+        FATAL("find_occ_from_tdfile: Packet %0.lf tx_epoch_ms is smaller than first occupancy sample time\n", tx_epoch_ms)
 
     if (tx_epoch_ms > right->epoch_ms + 100) // tx was done significantly later than last occ sample
-        FATAL("find_occ_from_tdfile: Packet %d tx_epoch_ms is over 100ms largert than last occupancy sample time\n", packet_num)
+        FATAL("find_occ_from_tdfile: Packet %0.lf tx_epoch_ms is over 100ms largert than last occupancy sample time\n", tx_epoch_ms)
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
@@ -224,7 +230,7 @@ int read_md_line (int read_header, FILE *fp, int len_tdfile, struct s_txlog *tdp
 
     // if tx log exists then overwrite occupancy from tx log file
     if (len_tdfile) { // log file exists
-        find_occ_from_tdfile (mdp->packet_num, mdp->tx_epoch_ms, tdp, len_tdfile, &(mdp->iocc), &(mdp->socc), &(mdp->socc_epoch_ms));
+        find_occ_from_tdfile (mdp->tx_epoch_ms, tdp, len_tdfile, &(mdp->iocc), &(mdp->socc), &(mdp->socc_epoch_ms));
     }
     // make a copy of the socc for unmodified socc output
     mdp->usocc = mdp->socc; 
@@ -243,6 +249,7 @@ int read_pr_line (
 
     char mdline[MAX_MD_LINE_SIZE], *mdlinep = mdline; 
     char dummy_str[100]; 
+    int dummy_int;
 
     if (fgets (mdline, MAX_MD_LINE_SIZE, fp) == NULL)
         // reached end of the file
@@ -250,20 +257,23 @@ int read_pr_line (
 
     // parse the line
     // ch: 2, receive_a_probe_packet. sendTime: 1673295597582,  receivedTime: 1673295597601
+    // ch: 1, receive_a_probe_packet. sendTime: 1673558308243, latency: 47, receivedTime: 16735583082900
     int n, pr_ch;     // channel number
     while (
-        ((n = sscanf (mdlinep, "%s %d, %s %s %lf, %s %lf", 
+        ((n = sscanf (mdlinep, "%s %d, %s %s %lf, %s %d, %s %lf", 
             dummy_str,
             &pr_ch, 
             dummy_str, 
             dummy_str, 
             &mdp->tx_epoch_ms,
             dummy_str, 
-            &mdp->rx_epoch_ms)) != 7) 
+            &dummy_int,
+            dummy_str, 
+            &mdp->rx_epoch_ms)) != 9) 
         ||
         (pr_ch != ch)) {
 
-        if (n != 7) // did not successfully parse this line
+        if (n != 9) // did not successfully parse this line
             FWARN(warn_fp, "read_pr_line: Skipping line %s\n", mdlinep)
 
         // else did not match the specified channel
@@ -275,7 +285,7 @@ int read_pr_line (
 
     mdp->t2r_latency_ms = mdp->rx_epoch_ms - mdp->tx_epoch_ms; 
     if (len_tdfile) { // log file exists
-        find_occ_from_tdfile (mdp->packet_num, mdp->tx_epoch_ms, tdp, len_tdfile, &(mdp->iocc), &(mdp->socc), &(mdp->socc_epoch_ms));
+        find_occ_from_tdfile (mdp->tx_epoch_ms, tdp, len_tdfile, &(mdp->iocc), &(mdp->socc), &(mdp->socc_epoch_ms));
     }
     // make a copy of the socc for unmodified socc output
     mdp->usocc = mdp->socc; 
@@ -664,11 +674,33 @@ void sort_td (struct s_txlog *tdp, int len) {
     return;
 } // end of sort_td
 
+// merge_sorts merges two sorted arrays into one
+void merge_sort (
+    struct s_carrier *i1p, int len_i1, struct s_carrier *i2p, int len_i2, 
+    struct s_carrier *op) {
+
+    struct s_carrier *end_i1p = i1p + len_i1; 
+    struct s_carrier *end_i2p = i2p + len_i2; 
+
+    while ((i1p < end_i1p) || (i2p < end_i2p)) {
+        if (i1p == end_i1p)
+            *op++ = *i2p++; 
+        else if (i2p == end_i2p)
+            *op++ = *i1p++; 
+        else if (i1p->tx_epoch_ms < i2p->tx_epoch_ms)
+            *op++ = *i1p++;
+        else
+            *op++ = *i2p++; 
+    } // while there are more items to be merged
+
+    return;
+} // merge_sort 
+
 int main (int argc, char* argv[]) {
     int occ_threshold = 10;                 // occupancy threshold for degraded channel
     int latency_threshold = 60;             // latency threshold for degraded cahnnel 
-    struct s_carrier *mdp; 
-    struct s_txlog *tdp; 
+    struct s_carrier *mdp, *pdp, *mpdp;     // pointers to metadata, probe data and combined data arrays
+    struct s_txlog *tdp;                    // pointer to tx log data array
     FILE *md_fp = NULL;                     // meta data file
     FILE *out_fp = NULL;                    // output file 
     FILE *aux_fp = NULL;                    // auxiliary output with decoded occ etc. 
@@ -852,8 +884,7 @@ PROCESS_EACH_FILE:
     } // if tx log file exists
 
     // allocate storage for meta data 
-    md = (struct s_carrier *) malloc (sizeof (struct s_carrier) * 
-        ((file_table[file_index].pr_specified? PR_BUFFER_SIZE : 0) + MD_BUFFER_SIZE));
+    md = (struct s_carrier *) malloc (sizeof (struct s_carrier) * MD_BUFFER_SIZE);
     if (md==NULL)
         FATAL("Could not allocate storage to read the meta data file in an array%s\n", "")
     mdp = md; 
@@ -1079,38 +1110,52 @@ PROCESS_EACH_FILE:
         goto FINISH; 
     // else output combined data and probe transmission file
 
+    // files
     sprintf (bp, "%s%s.log", file_table[file_index].input_directory, file_table[file_index].pr_prefix); 
 	pr_fp = open_file (bp, "r");
     
     sprintf (bp, "%s%s_full_occ.csv", opath, file_table[file_index].rx_prefix); 
 	full_fp = open_file (bp, "w");
 
-    // read probe file for this channel
+    // allocate storate
+    pd = (struct s_carrier *) malloc (sizeof (struct s_carrier) * PR_BUFFER_SIZE);
+    if (pd==NULL)
+        FATAL("Could not allocate storage to read the probe data file in an array%s\n", "")
+
+    mpd = (struct s_carrier *) malloc (sizeof (struct s_carrier) * 
+        ((file_table[file_index].pr_specified? PR_BUFFER_SIZE : 0) + MD_BUFFER_SIZE));
+    if (mpd==NULL)
+        FATAL("Could not allocate storage for combined probe and metadata array%s\n", "")
+
+    // read data from the file
     len_prfile = 0; 
-    mdp = md + len_mdfile; // append the probe packets to the end; it will get sorted
-    while (read_pr_line (pr_fp, len_tdfile, td, file_table[file_index].channel, mdp)) {
+    pdp = pd; 
+    while (read_pr_line (pr_fp, len_tdfile, td, file_table[file_index].channel, pdp)) {
         len_prfile++;
-        if ((len_mdfile + len_prfile) == MD_BUFFER_SIZE)
-            FATAL ("Meta data array is not large enough to ready the meta data file. Increase MD_BUFFER_SIZE%S\n", "");
-        mdp++;
+        if ((len_prfile) == MD_BUFFER_SIZE)
+            FATAL ("probe data array is not large enough. Increase MD_BUFFER_SIZE%S\n", "");
+        pdp++;
     } // while there are more lines to be read
 
     if (len_prfile == 0)
         FATAL("Probe log file is empty%s", "\n")
 
     // sort by tx_epoch_ms
-    printf ("sorting combined meta data and probe file %s\n", bp); 
-    sort_md_by_tx (md, (len_mdfile + len_prfile)); 
+    sort_md_by_tx (pd, len_prfile); 
+
+    // merge sort the probe and the meta data
+    mpdp = mpd; 
+    merge_sort (pd, len_prfile, md, len_mdfile, mpdp); 
 
     // emit output 
-    emit_aux (1, 0, mdp, full_fp); // header
-    for (i=0, mdp=md; i<(len_mdfile+len_prfile); i++, mdp++) {
+    emit_aux (1, 0, mpdp, full_fp); // header
+    for (i=0, mpdp=mpd; i<(len_mdfile+len_prfile); i++, mpdp++) {
         if (i % 5000 == 0)
             printf ("Reached line %d\n", i); 
-        if (mdp->probe)
-            emit_prb (0, len_tdfile, mdp, full_fp); 
+        if (mpdp->probe)
+            emit_prb (0, len_tdfile, mpdp, full_fp); 
         else
-            emit_aux (0, len_tdfile, mdp, full_fp); 
+            emit_aux (0, len_tdfile, mpdp, full_fp); 
     } // for all lines
 
     // close files
