@@ -132,12 +132,12 @@ class CarState(CarStateBase):
       ret.cruiseState.speed = cp.vl["PCM_CRUISE_2"]["SET_SPEED"] * CV.KPH_TO_MS
       cluster_set_speed = cp.vl["PCM_CRUISE_SM"]["UI_SET_SPEED"]
 
-    # Adjust Low Speed Cruise Control **REMNAV **
-    v_cruise_kph = ret.cruiseState.speed / CV.KPH_TO_MS
-    self.set_speed_offset = _calculate_set_speed_offset_kph(v_cruise_kph) * CV.KPH_TO_MS
+    # Adjust Low Speed Cruise Control **REMNAV ** 
+    v_cruise_kph = ret.cruiseState.speed / CV.KPH_TO_MS   # ret.cruiseState.speed is in M/S
+    self.set_speed_offset = _calculate_set_speed_offset_kph(v_cruise_kph) * CV.KPH_TO_MS  # kph -> M/S
     ret.cruiseState.speed = ret.cruiseState.speed - self.set_speed_offset
     if self.set_speed_offset != 0:
-      cluster_set_speed = ret.cruiseState.speed
+      cluster_set_speed = ret.cruiseState.speed / CV.KPH_TO_MS  # cluster_set_speed is in KPH
 
     # UI_SET_SPEED is always non-zero when main is on, hide until first enable
     if ret.cruiseState.speed != 0:
