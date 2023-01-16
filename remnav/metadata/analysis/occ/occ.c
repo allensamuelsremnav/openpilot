@@ -7,9 +7,11 @@
 #define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
 #define MAX_MD_LINE_SIZE 1000
 #define MAX_TD_LINE_SIZE 1000
+#define MAX_SD_LINE_SIZE 1000
 #define MD_BUFFER_SIZE (20*60*1000)
 #define PR_BUFFER_SIZE (20*60*100)
 #define TX_BUFFER_SIZE (20*60*1000)
+#define SD_BUFFER_SIZE (20*60*1000)
 #define MAX_SPIKES 5000
 #define MAX_FILES 100
 
@@ -19,8 +21,23 @@ struct s_files {
     char tx_prefix[500]; 
     int  tx_specified;                  // if 1 then tx file was specified
     char pr_prefix[500]; 
-    char pr_specified; 
+    char pr_specified;                  // if 1 then probe log was specified
+    char sr_prefix[500]; 
+    char sr_specified;                  // if 1 then service log was specified
     int  channel;                       // 0 1 or 2. -1 if not specified.
+};
+
+struct s_service {
+    // CH: 2, change to out-of-service state, latency: 0, latencyTime: 0, estimated latency: 30, 
+    // stop_sending flag: 1 , uplink queue size: 17, zeroUplinkQueue: 0, service flag: 0, 
+    // numCHOut: 1, Time: 1673558308240
+    int state;                  // 1=IN-SERVICE 0=OUT-OF-SERVICE
+    int bp_t2r;                 // back propagated t2r
+    double bp_t2r_epoch_ms;     // time when the back propagated info was received
+    int bp_packet_num;          // packet number whose t2r was back propagated
+    int est_t2r;                // estimated t2r at the time state transition was evaluated
+    int socc;                   // sampled occupancy
+    double state_transition_epoch_ms; // time stamp of state transition
 };
 
 struct s_carrier {
@@ -43,6 +60,7 @@ struct s_carrier {
     int check_packet_num;
     double t2r_latency_ms;          // rx_epoch_ms - tx_epoch_ms
     int probe;                      // 1=probe packet 0=data packet
+    struct s_service *sdp;
 };
 
 struct s_txlog {
@@ -85,13 +103,15 @@ struct s_occ_by_lat_bins {
     double squared_sum;         // sum of squared values of occupancy in this latency bin   
 };
 
+
 // globals
 int silent = 0;                         // if 1 then dont generate any warnings on the console
 FILE *warn_fp = NULL;                   // warnings output file
 struct s_carrier *md;                   // carrier metadata
 struct s_carrier *pd;                   // probe log data
 struct s_carrier *mpd;                  // combined metada and probe data
-struct s_txlog *td;
+struct s_txlog *td;                     // tx log data array
+struct s_service *sd;                   // service log data array
 
 
 #define		FATAL(STR, ARG) {printf (STR, ARG); my_exit(-1);}
@@ -133,6 +153,7 @@ void decode_sendtime (int format, double *vx_epoch_ms, double *tx_epoch_ms, int 
     return;
 } // end of decode_sendtime
 
+// returns pointer to the specified file
 FILE *open_file (char *filep, char *modep) {
     FILE *fp;
     
@@ -295,6 +316,62 @@ int read_pr_line (
 
 } // end of read_pr_line
 
+// reads and parses a service log file. Returns 0 if end of file reached
+int read_sd_line (FILE *fp, int ch, struct s_service *sdp) {
+
+    char sdline[MAX_SD_LINE_SIZE], *sdlinep = sdline; 
+    char dummy_str[100];
+    char state_str[100];
+    int  dummy_int; 
+    double dummy_float;
+
+    if (fgets (sdline, MAX_SD_LINE_SIZE, fp) == NULL)
+        // reached end of the file
+        return 0;
+
+    // parse the line
+    int n; 
+    int channel;
+    // CH: 2, change to out-of-service state, latency: 0, latencyTime: 0, estimated latency: 30, stop_sending flag: 1
+    //  , uplink queue size: 17, zeroUplinkQueue: 0, service flag: 0, numCHOut: 1, Time: 1673558308240
+
+    while (
+        ((n = sscanf (sdlinep, 
+            "%[^:]:%d, %[^,], %[^:]:%d %[^:]:%lf %[^:]:%d %[^:]:%d \
+            %[^:]:%d %[^:]:%d %[^:]:%d %[^:]:%d %[^:]:%lf",
+            dummy_str, &channel,
+            state_str,  
+            dummy_str, &sdp->bp_t2r,
+            dummy_str, &sdp->bp_t2r_epoch_ms, 
+            dummy_str, &sdp->est_t2r, 
+            dummy_str, &dummy_int,
+
+            dummy_str, &sdp->socc, 
+            dummy_str, &dummy_int, 
+            dummy_str, &dummy_int,
+            dummy_str, &dummy_int,
+            dummy_str, &sdp->state_transition_epoch_ms)) !=21)
+        || channel !=ch) {
+
+        if (n != 21) // did not successfully parse this line
+            FWARN(warn_fp, "read_sd_line: Skipping line %s\n", sdlinep)
+
+        // else did not match the channel
+        if (fgets (sdline, MAX_SD_LINE_SIZE, fp) == NULL)
+            // reached end of the file
+            return 0;
+    } // while not successfully scanned a transmit log line
+
+    if (strcmp(state_str, "change to out-of-service state") == 0)
+        sdp->state = 0; 
+    else if (strcmp(state_str, "change to in-service state") == 0)
+        sdp->state = 1; 
+    else
+        FATAL ("read_sd_line: could not understand state change string: %s\n", state_str) 
+
+    return 1;
+} // end of read_sd_line
+
 // reads and parses a tx log file. Returns 0 if end of file reached
 int read_td_line (FILE *fp, int ch, struct s_txlog *tdp) {
 
@@ -444,7 +521,7 @@ void emit_stats (
 
 } // end of emit_stats
 
-void emit_aux (int print_header, int have_txlog, struct s_carrier *cp, FILE *fp) {
+void emit_aux (int print_header, int have_txlog, int have_service_log, struct s_carrier *cp, FILE *fp) {
 
     if (print_header) fprintf (fp, "packet_num,");          else fprintf (fp, "%d, ", cp->packet_num); 
     if (print_header) fprintf (fp, "camera_epoch_ms,");     else fprintf (fp, "%.0lf,", cp->camera_epoch_ms); 
@@ -452,6 +529,14 @@ void emit_aux (int print_header, int have_txlog, struct s_carrier *cp, FILE *fp)
     if (print_header) fprintf (fp, "rx_epoch_ms,");         else fprintf (fp, "%.0lf,", cp->rx_epoch_ms); 
     if (print_header) fprintf (fp, "t2r,");                 else fprintf (fp, "%.0lf,", cp->t2r_latency_ms); 
     if (print_header) fprintf (fp, "socc,");                else fprintf (fp, "%d, ", cp->usocc); 
+    if (!have_service_log) goto SKIP_SERVICE_EMIT_AUX;
+    if (print_header) fprintf (fp, "s_st,");                else fprintf (fp, "%d, ", cp->sdp->state); 
+    if (print_header) fprintf (fp, "s_bpt2r,");             else fprintf (fp, "%d, ", cp->sdp->bp_t2r); 
+    if (print_header) fprintf (fp, "s_est_t2r,");           else fprintf (fp, "%d, ", cp->sdp->est_t2r); 
+    if (print_header) fprintf (fp, "s_socc,");              else fprintf (fp, "%d, ", cp->sdp->socc); 
+    if (print_header) fprintf (fp, "s_st_tr,");             else fprintf (fp, "%.0lf,", cp->sdp->state_transition_epoch_ms); 
+    if (print_header) fprintf (fp, "s_bp_epoch_ms,");       else fprintf (fp, "%.0lf,", cp->sdp->bp_t2r_epoch_ms); 
+    SKIP_SERVICE_EMIT_AUX:
     if (print_header) fprintf (fp, "socc_epoch_ms,");       else if (have_txlog) fprintf (fp, "%.0lf,", cp->socc_epoch_ms); else fprintf (fp, ",");
     if (print_header) fprintf (fp, "vx_epoch_ms,");         else fprintf (fp, "%.0lf,", cp->vx_epoch_ms); 
     if (print_header) fprintf (fp, "iocc,");                else if (have_txlog) fprintf (fp, "%d, ", cp->iocc);  else fprintf(fp, ","); 
@@ -469,7 +554,7 @@ void emit_aux (int print_header, int have_txlog, struct s_carrier *cp, FILE *fp)
 
 } // end of emit_aux
 
-void emit_prb (int print_header, int have_txlog, struct s_carrier *cp, FILE *fp) {
+void emit_prb (int print_header, int have_txlog, int have_service_log, struct s_carrier *cp, FILE *fp) {
 
     if (print_header) fprintf (fp, "packet_num,");          else fprintf (fp, ","); 
     if (print_header) fprintf (fp, "camera_epoch_ms,");     else fprintf (fp, ","); 
@@ -477,6 +562,14 @@ void emit_prb (int print_header, int have_txlog, struct s_carrier *cp, FILE *fp)
     if (print_header) fprintf (fp, "rx_epoch_ms,");         else fprintf (fp, "%.0lf,", cp->rx_epoch_ms); 
     if (print_header) fprintf (fp, "t2r,");                 else fprintf (fp, "%.0lf,", cp->t2r_latency_ms); 
     if (print_header) fprintf (fp, "socc,");                else if (have_txlog) fprintf (fp, "%d, ", cp->usocc); else fprintf(fp, ","); 
+    if (!have_service_log) goto SKIP_SERVICE_EMIT_PRB;
+    if (print_header) fprintf (fp, "s_st,");                else fprintf (fp, "%d, ", cp->sdp->state); 
+    if (print_header) fprintf (fp, "s_bpt2r,");             else fprintf (fp, "%d, ", cp->sdp->bp_t2r); 
+    if (print_header) fprintf (fp, "s_est_t2r,");           else fprintf (fp, "%d, ", cp->sdp->est_t2r); 
+    if (print_header) fprintf (fp, "s_socc,");              else fprintf (fp, "%d, ", cp->sdp->socc); 
+    if (print_header) fprintf (fp, "s_st_tr,");             else fprintf (fp, "%.0lf,", cp->sdp->state_transition_epoch_ms); 
+    if (print_header) fprintf (fp, "s_bp_epoch_ms,");       else fprintf (fp, "%.0lf,", cp->sdp->bp_t2r_epoch_ms); 
+    SKIP_SERVICE_EMIT_PRB:
     if (print_header) fprintf (fp, "socc_epoch_ms,");       else if (have_txlog) fprintf (fp, "%.0lf,", cp->socc_epoch_ms); else fprintf (fp, ",");
     if (print_header) fprintf (fp, "vx_epoch_ms,");         else fprintf (fp, ",");
     if (print_header) fprintf (fp, "iocc,");                else if (have_txlog) fprintf (fp, "%d, ", cp->iocc);  else fprintf(fp, ","); 
@@ -497,7 +590,7 @@ void emit_prb (int print_header, int have_txlog, struct s_carrier *cp, FILE *fp)
 // prints program usage
 void print_usage (void) {
     char *usage_part1 = "Usage: occ [-help] [-o <dd>] [-l <dd>] [-s] -ipath <dir> -opath <dir> "; 
-    char *usage_part2 = "-no_tx|tx_pre <prefix> -no_pr|pr_pre <prefix> -rx_pre <prefix>";
+    char *usage_part2 = "-no_tx|tx_pre <prefix> -no_pr|pr_pre <prefix> -no_sr|sr_pre <prefix> -rx_pre <prefix>";
     printf ("%s%s\n", usage_part1, usage_part2);
     printf ("\t -o: occupancy threshold for degraded channel. Default 10.\n"); 
     printf ("\t -l: latency threshold for degraded channel. Default 60ms.\n"); 
@@ -505,7 +598,8 @@ void print_usage (void) {
     printf ("\t -ipath: input path directory. last ipath name applies to next input file\n"); 
     printf ("\t -opath: out path directory \n"); 
     printf ("\t -no_tx|tx_pre: tranmsmit side log filename without the extension .log. Use -no_tx if no tx side file.\n"); 
-    printf ("\t -no_pr|pr_pre: probe tx filename without the extension .log. Use -no_pr if no tx side file.\n"); 
+    printf ("\t -no_pr|pr_pre: probe tx filename without the extension .log. Use -no_pr if probe log unvailable.\n"); 
+    printf ("\t -no_sr|sr_pre:  service filename without the extension .log. Use -no_sr if service log unavailable\n"); 
     printf ("\t -rx_pre: receive side metadata filename without the extension .csv. MUST BE AT THE LAST\n"); 
     return; 
 } // print_usage
@@ -696,20 +790,56 @@ void merge_sort (
     return;
 } // merge_sort 
 
+// returns pointer to the sdp equal to or closest smaller sdp to the specified epoch_ms
+struct s_service *find_closest_sdp (double epoch_ms, struct s_service *sdp, int len_sd) {
+
+    struct  s_service  *left, *right, *current;    // current, left and right index of the search
+
+    left = sdp; right = sdp + len_sd - 1; 
+
+    current = left + (right - left)/2; 
+    while (current != left) { // there are more than 2 elements to search
+        if (epoch_ms > current->state_transition_epoch_ms)
+            left = current;
+        else
+            right = current; 
+        current = left + (right - left)/2; 
+    } // while there are more than 2 elements left to search
+    
+    // when the while exits, the current is equal to (if current = left edge) or less than epoch_ms
+    if ((current+1)->state_transition_epoch_ms == epoch_ms)
+        return current+1; 
+    else 
+        return current; 
+
+} // find_closest_sdp
+
+// adds pertinent infromation from service log to the metadata structure
+void add_service_log_info (struct s_service *sdp, int len_sdfile, struct s_carrier *mdp) {
+
+    if ((mdp->sdp = find_closest_sdp (mdp->tx_epoch_ms, sdp, len_sdfile)) == NULL)
+        FATAL ("add_service_log_info: could not find service log entry for packet %d\n", 
+            mdp->packet_num)
+    
+} // end of add_service_log_info
+
 int main (int argc, char* argv[]) {
     int occ_threshold = 10;                 // occupancy threshold for degraded channel
     int latency_threshold = 60;             // latency threshold for degraded cahnnel 
     struct s_carrier *mdp, *pdp, *mpdp;     // pointers to metadata, probe data and combined data arrays
     struct s_txlog *tdp;                    // pointer to tx log data array
+    struct s_service *sdp;                  // service log data array
     FILE *md_fp = NULL;                     // meta data file
     FILE *out_fp = NULL;                    // output file 
     FILE *aux_fp = NULL;                    // auxiliary output with decoded occ etc. 
     FILE *full_fp = NULL;                   // full probe + data tx file
     FILE *td_fp = NULL;                     // tx log file
     FILE *pr_fp = NULL;                     // probe transmission log file
+    FILE *sr_fp = NULL;                     // service log file
     int len_mdfile;                         // lines in meta data file not including header line
     int len_tdfile;                         // lines in tx log file.  0 indicates the log does not exist
     int len_prfile;                         // lines in probe log file .0 indicates the log does not exist
+    int len_srfile;                         // lines in service log file .0 indicates the log does not exist
     double last_tx_epoch_ms;                // remembers tx of the last md line
     int last_socc;                          // remembers occ from the last update from modem
     int last_packet_num;                    // remembers packet number of the last md line
@@ -732,6 +862,8 @@ int main (int argc, char* argv[]) {
     int tx_specified = 0; 
     char pr_prefix[500], *pr_prefixp = pr_prefix; 
     int pr_specified = 0; 
+    char sr_prefix[500], *sr_prefixp = sr_prefix; 
+    int sr_specified = 0; 
     int ch;                                         // channel number to use from the tx log file
 
     struct s_files file_table[MAX_FILES];
@@ -787,6 +919,15 @@ int main (int argc, char* argv[]) {
             pr_specified = 0; 
         }
 
+        else if (strcmp (*argv, "-sr_pre") == MATCH) {
+            strcpy (sr_prefix, *++argv); 
+            sr_specified = 1; 
+        }
+        
+        else if (strcmp (*argv, "-no_sr") == MATCH) {
+            sr_specified = 0; 
+        }
+
         else if (strcmp (*argv, "-tx_pre") == MATCH) {
             strcpy (tx_prefix, *++argv); 
             tx_specified = 1; 
@@ -801,6 +942,7 @@ int main (int argc, char* argv[]) {
             int i; 
             for (i=0; i<3; i++) {
 	            strcpy (file_table[len_file_table].input_directory, ipathp); 
+
 	            sprintf (file_table[len_file_table].rx_prefix, "%s_ch%d", rx_prefix, i); 
 	            if (tx_specified) {
 	                strcpy (file_table[len_file_table].tx_prefix, tx_prefix); 
@@ -814,7 +956,15 @@ int main (int argc, char* argv[]) {
 	            }
                 else
 	                file_table[len_file_table].pr_specified = 1;
+	            if (sr_specified) {
+	                strcpy (file_table[len_file_table].sr_prefix, sr_prefix); 
+	                file_table[len_file_table].sr_specified = 1;
+	            }
+                else
+	                file_table[len_file_table].sr_specified = 0;
+             
 	            file_table[len_file_table].channel = i; 
+
 	            len_file_table++;
             } // initialize file table for each channel 
         } // -rx_pre
@@ -940,7 +1090,7 @@ PROCESS_EACH_FILE:
     last_packet_num = 0; 
 
     // skip header. print header
-    emit_aux (1, 0, mdp, aux_fp); 
+    emit_aux (1, 0, 0, mdp, aux_fp); 
     emit_stats (1, 0, file_table[file_index].rx_prefix, &avg_lat_by_occ_table[0], 0, &lspike_table[0], 0, &ospike_table[0], 
         lat_bins_by_occ_table, occ_by_lat_bins_table, out_fp); 
 
@@ -949,7 +1099,7 @@ PROCESS_EACH_FILE:
     for (i=0, mdp=md; i<len_mdfile; i++, mdp++) {
 
         // auxiliary output
-        emit_aux (0, len_tdfile, mdp, aux_fp);
+        emit_aux (0, len_tdfile, 0, mdp, aux_fp);
 
         // occupancy cleanup
         if (len_tdfile) { // have tx log and the occupancy was read from that 
@@ -1107,7 +1257,7 @@ PROCESS_EACH_FILE:
     // full probe and data transmission output file
     //
     if (!file_table[file_index].pr_specified)
-        goto FINISH; 
+        goto SKIP_FULL; 
     // else output combined data and probe transmission file
 
     // files
@@ -1127,7 +1277,7 @@ PROCESS_EACH_FILE:
     if (mpd==NULL)
         FATAL("Could not allocate storage for combined probe and metadata array%s\n", "")
 
-    // read data from the file
+    // read probe data
     len_prfile = 0; 
     pdp = pd; 
     while (read_pr_line (pr_fp, len_tdfile, td, file_table[file_index].channel, pdp)) {
@@ -1147,21 +1297,60 @@ PROCESS_EACH_FILE:
     mpdp = mpd; 
     merge_sort (pd, len_prfile, md, len_mdfile, mpdp); 
 
+    // service log
+
+    // check if service log is speciied
+    if (!file_table[file_index].sr_specified)
+        goto SKIP_SERVICE_LOG;
+
+    // open log file
+    sprintf (bp, "%s%s.log", file_table[file_index].input_directory, file_table[file_index].sr_prefix); 
+	sr_fp = open_file (bp, "r");
+    
+    // allocate storage
+    sd = (struct s_service *) malloc (sizeof (struct s_service) * SD_BUFFER_SIZE);
+    if (sd==NULL)
+        FATAL("Could not allocate storage to read the service data file in an array%s\n", "")
+
+    // read service log. assumed to be sorted by epoch_ms
+    printf ("Now reading service log\n");
+    len_srfile = 0; 
+    sdp = sd; 
+    while (read_sd_line (sr_fp, file_table[file_index].channel, sdp)) {
+        len_srfile++;
+        if ((len_srfile) == SD_BUFFER_SIZE)
+            FATAL ("service data array is not large enough. Increase SD_BUFFER_SIZE%S\n", "");
+        sdp++;
+        if (len_srfile % 10000 == 0)
+            printf ("Reached line %d of service log\n", len_srfile); 
+    } // while there are more lines to be read
+
+    if (len_srfile == 0)
+        FATAL("service log file is empty%s", "\n")
+
+    // add info from service log to the mpdp
+    for (mpdp=mpd, sdp=sd; mpdp < mpd+len_mdfile+len_prfile; mpdp++)
+        mpdp->sdp = find_closest_sdp (mpdp->tx_epoch_ms, sdp, len_srfile);
+
+    SKIP_SERVICE_LOG:
+
     // emit output 
-    emit_aux (1, 0, mpdp, full_fp); // header
+    emit_aux (1, len_tdfile, len_srfile, mpdp, full_fp); // header
     for (i=0, mpdp=mpd; i<(len_mdfile+len_prfile); i++, mpdp++) {
         if (i % 5000 == 0)
             printf ("Reached line %d\n", i); 
         if (mpdp->probe)
-            emit_prb (0, len_tdfile, mpdp, full_fp); 
+            emit_prb (0, len_tdfile, len_srfile, mpdp, full_fp); 
         else
-            emit_aux (0, len_tdfile, mpdp, full_fp); 
+            emit_aux (0, len_tdfile, len_srfile, mpdp, full_fp); 
     } // for all lines
 
     // close files
+
     fclose (full_fp); fclose (pr_fp); 
 
-FINISH: 
+SKIP_FULL:
+
     // close files and check if there are more files to be processed
     fclose (md_fp); fclose (out_fp); fclose(aux_fp); fclose(warn_fp); 
     if (len_tdfile) fclose (td_fp); 
