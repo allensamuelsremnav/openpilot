@@ -42,10 +42,11 @@ class Remnav:
     self.serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     self.serversocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     self.serversocket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)    
-    self.serversocket.bind((socket.gethostname(), port))
+    self.serversocket.bind(("0.0.0.0", port))
     self.serversocket.listen(1)
     self.axes_values = {'gb': 0., 'steer': 0.}
     self.axes_order = ['gb', 'steer']
+    self.cancel = False
 
 
   def update(self):
@@ -56,24 +57,34 @@ class Remnav:
       (clientsocket, address) = self.serversocket.accept()
       print("Got connection from ", address)
       Params().put_bool('JoystickDebugMode', True)
+      line = b''
       while True:
-        line = clientsocket.recv(1024).strip()
-        if line == b'':
+        chunk = clientsocket.recv(1024)
+        if chunk == b'':
           print("Socket error")
           return
-        self.process_line(line, clientsocket)
+        for cc in chunk:
+          c = chr(cc).encode()
+          if c == b'\r' or c == b'\n':
+            self.process_line(line, clientsocket)
+            line = b''
+          else:
+            line += c
     except OSError:
       pass
   def process_line(self, line, clientsocket):
+    if len(line) == 0:
+      return
     if line[0] == b'<':
       tag,line = line[1:].split(b'>')
       clientsocket.send(b'<' + tag + b'>\r\n')
-      sline = line.split(' ')
-      if sline[0] == 's':
-        # steering [-1,+1]
-        self.axes_values['steer'] = float(sline[1])
-      elif sline[0] == 'gb':
-        self.axes_values['gb'] = float(sline[1])
+    sline = line.split(b' ')
+    print("Sline:",sline)
+    if sline[0] == b's':
+      # steering [-1,+1]
+      self.axes_values['steer'] = float(sline[1])
+    elif sline[0] == b'gb':
+      self.axes_values['gb'] = float(sline[1])
 
 def send_thread(joystick):
   joystick_sock = messaging.pub_sock('testJoystick')
