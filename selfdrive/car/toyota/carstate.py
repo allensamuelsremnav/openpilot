@@ -10,6 +10,32 @@ from opendbc.can.parser import CANParser
 from selfdrive.car.interfaces import CarStateBase
 from selfdrive.car.toyota.values import ToyotaFlags, CAR, DBC, STEER_THRESHOLD, NO_STOP_TIMER_CAR, TSS2_CAR, RADAR_ACC_CAR, EPS_SCALE, UNSUPPORTED_DSU_CAR
 
+# from common.params import Params
+def _calculate_set_speed_offset_kph(v_cruise_kph):
+#  if not Params().get_bool('CruiseOverride'): 
+#    return 0.0
+  offset = 0.0
+  debug_print = False
+  if v_cruise_kph <= 27 / CV.KPH_TO_MPH:
+    offset = 21 / CV.KPH_TO_MPH               # set speed to 27-21, 6MPH
+  elif v_cruise_kph <= 28 / CV.KPH_TO_MPH:
+    offset = 17 / CV.KPH_TO_MPH               # set speed to 27-16, 11MPH
+  elif v_cruise_kph <= 29 / CV.KPH_TO_MPH:
+    offset = 15 / CV.KPH_TO_MPH               # set speed to 29-15, 14MPH
+  elif v_cruise_kph <= 30 / CV.KPH_TO_MPH:
+    offset = 13 / CV.KPH_TO_MPH               # set speed to 30-13, 17MPH
+  #elif v_cruise_kph <= 31 / CV.KPH_TO_MPH:
+  #  offset = 11 / CV.KPH_TO_MPH               # set speed to 31-11, 20MPH
+  #elif v_cruise_kph <= 32 / CV.KPH_TO_MPH:
+  #  offset = 8 / CV.KPH_TO_MPH
+  #elif v_cruise_kph <= 33 / CV.KPH_TO_MPH:
+  #  offset = 6 / CV.KPH_TO_MPH
+  #elif v_cruise_kph <= 34 / CV.KPH_TO_MPH:
+  #  offset = 3 / CV.KPH_TO_MPH
+  if offset != 0.0 and debug_print:
+    print("Cruise: v_cruise_kph=",v_cruise_kph, " Offset=", offset)
+  return offset
+
 
 class CarState(CarStateBase):
   def __init__(self, CP):
@@ -105,6 +131,13 @@ class CarState(CarStateBase):
       ret.cruiseState.available = cp.vl["PCM_CRUISE_2"]["MAIN_ON"] != 0
       ret.cruiseState.speed = cp.vl["PCM_CRUISE_2"]["SET_SPEED"] * CV.KPH_TO_MS
       cluster_set_speed = cp.vl["PCM_CRUISE_SM"]["UI_SET_SPEED"]
+
+    # Adjust Low Speed Cruise Control **REMNAV ** 
+    v_cruise_kph = ret.cruiseState.speed / CV.KPH_TO_MS   # ret.cruiseState.speed is in M/S
+    self.set_speed_offset = _calculate_set_speed_offset_kph(v_cruise_kph) * CV.KPH_TO_MS  # kph -> M/S
+    ret.cruiseState.speed = ret.cruiseState.speed - self.set_speed_offset  # M/S
+    if self.set_speed_offset != 0:
+      cluster_set_speed = ret.cruiseState.speed / CV.MPH_TO_MS  # cluster_set_speed is in MPH
 
     # UI_SET_SPEED is always non-zero when main is on, hide until first enable
     if ret.cruiseState.speed != 0:

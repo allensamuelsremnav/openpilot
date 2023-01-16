@@ -6,6 +6,7 @@ from selfdrive.controls.lib.lateral_mpc_lib.lat_mpc import LateralMpc
 from selfdrive.controls.lib.lateral_mpc_lib.lat_mpc import N as LAT_MPC_N
 from selfdrive.controls.lib.drive_helpers import CONTROL_N, MIN_SPEED
 from selfdrive.controls.lib.desire_helper import DesireHelper
+from selfdrive.controls.lib.hijack import Hijacker  #REMANV
 import cereal.messaging as messaging
 from cereal import log
 
@@ -26,6 +27,7 @@ STEERING_RATE_COST = 800.0
 
 class LateralPlanner:
   def __init__(self, CP):
+    self.hijacker = Hijacker()  # REMNAV
     self.DH = DesireHelper()
 
     # Vehicle model parameters used to calculate lateral movement of car
@@ -129,5 +131,6 @@ class LateralPlanner:
     lateralPlan.useLaneLines = False
     lateralPlan.laneChangeState = self.DH.lane_change_state
     lateralPlan.laneChangeDirection = self.DH.lane_change_direction
-
+    
+    self.hijacker.convert_message(lateralPlan, self.v_ego) # REMNAV
     pm.send('lateralPlan', plan_send)
