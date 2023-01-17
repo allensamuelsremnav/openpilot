@@ -14,7 +14,7 @@
 #define     HZ_5    3
 #define     RES_HD  0
 #define     RES_SD  1
-#define     MD_BUFFER_SIZE 35
+#define     MD_BUFFER_SIZE 100
 #define     MAX_LINE_SIZE    1000 
 #define     NUM_OF_MD_FIELDS    12
 #define     NUM_OF_PARAMS 3
