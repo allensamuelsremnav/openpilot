@@ -194,6 +194,7 @@ class Hijacker:
     self.prevCurvature = 0.0
     self.wheelBase = wb  # Highlander wheel base is 109.8 inches => 2.78892 meters.
     self.steerLimit = 0.244346   # Maximum steering deflection
+    self.v_ego = 0.0
     if unit_test:
       self.connected = True
     else:
@@ -212,6 +213,7 @@ class Hijacker:
         print("Waiting for socket connection")
         (clientsocket, address) = self.serversocket.accept()
         print("Got connection from ", address)
+        clientsocket.send(b"Hello Remnav\r\n")
         line = b''
         self.connected = True
         while True:
@@ -222,6 +224,7 @@ class Hijacker:
           for cc in chunk:
             c = chr(cc).encode()
             if c == b'\r' or c == b'\n':
+              clientsocket.send(b'Got Cmd:' + line + b'\r\n')
               clientsocket.send(self.process_line(line))
               line = b''
             else:
@@ -236,6 +239,14 @@ class Hijacker:
       self.steer = self.steerLimit
     else:
       self.steer = s
+    #
+    # Now, generate a current status
+    #
+    lp = fake_lp()
+    self.convert_message(lp, self.v_ego)
+    return f'V:{self.v_ego:.1f} Circle:{self.bike.getTurningRadius():.1f} P:{lp.psis[0]:.4f}'.encode('utf-8') + \
+      f' {lp.psis[1]:.4f} {lp.psis[2]:.4f}  Curve:{lp.curvatures[0]:.4f} CurveRate:{lp.curvatureRates[0]:.4}'.encode('utf-8')
+
 
   #
   # Actually process the command line, updating whatever variables we have
@@ -250,17 +261,16 @@ class Hijacker:
     sline = line.split(b' ')
     if sline[0] == b's':
       try:
-        self.setSteer(float(sline[1]))
+        result += self.setSteer(-float(sline[1]))
       except:
         result += b'Syntax error:' + sline[1]
     elif sline[0] == b'c':
       try:
-        radius = float(sline[1])
-        if abs(radius) <= self.wheel_base:
+        radius = -float(sline[1])
+        if abs(radius) <= self.wheelBase:
           result += b'too small radius'
         else:
-          self.setSteer(math.asin(self.wheelBase / radius))
-          result += f'Circle: {radius:.2} -> steer:{self.steer:.2}'.encode('UTF-8')
+          result += self.setSteer(math.asin(self.wheelBase / radius))
       except:
         result += b'Syntax error:' + sline[1]
     if len(result) != 0:
@@ -271,6 +281,7 @@ class Hijacker:
   # Called by controls thread to re-write the lateral plan message
   #
   def convert_message(self, lp, v_ego):
+    self.v_ego = v_ego
     if not self.connected:
       return
     #
@@ -283,7 +294,10 @@ class Hijacker:
       tv = T_variables(t, v_ego, 0, self.bike)
       lp.psis[i] = tv.orientation.yaw
       lp.curvatures[i] = 1. / self.bike.getTurningRadius()
+    if lp.psis[1] < 0:
+      lp.curvatures = [-l for l in lp.curvatures]
     lp.curvatureRates[0] = (lp.curvatures[0] - self.prevCurvature) / v_ego
+
 
     self.prev_steer = self.steer
     self.prevCurvature = lp.curvatures[0]
@@ -457,6 +471,8 @@ def test_hijack_command():
   EXPECT_EQ(h.steer, .10)
   r = h.process_line(b'<2.4>s -.15')
   EXPECT_EQ(h.steer, -.15)
+
+  print(h.process_line(b'c 15'))
 
 class fake_lp:
   def __init__(self):
