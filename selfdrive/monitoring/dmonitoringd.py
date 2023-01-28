@@ -59,7 +59,9 @@ def dmonitoringd_thread(sm=None, pm=None):
       events.add(car.CarEvent.EventName.tooDistracted)
 
     # Update events from driver state
-    driver_status.update_events(events, driver_engaged, sm['controlsState'].enabled, sm['carState'].standstill)
+
+    # driver_status.update_events(events, driver_engaged, sm['controlsState'].enabled, sm['carState'].standstill)
+    driver_status.update_events(events, driver_engaged, sm['controlsState'].enabled, True) # Remnav
 
     # build driverMonitoringState packet
     dat = messaging.new_message('driverMonitoringState')
