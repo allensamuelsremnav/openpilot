@@ -1,9 +1,8 @@
 #!/usr/bin/env python
-import os
-import argparse
 import threading
 import socket
 import math
+import time
 
 CONTROL_N = 17  # from controls/lib/drive_helpers.py
 PORT = 6379
@@ -43,18 +42,18 @@ def VecNegate(a):
   return Vec2(-a.x, -a.y)
 
 def divide(dividend, divisor):
-    try:
-        return dividend/divisor
-    except ZeroDivisionError:
-        if dividend == 0:
-            raise ValueError('0/0 is undefined')
-            # instead of raising an error, an alternative
-            # is to return float('nan') as the result of 0/0
+  try:
+    return dividend/divisor
+  except ZeroDivisionError as exc:
+    if dividend == 0:
+      raise ZeroDivisionError from exc
+    # instead of raising an error, an alternative
+    # is to return float('nan') as the result of 0/0
 
-        if dividend > 0:
-            return float('inf')
-        else:
-            return float('-inf')  
+    if dividend > 0:
+      return float('inf')
+    else:
+      return float('-inf')  
 
 class UnitVector(Vec2):
   def __init__(self, angle):
@@ -112,24 +111,24 @@ class BicycleModel:
   def getRotationAngle(self):
     return self.m_rotation_angle
   def getRotationVector(self):
-    return self.m_rotation_vector;
+    return self.m_rotation_vector
   def getAccelerationAngle(self):
     return 0.0 if self.isStraight() else self.m_rotation_angle + (-M_PI_2 if self.m_steer_angle < 0 else M_PI_2)
   def getAccelerationVector(self):
-      return UnitVector(self.getAccelerationAngle())
+    return UnitVector(self.getAccelerationAngle())
   def getSteerAngle(self):
-      return self.m_steer_angle
+    return self.m_steer_angle
 
 
   def setSteeringAngle(self, steer_angle):
-    self.m_steer_angle = steer_angle;
+    self.m_steer_angle = steer_angle
     self.m_turning_radius =  divide(self.m_wheel_base, abs(math.sin(self.m_steer_angle)))
     if math.isinf(self.m_turning_radius):
       # going straight
       self.m_turning_center_y = 0
     else:
       # Now we have a triangle, compute the third side
-      self.m_turning_center_y = math.sqrt(self.m_turning_radius * self.m_turning_radius - self.m_wheel_base * self.m_wheel_base);
+      self.m_turning_center_y = math.sqrt(self.m_turning_radius * self.m_turning_radius - self.m_wheel_base * self.m_wheel_base)
     
     if self.m_steer_angle < 0:
       self.m_turning_center_y = -self.m_turning_center_y
@@ -139,19 +138,19 @@ class BicycleModel:
   #// Set the distance travelled from 0. Maybe repeatedly called.
   #//
   def setDistance(self, distance):
-      if math.isinf(self.m_turning_radius):
-        self.m_rotation_angle = 0.0;
-        self.m_rotation_vector = UnitVector(0)
-        self.m_position = Vec2(distance, 0.0)
-      else:
-        #// First compute rotation angle
-        circumference = 2.0 * math.pi * self.m_turning_radius
-        fraction_of_circumference = (distance / circumference) % 1.0
-        self.m_rotation_angle = 2.0 * math.pi * fraction_of_circumference;
-        if self.m_steer_angle < 0.0:
-          self.m_rotation_angle = -self.m_rotation_angle;
-        self.m_rotation_vector = UnitVector(self.m_rotation_angle);
-        self.m_position = rotatePointAroundPoint(self.getTurningCenter(), Vec2(0, 0), self.m_rotation_vector)
+    if math.isinf(self.m_turning_radius):
+      self.m_rotation_angle = 0.0
+      self.m_rotation_vector = UnitVector(0)
+      self.m_position = Vec2(distance, 0.0)
+    else:
+      #// First compute rotation angle
+      circumference = 2.0 * math.pi * self.m_turning_radius
+      fraction_of_circumference = (distance / circumference) % 1.0
+      self.m_rotation_angle = 2.0 * math.pi * fraction_of_circumference
+      if self.m_steer_angle < 0.0:
+        self.m_rotation_angle = -self.m_rotation_angle
+      self.m_rotation_vector = UnitVector(self.m_rotation_angle)
+      self.m_position = rotatePointAroundPoint(self.getTurningCenter(), Vec2(0, 0), self.m_rotation_vector)
 
 class T_variables:
   def __init__(self, _t, _v_0, _a, bike):
@@ -159,35 +158,35 @@ class T_variables:
     self.v_0 = _v_0
     self.a = _a
     self.v_t = self.v_0 + (self.a * self.t)     # // Velocity at time t.
-    self.v_avg = (self.v_t + self.v_0) / 2.0;   # // Average velocity
-    self.d = self.v_avg * self.t;               # // Distance travelled
+    self.v_avg = (self.v_t + self.v_0) / 2.0   # // Average velocity
+    self.d = self.v_avg * self.t               # // Distance travelled
 
-    bike.setDistance(self.d);
+    bike.setDistance(self.d)
 
-    self.position = bike.getPosition();
+    self.position = bike.getPosition()
     self.velocity = VecMultiply(bike.getRotationVector(), self.v_avg)
     if math.isinf(bike.getTurningRadius()) or self.t == 0.0:
-      self.acceleration = VecMultiply(UnitVector(0.0),self.a);
-      self.orientation = RPY(0.0, 0.0, 0.0);
-      self.orientationRate = RPY(0.0, 0.0, 0.0);
+      self.acceleration = VecMultiply(UnitVector(0.0),self.a)
+      self.orientation = RPY(0.0, 0.0, 0.0)
+      self.orientationRate = RPY(0.0, 0.0, 0.0)
     else:
       #// We just account for centripetal acceleration and ignore the linear acceleration component
       #// Centripal = V**2 / r
-      acceleration_magnitude = (self.v_avg * self.v_avg) / bike.getTurningRadius();
-      self.acceleration = VecMultiply(bike.getAccelerationVector(), acceleration_magnitude);
-      self.orientation = RPY(0.0, 0.0, bike.getRotationAngle());
+      acceleration_magnitude = (self.v_avg * self.v_avg) / bike.getTurningRadius()
+      self.acceleration = VecMultiply(bike.getAccelerationVector(), acceleration_magnitude)
+      self.orientation = RPY(0.0, 0.0, bike.getRotationAngle())
       #//
       #// Compute the orientationRate (angular velocity). this is in Radians/second.
       #// orientationRate = 2 * PI * f
       #// where f is in units of circles / second => velocity / circumference
       #// W = 2 * PI * (V / (2 * PI * R)) => V / R
       #//
-      w = self.v_avg / bike.getTurningRadius();
-      self.orientationRate = RPY(0.0, 0.0, (-w) if bike.getSteerAngle() < 0 else w);
+      w = self.v_avg / bike.getTurningRadius()
+      self.orientationRate = RPY(0.0, 0.0, (-w) if bike.getSteerAngle() < 0 else w)
 
 class Hijacker:
   def __init__(self, unit_test = False, wb = 2.78892):
-    self.connected = False
+    self.clientSocket = None
     self.steer = 0.0
     self.steerRate = 0.0
     self.prevSteer = 0.0
@@ -195,6 +194,9 @@ class Hijacker:
     self.wheelBase = wb  # Highlander wheel base is 109.8 inches => 2.78892 meters.
     self.steerLimit = 0.244346   # Maximum steering deflection
     self.v_ego = 0.0
+    self.displayTime = 10.0 # seconds between lateral plan messages
+    self.nextDisplayTime = time.time() + self.displayTime
+    self.hijackMode = True
     if unit_test:
       self.connected = True
     else:
@@ -208,29 +210,30 @@ class Hijacker:
     
   def listener_thread(self):
     while True:
-      self.connected = False
+      self.clientSoocket = None
       try:
         print("Waiting for socket connection")
-        (clientsocket, address) = self.serversocket.accept()
+        (self.clientSocket, address) = self.serversocket.accept()
         print("Got connection from ", address)
-        clientsocket.send(b"Hello Remnav\r\n")
+        self.clientSocket.send(b"Hello Remnav\r\n")
         line = b''
         self.connected = True
         while True:
-          chunk = clientsocket.recv(1024)
+          chunk = self.clientSocket.recv(1024)
           if chunk == b'':
             print("Socket error")
             return
           for cc in chunk:
             c = chr(cc).encode()
             if c == b'\r' or c == b'\n':
-              clientsocket.send(b'Got Cmd:' + line + b'\r\n')
-              clientsocket.send(self.process_line(line))
+              self.clientSocket.send(b'Got Cmd:' + line + b'\r\n')
+              self.clientSocket.send(self.process_line(line))
               line = b''
             else:
               line += c
       except OSError:
         print("Got socket error")
+        self.clientSocket = None
 
   def setSteer(self, s):
     if s < -self.steerLimit:
@@ -262,7 +265,7 @@ class Hijacker:
     if sline[0] == b's':
       try:
         result += self.setSteer(-float(sline[1]))
-      except:
+      except ValueError:
         result += b'Syntax error:' + sline[1]
     elif sline[0] == b'c':
       try:
@@ -271,8 +274,23 @@ class Hijacker:
           result += b'too small radius'
         else:
           result += self.setSteer(math.asin(self.wheelBase / radius))
-      except:
+      except ValueError:
         result += b'Syntax error:' + sline[1]
+    elif sline[0] == b'H':
+      self.hijackMode = not self.hijackMode
+      result += b'HijackMode is ' + (b'on' if self.hijackMode else b'off')
+    elif sline[0] == b'r':
+      try:
+        self.displayTime = float(sline[1])
+        self.nextDisplayTime = time.time() + self.displayTime
+      except ValueError:
+        result += b'Syntax error:' + sline[1]
+    else:
+      result += b'Help Message:\r\n' + \
+                b's <steer_angle>     : set raw steering angle\r\n' + \
+                b'c <circle radius>   : set constant radius circle \r\n' + \
+                b'H                   : toggle hijack mode\r\n' + \
+                b'r  <seconds>        : set lateral plan display rate'
     if len(result) != 0:
       result += b'\r\n'
     return result
@@ -284,23 +302,39 @@ class Hijacker:
     self.v_ego = v_ego
     if not self.connected:
       return
-    #
-    # Now, compute my own psi, curvature, curvatureRates
-    #
-    self.bike = BicycleModel(self.steer, self.wheelBase) # Initial
     
-    for i in range(0, CONTROL_N):
-      t = T_IDXS[i]     # time
-      tv = T_variables(t, v_ego, 0, self.bike)
-      lp.psis[i] = tv.orientation.yaw
-      lp.curvatures[i] = 1. / self.bike.getTurningRadius()
-    if lp.psis[1] < 0:
-      lp.curvatures = [-l for l in lp.curvatures]
-    lp.curvatureRates[0] = (lp.curvatures[0] - self.prevCurvature) / v_ego
+    if self.hijackMode:
+      #
+      # Now, compute my own psi, curvature, curvatureRates
+      #
+      self.bike = BicycleModel(self.steer, self.wheelBase) # Initial
+      
+      for i in range(0, CONTROL_N):
+        t = T_IDXS[i]     # time
+        tv = T_variables(t, v_ego, 0, self.bike)
+        lp.psis[i] = tv.orientation.yaw
+        lp.curvatures[i] = 1. / self.bike.getTurningRadius()
+        lp.dPathPoints[i] = tv.position.y
+      if lp.psis[1] < 0:
+        lp.curvatures = [-l for l in lp.curvatures]
+      if v_ego == 0.0:
+        lp.curvatureRates[0] = 0.0
+      else:
+        lp.curvatureRates[0] = (lp.curvatures[0] - self.prevCurvature) / v_ego
+      self.prev_steer = self.steer
+      self.prevCurvature = lp.curvatures[0]
+    if self.nextDisplayTime < time.time():
+      self.nextDisplayTime = time.time() + self.displayTime
+      self.displayMessage(lp, v_ego)
+
+  def displayMessage(self, lp, v_ego):
+    print(f"At time: {time.time():.1f}, v_ego:{v_ego:.3f}" +
+        " Curve:" + ",".join([f'{lp.curvatures[i]:.3f}' for i in range(4)]) +
+        " CrvRate:" + ",".join([f'{lp.curvatureRates[i]:.3f}' for i in range(4)]))
+    print("Psis :",",".join([f'{lp.psis[i]:.3f}' for i in range(10)]))
+    print("Dpath:",",".join([f'{lp.dPathPoints[i]:.3f}' for i in range(10)]))
 
 
-    self.prev_steer = self.steer
-    self.prevCurvature = lp.curvatures[0]
 
 def EXPECT_EQ(a,b):
   if type(a) is RPY and type(b) is RPY:
@@ -324,10 +358,10 @@ def test_moveHeader_zero():
   for angle in [0.0, math.pi/2.0, math.pi/4.0]:
     EXPECT_EQ(moveHeading(x, 0, UnitVector(angle)), x)
   
-  EXPECT_EQ(moveHeading(x, 1.0, UnitVector(0.0)), Vec2(2.0, 1.0));
-  EXPECT_EQ(moveHeading(x, 1.0, UnitVector(M_PI/2.0)), Vec2(1.0, 2.0));
-  EXPECT_EQ(moveHeading(x, -1.0, UnitVector(M_PI/2.0)), Vec2(1.0, 0.0));
-  EXPECT_EQ(moveHeading(Vec2(0, 0), 1.0, UnitVector(M_PI_4)), Vec2(M_SQRT2_2, M_SQRT2_2));
+  EXPECT_EQ(moveHeading(x, 1.0, UnitVector(0.0)), Vec2(2.0, 1.0))
+  EXPECT_EQ(moveHeading(x, 1.0, UnitVector(M_PI/2.0)), Vec2(1.0, 2.0))
+  EXPECT_EQ(moveHeading(x, -1.0, UnitVector(M_PI/2.0)), Vec2(1.0, 0.0))
+  EXPECT_EQ(moveHeading(Vec2(0, 0), 1.0, UnitVector(M_PI_4)), Vec2(M_SQRT2_2, M_SQRT2_2))
 
 def test_BicycleModel_straight():
   #// Straight
@@ -335,150 +369,147 @@ def test_BicycleModel_straight():
   EXPECT_EQ(b.getTurningCenter().x, -1.0)
   EXPECT_TRUE(math.isinf(b.getTurningRadius()))
   EXPECT_EQ(b.getPosition(), Vec2( 0.0, 0.0))
-  b.setDistance(1);
+  b.setDistance(1)
   EXPECT_EQ(b.getPosition(), Vec2( 1.0, 0.0))
   EXPECT_EQ(b.getWheelPosition( 1.0), Vec2(1.0, 1.0))
   EXPECT_EQ(b.getWheelPosition(-1.0), Vec2(1.0,-1.0))
 
 
 def test_BicycleModel_Right():
-  b = BicycleModel(M_PI_4, 1);  #// 45 degree angle
-  EXPECT_EQ(b.getTurningRadius(), M_SQRT2);
-  EXPECT_EQ(b.getTurningCenter(), Vec2(-1.0, 1.0));
-  EXPECT_EQ(b.getPosition(), Vec2( 0.0, 0.0));
+  b = BicycleModel(M_PI_4, 1)  #// 45 degree angle
+  EXPECT_EQ(b.getTurningRadius(), M_SQRT2)
+  EXPECT_EQ(b.getTurningCenter(), Vec2(-1.0, 1.0))
+  EXPECT_EQ(b.getPosition(), Vec2( 0.0, 0.0))
   #// Move PI/4 of the way around the circle.
-  circumference = 2 * M_PI * M_SQRT2;
-  distance = circumference / 8  #; // 2*PI radians in the circle
-  b.setDistance(distance);
-  EXPECT_DOUBLE_EQ(b.getRotationAngle(), M_PI_4);
-  EXPECT_EQ(b.getPosition(), Vec2(b.getTurningRadius() - b.getWheelBase(), b.getTurningCenter().y));
-  EXPECT_EQ(b.getWheelPosition(1.0) , VecAdd(b.getPosition(), UnitVector(M_PI_4 + M_PI_2)));
-  EXPECT_EQ(b.getWheelPosition(-1.0), VecAdd(b.getPosition(), UnitVector(M_PI_4 - M_PI_2)));
+  circumference = 2 * M_PI * M_SQRT2
+  distance = circumference / 8  # // 2*PI radians in the circle
+  b.setDistance(distance)
+  EXPECT_DOUBLE_EQ(b.getRotationAngle(), M_PI_4)
+  EXPECT_EQ(b.getPosition(), Vec2(b.getTurningRadius() - b.getWheelBase(), b.getTurningCenter().y))
+  EXPECT_EQ(b.getWheelPosition(1.0) , VecAdd(b.getPosition(), UnitVector(M_PI_4 + M_PI_2)))
+  EXPECT_EQ(b.getWheelPosition(-1.0), VecAdd(b.getPosition(), UnitVector(M_PI_4 - M_PI_2)))
 
 def test_BicycleModel_Left():
-  b = BicycleModel(-M_PI_4, 1); # // 45 degree angle
-  EXPECT_DOUBLE_EQ(b.getTurningRadius(), M_SQRT2);
-  EXPECT_EQ(b.getTurningCenter(), Vec2(-1.0, -1.0));
-  EXPECT_EQ(b.getPosition(), Vec2( 0.0, 0.0));
+  b = BicycleModel(-M_PI_4, 1) # // 45 degree angle
+  EXPECT_DOUBLE_EQ(b.getTurningRadius(), M_SQRT2)
+  EXPECT_EQ(b.getTurningCenter(), Vec2(-1.0, -1.0))
+  EXPECT_EQ(b.getPosition(), Vec2( 0.0, 0.0))
   #// Move PI/4 of the way around the circle.
-  circumference = 2 * M_PI * M_SQRT2;
-  distance = circumference / 8; # // 2*PI radians in the circle
-  b.setDistance(distance);
-  EXPECT_DOUBLE_EQ(b.getRotationAngle(), -M_PI_4);
-  EXPECT_EQ(b.getPosition(), Vec2(b.getTurningRadius() - b.getWheelBase(), b.getTurningCenter().y));
-  EXPECT_EQ(b.getWheelPosition(1.0) , VecAdd(b.getPosition(), UnitVector(-M_PI_4 + M_PI_2)));
-  EXPECT_EQ(b.getWheelPosition(-1.0), VecAdd(b.getPosition(), UnitVector(-M_PI_4 - M_PI_2)));
+  circumference = 2 * M_PI * M_SQRT2
+  distance = circumference / 8 # // 2*PI radians in the circle
+  b.setDistance(distance)
+  EXPECT_DOUBLE_EQ(b.getRotationAngle(), -M_PI_4)
+  EXPECT_EQ(b.getPosition(), Vec2(b.getTurningRadius() - b.getWheelBase(), b.getTurningCenter().y))
+  EXPECT_EQ(b.getWheelPosition(1.0) , VecAdd(b.getPosition(), UnitVector(-M_PI_4 + M_PI_2)))
+  EXPECT_EQ(b.getWheelPosition(-1.0), VecAdd(b.getPosition(), UnitVector(-M_PI_4 - M_PI_2)))
 
 def test_T_vars_zero():
-  bike = BicycleModel(1);
-  bike.setSteeringAngle(0.0);
-  bike.setDistance(0);
-  tv = T_variables(0, 0, 0, bike);
-  EXPECT_EQ(tv.position, Vec2(0,0));
-  EXPECT_EQ(tv.acceleration, Vec2(0,0));
-  EXPECT_EQ(tv.velocity, Vec2(0,0));
-  EXPECT_EQ(tv.orientation, RPY(0,0,0));
-  EXPECT_EQ(tv.orientationRate, RPY(0,0,0));
+  bike = BicycleModel(1)
+  bike.setSteeringAngle(0.0)
+  bike.setDistance(0)
+  tv = T_variables(0, 0, 0, bike)
+  EXPECT_EQ(tv.position, Vec2(0,0))
+  EXPECT_EQ(tv.acceleration, Vec2(0,0))
+  EXPECT_EQ(tv.velocity, Vec2(0,0))
+  EXPECT_EQ(tv.orientation, RPY(0,0,0))
+  EXPECT_EQ(tv.orientationRate, RPY(0,0,0))
 
 
 def test_T_vars_one():
-  b = BicycleModel(1);
-  b.setSteeringAngle(0.0);
-  tv = T_variables(1.0, 1.0, 0, b);   # // t = 1.0, v = 1.0, a = 0
-  EXPECT_EQ(tv.position, Vec2(1.0, 0));
-  EXPECT_EQ(tv.acceleration, Vec2(0,0));
-  EXPECT_EQ(tv.velocity, Vec2(1.0, 0.0));
-  EXPECT_EQ(tv.orientation, RPY(0,0,0));
-  EXPECT_EQ(tv.orientationRate, RPY(0,0,0));
+  b = BicycleModel(1)
+  b.setSteeringAngle(0.0)
+  tv = T_variables(1.0, 1.0, 0, b)   # // t = 1.0, v = 1.0, a = 0
+  EXPECT_EQ(tv.position, Vec2(1.0, 0))
+  EXPECT_EQ(tv.acceleration, Vec2(0,0))
+  EXPECT_EQ(tv.velocity, Vec2(1.0, 0.0))
+  EXPECT_EQ(tv.orientation, RPY(0,0,0))
+  EXPECT_EQ(tv.orientationRate, RPY(0,0,0))
 
 
 def test_T_vars_one_45_right():
-  b = BicycleModel(1);
-  b.setSteeringAngle(M_PI_4);
-  EXPECT_EQ(b.getTurningRadius(), M_SQRT2);
+  b = BicycleModel(1)
+  b.setSteeringAngle(M_PI_4)
+  EXPECT_EQ(b.getTurningRadius(), M_SQRT2)
   #//
   #// Compute Time to go PI/8 around the circle
-  circumference = 2 * M_PI * b.getTurningRadius();
-  distance = circumference / 8; # // 2*PI radians in the circle
-  v = distance / 1.0;
+  circumference = 2 * M_PI * b.getTurningRadius()
+  distance = circumference / 8 # // 2*PI radians in the circle
+  v = distance / 1.0
 
-  tv = T_variables(1.0, v, 0, b);  # // t = 1.0, v = distance/ 1.0 seconds , a = 0
-  EXPECT_EQ(tv.position, Vec2(b.getTurningRadius() - b.getWheelBase(), b.getTurningCenter().y));
+  tv = T_variables(1.0, v, 0, b)  # // t = 1.0, v = distance/ 1.0 seconds , a = 0
+  EXPECT_EQ(tv.position, Vec2(b.getTurningRadius() - b.getWheelBase(), b.getTurningCenter().y))
   # // V**2 / r, r = SQRT(2)
-  EXPECT_EQ(tv.velocity, VecMultiply(UnitVector(M_PI_4), v));
-  EXPECT_EQ(tv.acceleration, VecMultiply(UnitVector(3 * M_PI_4), (v * v / b.getTurningRadius())));
-  EXPECT_EQ(tv.orientation, RPY(0.0, 0.0, M_PI_4));
-  EXPECT_EQ(tv.orientationRate, RPY(0.0, 0.0, M_PI_4));
+  EXPECT_EQ(tv.velocity, VecMultiply(UnitVector(M_PI_4), v))
+  EXPECT_EQ(tv.acceleration, VecMultiply(UnitVector(3 * M_PI_4), (v * v / b.getTurningRadius())))
+  EXPECT_EQ(tv.orientation, RPY(0.0, 0.0, M_PI_4))
+  EXPECT_EQ(tv.orientationRate, RPY(0.0, 0.0, M_PI_4))
 
 
 def test_T_vars_two_45_right(): # // 45 to the right, two time units
-  b = BicycleModel(1);
-  b.setSteeringAngle(M_PI_4);
-  EXPECT_EQ(b.getTurningRadius(), M_SQRT2);
+  b = BicycleModel(1)
+  b.setSteeringAngle(M_PI_4)
+  EXPECT_EQ(b.getTurningRadius(), M_SQRT2)
   ##//
   #// Compute Time to go PI/8 around the circle
-  circumference = 2 * M_PI * b.getTurningRadius();
-  distance = circumference / 8; # // 2*PI radians in the circle
-  v = distance / 1.0;
+  circumference = 2 * M_PI * b.getTurningRadius()
+  distance = circumference / 8 # // 2*PI radians in the circle
+  v = distance / 1.0
 
-  tv = T_variables(2.0, v, 0, b); #  // t = 2.0, v = distance/ 1.0 seconds , a = 0
-  EXPECT_EQ(tv.position, Vec2(0, 2.0));
+  tv = T_variables(2.0, v, 0, b) #  // t = 2.0, v = distance/ 1.0 seconds , a = 0
+  EXPECT_EQ(tv.position, Vec2(0, 2.0))
   # // V**2 / r, r = SQRT(2)
-  EXPECT_EQ(tv.velocity, VecMultiply(UnitVector(M_PI_4 + M_PI_4), v));
-  EXPECT_EQ(tv.acceleration, VecMultiply(UnitVector(3 * M_PI_4 + M_PI_4), (v * v / b.getTurningRadius())));
-  EXPECT_EQ(tv.orientation, RPY(0.0, 0.0, M_PI_4 + M_PI_4));
-  EXPECT_EQ(tv.orientationRate, RPY(0.0, 0.0, M_PI_4));
+  EXPECT_EQ(tv.velocity, VecMultiply(UnitVector(M_PI_4 + M_PI_4), v))
+  EXPECT_EQ(tv.acceleration, VecMultiply(UnitVector(3 * M_PI_4 + M_PI_4), (v * v / b.getTurningRadius())))
+  EXPECT_EQ(tv.orientation, RPY(0.0, 0.0, M_PI_4 + M_PI_4))
+  EXPECT_EQ(tv.orientationRate, RPY(0.0, 0.0, M_PI_4))
 
 
 def test_T_vars_one_45_left(): #// 45 to the right, one unit
-  b = BicycleModel(1);
-  b.setSteeringAngle(-M_PI_4);
-  EXPECT_EQ(b.getTurningRadius(), M_SQRT2);
+  b = BicycleModel(1)
+  b.setSteeringAngle(-M_PI_4)
+  EXPECT_EQ(b.getTurningRadius(), M_SQRT2)
   #//
   #// Compute Time to go PI/8 around the circle
-  circumference = 2 * M_PI * b.getTurningRadius();
-  distance = circumference / 8; # // 2*PI radians in the circle
-  v = distance / 1.0;
+  circumference = 2 * M_PI * b.getTurningRadius()
+  distance = circumference / 8 # // 2*PI radians in the circle
+  v = distance / 1.0
 
-  tv = T_variables(1.0, v, 0, b);   # // t = 1.0, v = distance/ 1.0 seconds , a = 0
-  EXPECT_EQ(tv.position, Vec2(b.getTurningRadius() - b.getWheelBase(), b.getTurningCenter().y));
+  tv = T_variables(1.0, v, 0, b)   # // t = 1.0, v = distance/ 1.0 seconds , a = 0
+  EXPECT_EQ(tv.position, Vec2(b.getTurningRadius() - b.getWheelBase(), b.getTurningCenter().y))
   # // V**2 / r, r = SQRT(2)
-  EXPECT_EQ(tv.velocity, VecMultiply(UnitVector(-M_PI_4), v));
-  EXPECT_EQ(tv.acceleration, VecMultiply(UnitVector(3 * -M_PI_4), (v * v / b.getTurningRadius())));
-  EXPECT_EQ(tv.orientation, RPY(0.0, 0.0, -M_PI_4));
-  EXPECT_EQ(tv.orientationRate.roll, 0.0);
-  EXPECT_EQ(tv.orientationRate.pitch, 0.0);
-  assert(math.isclose(tv.orientationRate.yaw, -M_PI_4, abs_tol=.01));
+  EXPECT_EQ(tv.velocity, VecMultiply(UnitVector(-M_PI_4), v))
+  EXPECT_EQ(tv.acceleration, VecMultiply(UnitVector(3 * -M_PI_4), (v * v / b.getTurningRadius())))
+  EXPECT_EQ(tv.orientation, RPY(0.0, 0.0, -M_PI_4))
+  EXPECT_EQ(tv.orientationRate.roll, 0.0)
+  EXPECT_EQ(tv.orientationRate.pitch, 0.0)
+  assert(math.isclose(tv.orientationRate.yaw, -M_PI_4, abs_tol=.01))
 
 def test_hijack_command():
   h = Hijacker(unit_test = True)
-  for (c,s,r) in [
-      (b's .1',         .1,     b''), 
-      (b's -.15',     -.15,     b''), 
-      (b'<1>s .1',      .1,     b'<1>\r\n'),
-      (b'<2>s .01',    .01,     b'<2>\r\n')]:
-    rr = h.process_line(c)
-    EXPECT_EQ(h.steer, s)
-    if r != rr:
-      print("Result:",rr," expected:",r)
-    assert(r == rr)
+  for (c,s) in [
+      (b's .1',         .1), 
+      (b's -.15',     -.15), 
+      (b'<1>s .1',      .1),
+      (b'<2>s .01',    .01)]:
+    h.process_line(c)
+    EXPECT_EQ(h.steer, -s)
 
   r = h.process_line(b's .1')
-  EXPECT_EQ(h.steer, .10)
+  EXPECT_EQ(h.steer, -.10)
   r = h.process_line(b's -.15')
-  EXPECT_EQ(h.steer, -.15)
-  r = h.process_line(b'<1>s .1')
+  EXPECT_EQ(h.steer, .15)
+  r = h.process_line(b'<1>s -.1')
   EXPECT_EQ(h.steer, .10)
   r = h.process_line(b'<2.4>s -.15')
-  EXPECT_EQ(h.steer, -.15)
-
-  print(h.process_line(b'c 15'))
+  EXPECT_EQ(h.steer, .15)
+  del r
 
 class fake_lp:
   def __init__(self):
     self.psis = [0.0] * CONTROL_N
     self.curvatures = [0.0] * CONTROL_N
     self.curvatureRates = [0.0] * CONTROL_N
+    self.dPathPoints = [0.0] * CONTROL_N
 
 def test_hijack_zero():
   h = Hijacker(unit_test = True)
@@ -494,8 +525,9 @@ def test_hijack_one():
   lp = fake_lp()
   h.steer = M_PI/4
   v_ego = 1
+  h.nextDisplayTime = 0
   h.convert_message(lp, v_ego)
-  circumference = 2 * M_PI * h.bike.getTurningRadius();
+  circumference = 2 * M_PI * h.bike.getTurningRadius()
   for i in range(CONTROL_N):
     distance = v_ego * T_IDXS[i]
     angle = distance * 2 * M_PI / circumference
