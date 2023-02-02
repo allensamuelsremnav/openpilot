@@ -235,6 +235,7 @@ class Hijacker:
       except OSError:
         print("Got socket error")
         self.clientSocket = None
+        self.connected = False
 
   def setSteer(self, s):
     if s < -self.steerLimit:
