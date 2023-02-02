@@ -217,7 +217,7 @@ class Hijacker:
       print("Waiting for socket connection")
       (clientSocket, address) = self.serversocket.accept()
       print("Got connection from ", address)
-      t = threading.Thread(target = self.socket_handler_thread, args=(clientSocket))
+      t = threading.Thread(target = self.socket_handler_thread, args=(clientSocket,))
       t.start()
       self.threads.append(t)
   
