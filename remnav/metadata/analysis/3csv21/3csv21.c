@@ -44,8 +44,6 @@ struct s_carrier {
     int iocc;                           // interpolated occupancy from tx log
     double socc_epoch_ms;               // time when the occupacny for this packet was sampled
 
-//     struct s_txlog *tdp;                 // pointer to the td array
-//     int len_td;                         // lenth of the tx log array. 0 implies tx log was not specified
     int match;                          // set to 1 if this channel matches the packet num to be transmitted
 };
 
@@ -119,7 +117,7 @@ int interpolate_occ (double tx_epoch_ms, struct s_txlog *current, struct s_txlog
 
 } // interpolate occ
 
-// find_occ_frim_tdfile  returns the sampled occupancy at the closest time smaller than the specified tx_epoch_ms and 
+// find_occ_from_tdfile  returns the sampled occupancy at the closest time smaller than the specified tx_epoch_ms and 
 // and interpolated occupancy, interpolated between the sampled occupancy above and the next (later) sample
 void find_occ_from_td (int packet_num, double tx_epoch_ms, struct s_txlog *tdp, int len_tdfile, int *iocc, int *socc, double *socc_epoch_ms) {
     struct s_txlog *left, *right, *current;    // current, left and right index of the search
@@ -543,30 +541,6 @@ int main (int argc, char* argv[]) {
 	sprintf (bp, "%s%s", ipath, rx_prefix);
     read_md (bp); 
 
-    /*
-	sprintf (bp, "%s%s_ch0.csv", ipath, rx_prefix);
-    len_md0 = read_md(c0_fp); 
-	sprintf (bp, "%s%s_ch1.csv", ipath, rx_prefix);
-	c1_fp = open_file (bp, "r");
-    len_md1 = read_md(c1_fp); 
-	sprintf (bp, "%s%s_ch2.csv", ipath, rx_prefix);
-	c2_fp = open_file (bp, "r");
-    len_md2 = read_md(c2_fp); 
-    */
-
-    /*
-    int i; 
-    for (i=0; i < len_md0; i++) {
-        (c0_md+i)->tdp = td0; (c0_md+i)->len_td = len_td0;
-    }
-    for (i=0; i < len_md1; i++) {
-        (c1_md+i)->tdp = td1; (c1_md+i)->len_td = len_td1;
-    }
-    for (i=0; i < len_md2; i++) {
-        (c2_md+i)->tdp = td2; (c2_md+i)->len_td = len_td2;
-    }
-    */
-	
     // print header
     emit_combined (1, packet_num, c0_md, c1_md, c2_md, out_fp); 
     
