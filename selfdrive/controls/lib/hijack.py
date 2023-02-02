@@ -286,13 +286,16 @@ class Hijacker:
         self.displayTime = float(sline[1])
         self.nextDisplayTime = time.time() + self.displayTime
       except ValueError:
-        result += b'Syntax error:' + sline[1]
+        result += b'Syntax error:' + sline[1]]
+    elif sline[0] == 'q':
+      raise OSError()        
     else:
       result += b'Help Message:\r\n' + \
                 b's <steer_angle>     : set raw steering angle\r\n' + \
                 b'c <circle radius>   : set constant radius circle \r\n' + \
                 b'H                   : toggle hijack mode\r\n' + \
-                b'r  <seconds>        : set lateral plan display rate'
+                b'r  <seconds>        : set lateral plan display rate\r\n' + \
+                b'q                   : quit / close this socket'
     if len(result) != 0:
       result += b'\r\n'
     return result
