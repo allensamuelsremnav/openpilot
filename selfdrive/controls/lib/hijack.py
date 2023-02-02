@@ -207,6 +207,7 @@ class Hijacker:
       self.serversocket.listen(1)
       self.thread = threading.Thread(target = self.listener_thread)
       self.thread.start()
+      self.connected = False
     
   def listener_thread(self):
     while True:
