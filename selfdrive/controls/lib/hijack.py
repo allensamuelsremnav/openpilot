@@ -228,7 +228,9 @@ class Hijacker:
             c = chr(cc).encode()
             if c == b'\r' or c == b'\n':
               self.clientSocket.send(b'Got Cmd:' + line + b'\r\n')
-              self.clientSocket.send(self.process_line(line))
+              r = self.process_line(line)
+              if r is not None:
+                self.clientSocket.send(r)
               line = b''
             else:
               line += c
