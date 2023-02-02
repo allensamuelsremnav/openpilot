@@ -149,6 +149,8 @@ struct s_session {
     struct stats    late, *latep;           // late frame stats; count = number of late frames in the session; 
     struct stats    br, *brp;               // frame bit-rate stats: count = number of frames below too_low_bit_rate parameter
     struct stats    cts, *ctsp;             // camera time-stamp
+    struct stats    c2d, *c2dp;             // camera to display latency
+    struct stats    rpt, *rptp;             // repeated frames
     // packet level stats
     struct stats    c2v, *c2vp;             // camera to video latency
     struct stats    v2t, *v2tp;             // best encoder to transmit for a packet
@@ -175,7 +177,7 @@ struct s_carrier {
         double socc_epoch_ms;               // time when the occupacny for this packet was sampled
 
         int tx;                             // set to 1 if this carrier tranmitted the packet being considered
-        float bp_t2r_ms;                      // backpropagated t2r tat time time tx_epoch_ms
+        float bp_t2r_ms;                    // backpropagated t2r tat time time tx_epoch_ms
         struct s_cmetadata *bp_csp;         // pointer to the carrier metadata that provided the bp info
 
         int state;                          // channel state - in_service or out_of_service
@@ -549,6 +551,9 @@ int main (int argc, char* argv[]) {
             
     sprintf (bp, "%s%s_session_vqfilter.csv", opath, rx_prep);
     ss_fp = open_file (bp, "w");
+
+    sprintf (bp, "%s%s_warnings_vqfilter.txt", opath, rx_prep);
+    warn_fp = open_file (bp, "w");
 
     // check if any missing arguments
     if (md_fp==NULL || fs_fp==NULL || ss_fp==NULL || ps_fp==NULL) {
@@ -1351,9 +1356,9 @@ void emit_packet_header (FILE *ps_fp) {
     fprintf (ps_fp, "Pc2r, ");
     
     // per carrier meta data
-    fprintf (ps_fp, "C0: c2v, v2t, t2r, c2r, socc, retx, st, iocc, socc_TS, tx_TS, rx_TS, bt2r, br_TS, b_pkt,"); 
-    fprintf (ps_fp, "C1: c2v, v2t, t2r, c2r, socc, retx, st, iocc, socc_TS, tx_TS, rx_TS, bt2r, br_TS, b_pkt,"); 
-    fprintf (ps_fp, "C2: c2v, v2t, t2r, c2r, socc, retx, st, iocc, socc_TS, tx_TS, rx_TS, bt2r, br_TS, b_pkt,"); 
+    fprintf (ps_fp, "C0: c2v, v2t, t2r, c2r, socc, retx, iocc, socc_TS, tx_TS, rx_TS,"); // bt2r, br_TS, b_pkt,"); 
+    fprintf (ps_fp, "C1: c2v, v2t, t2r, c2r, socc, retx, iocc, socc_TS, tx_TS, rx_TS,"); // bt2r, br_TS, b_pkt,"); 
+    fprintf (ps_fp, "C2: c2v, v2t, t2r, c2r, socc, retx, iocc, socc_TS, tx_TS, rx_TS,"); // bt2r, br_TS, b_pkt,"); 
 
     // packet analytics 
     fprintf (ps_fp, "dtx, fch, eff, opt, "); 
@@ -1643,10 +1648,10 @@ void find_occ_from_td (int packet_num, double tx_epoch_ms, struct s_txlog *tdp, 
     left = tdp; right = tdp + len_td - 1; 
 
     if (tx_epoch_ms < left->epoch_ms) // tx started before modem occupancy was read
-        FATAL("find_occ_from_td: Packet %d tx_epoch_ms is smaller than first occupancy sample time\n", packet_num)
+        FWARN(warn_fp, "find_occ_from_td: Packet %d tx_epoch_ms is smaller than first occupancy sample time\n", packet_num)
 
     if (tx_epoch_ms > right->epoch_ms + 100) // tx was done significantly later than last occ sample
-        FATAL("find_occ_from_td: Packet %d tx_epoch_ms is over 100ms largert than last occupancy sample time\n", packet_num)
+        FWARN(warn_fp, "find_occ_from_td: Packet %d tx_epoch_ms is over 100ms largert than last occupancy sample time\n", packet_num)
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
@@ -1752,14 +1757,14 @@ void emit_packet_stats (struct s_carrier *cp, struct frame *fp) {
 	    fprintf (ps_fp, "%0.1f, ", cp->rx_epoch_ms - fp->camera_epoch_ms);
         fprintf (ps_fp, "%d, ", cp->socc);
         fprintf (ps_fp, "%d, ", cp->retx);
-        fprintf (ps_fp, "%d, ", cp->state);
+        // fprintf (ps_fp, "%d, ", cp->state);
         if (cp->len_td) fprintf (ps_fp, "%d, ", cp->iocc); else fprintf (ps_fp, ", "); 
 	    if (cp->len_td) fprintf (ps_fp, "%.0lf, ", cp->socc_epoch_ms); else fprintf (ps_fp, ", "); 
 	    fprintf (ps_fp, "%.0lf, ", cp->tx_epoch_ms);
 	    fprintf (ps_fp, "%.0lf, ", cp->rx_epoch_ms);
-	    fprintf (ps_fp, "%0.1f, ", cp->bp_t2r_ms);
-	    fprintf (ps_fp, "%.0lf, ", cp->bp_csp->rx_epoch_ms);
-        fprintf (ps_fp, "%d, ", cp->bp_csp->packet_num);
+	    // fprintf (ps_fp, "%0.1f, ", cp->bp_t2r_ms);
+	    // fprintf (ps_fp, "%.0lf, ", cp->bp_csp->rx_epoch_ms);
+        // fprintf (ps_fp, "%d, ", cp->bp_csp->packet_num);
     } // if this carrier transmitted this meta data line, then print the carrier stats 
 
 	else { // stay silent except indicate the channel quality through t2r and occ
@@ -1769,14 +1774,14 @@ void emit_packet_stats (struct s_carrier *cp, struct frame *fp) {
         fprintf (ps_fp, ","); 
         fprintf (ps_fp, "%d, ", cp->socc);
         fprintf (ps_fp, ","); 
-        fprintf (ps_fp, "%d, ", cp->state);
+        // fprintf (ps_fp, "%d, ", cp->state);
         if (cp->len_td) fprintf (ps_fp, "%d, ", cp->iocc); else fprintf (ps_fp, ", "); 
 	    if (cp->len_td) fprintf (ps_fp, "%.0lf, ", cp->socc_epoch_ms); else fprintf (ps_fp, ", "); 
         fprintf (ps_fp, ","); 
         fprintf (ps_fp, ","); 
-	    fprintf (ps_fp, "%0.1f, ", cp->bp_t2r_ms);
-        fprintf (ps_fp, ","); 
-        fprintf (ps_fp, ","); 
+	    // fprintf (ps_fp, "%0.1f, ", cp->bp_t2r_ms);
+        // fprintf (ps_fp, ","); 
+        // fprintf (ps_fp, ","); 
     } // this carrier did not transmit the packet
 
     return;
@@ -1825,6 +1830,12 @@ void update_session_frame_stats (struct s_session *ssp, struct frame *p) {
     if (p->frame_count > 1) // skip first frame because the TS for n-1 frame is undefined 
         update_metric_stats (ssp->ctsp, 1, p->camera_epoch_ms - p->nm1_camera_epoch_ms, 60, 30); 
 
+    // c2d latency
+    update_metric_stats (ssp->c2dp, 1, p->c2d_frames, 10, 2);
+
+    // c2d latency
+    update_metric_stats (ssp->rptp, 1, p->repeat_count, 10, 0);
+
 } // update_session_frame_stats
 
 // Computes the mean/variance of the specified metric. 
@@ -1844,6 +1855,8 @@ void emit_session_stats (struct s_session *ssp, struct frame *fp) {
     compute_metric_stats (ssp->latep, fp->frame_count); 
     compute_metric_stats (ssp->brp, fp->frame_count); 
     compute_metric_stats (ssp->ctsp, fp->frame_count); 
+    compute_metric_stats (ssp->c2dp, fp->frame_count); 
+    compute_metric_stats (ssp->rptp, fp->frame_count); 
     compute_metric_stats (ssp->c2vp, ssp->pcp->count); 
     compute_metric_stats (ssp->v2tp, ssp->pcp->count); 
     compute_metric_stats (ssp->best_t2rp, ssp->pcp->count); 
@@ -1857,6 +1870,8 @@ void emit_session_stats (struct s_session *ssp, struct frame *fp) {
     sprintf (buffer, "Frames with bit rate below %.1fMbps", minimum_acceptable_bitrate);
     emit_metric_stats (buffer, "Bit-rate", ssp->brp, 1, MAX_BIT_RATE_OF_A_FRAME, MIN_BIT_RATE_OF_A_FRAME); 
     emit_metric_stats ("Camera time stamp", "Camera time stamp", ssp->ctsp, 1, 60, 30); 
+    emit_metric_stats ("Camera to display latency", "Camera to display latency", ssp->c2dp, 1, 10, 2); 
+    emit_metric_stats ("Repeated frames", "Repeated frames", ssp->rptp, 1, 10, 0); 
     emit_metric_stats ("C->V latency", "C->V latency", ssp->c2vp, 0, MAX_C2V_LATENCY, MIN_C2V_LATENCY); 
     emit_metric_stats ("V->T latency", "V->T latency", ssp->v2tp, 0, 50, 0); 
     emit_metric_stats ("Best TX->RX latency", "Best TX->RX latency", ssp->best_t2rp, 0, MAX_T2R_LATENCY, MIN_T2R_LATENCY); 
@@ -2001,6 +2016,8 @@ void init_session_stats (struct s_session *p) {
     p->latep = &(p->late); init_metric_stats (p->latep);
     p->brp = &(p->br); init_metric_stats (p->brp);
     p->ctsp = &(p->cts); init_metric_stats (p->ctsp);
+    p->c2dp = &(p->c2d); init_metric_stats (p->c2dp);
+    p->rptp = &(p->rpt); init_metric_stats (p->rptp);
     p->c2vp = &(p->c2v); init_metric_stats (p->c2vp);
     p->v2tp = &(p->v2t); init_metric_stats (p->v2tp);
     p->c2rp = &(p->c2r); init_metric_stats (p->c2rp);
