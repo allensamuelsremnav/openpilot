@@ -286,7 +286,7 @@ class Hijacker:
         self.displayTime = float(sline[1])
         self.nextDisplayTime = time.time() + self.displayTime
       except ValueError:
-        result += b'Syntax error:' + sline[1]]
+        result += b'Syntax error:' + sline[1]
     elif sline[0] == 'q':
       raise OSError()        
     else:
