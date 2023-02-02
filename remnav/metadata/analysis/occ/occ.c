@@ -26,6 +26,8 @@ struct s_files {
     char pr_specified;                  // if 1 then probe log was specified
     char sr_prefix[500]; 
     char sr_specified;                  // if 1 then service log was specified
+    char la_prefix[500]; 
+    char la_specified;                  // if 1 then latency log was specified
     int  channel;                       // 0 1 or 2. -1 if not specified.
 };
 
@@ -46,7 +48,6 @@ struct s_latency {
     int packet_num;             // packet number
     int t2r_ms;                 // latency for it 
     double bp_epoch_ms;         // time bp info was received by the sendedr
-    int est_t2r_ms;             // t2r_ms + tx_epoch_ms + epoch_ms
 }; 
 
 struct s_txlog {
@@ -80,6 +81,7 @@ struct s_carrier {
     int probe;                      // 1=probe packet 0=data packet
     struct s_service *sdp;          // serivce log data 
     struct s_latency *ldp;          // latency log data 
+    int est_t2r_ms;                 // t2r_ms + tx_epoch_ms + bp_epoch_ms
 };
 
 struct s_latency_table {
@@ -94,16 +96,20 @@ struct s_lspike {
     int max_lat_packet_num;     // packet number of the packet that suffered maximum latency
     int start_packet_num;       // first packet number in inactive state where the latency exceeded latency_threshold 
     double start_tx_epoch_ms;   // tx time stamp of the starting packet
-    int stop_packet_num;        // last packet number in active state where the latency exceeded latency_threshold 
-    double duration_ms;         // duration
+    struct s_carrier *startp;   // pointer to md data of the statrting packet
+        
+    int duration_pkt;           // duration in number of packets
+    double duration_ms;         // duration in ms
 };
 
 struct s_ospike {
     int active;                 // 1 if in middle of a spike, 0 otherwise
     int max_occ;                // highest occ value during this spike
     int start_packet_num;       // first packet number in inactive state where occupancy is greater than threshold
-    int stop_packet_num;        // last packet number in active state where occupancy is greater than threshold
     double start_tx_epoch_ms;   // tx time stamp of the starting packet
+    struct s_carrier *startp;   // pointer to md data of the statrting packet
+
+    int duration_pkt;           // duration in number of packets
     double duration_ms;         // duration
 }; 
 
@@ -261,8 +267,8 @@ int read_md_line (int read_header, FILE *fp, int len_tdfile, struct s_txlog *tdp
     decode_sendtime (2, /*assume format 2 */ &mdp->vx_epoch_ms, &mdp->tx_epoch_ms, &mdp->socc);
     mdp->t2r_latency_ms = mdp->rx_epoch_ms - mdp->tx_epoch_ms; 
 
-    if (mdp->tx_epoch_ms == 1673813991300)
-        printf ("mdp->tx_epoch = %0lf", mdp->tx_epoch_ms);
+    // if (mdp->tx_epoch_ms == 1674932071091)
+        // printf ("mdp->tx_epoch = %0lf", mdp->tx_epoch_ms);
 
     // if tx log exists then overwrite occupancy from tx log file
     if (len_tdfile) { // log file exists
@@ -347,13 +353,13 @@ int read_sd_line (FILE *fp, int ch, struct s_service *sdp) {
     // parse the line
     int n; 
     int channel;
-    // CH: 2, change to out-of-service state, latency: 0, latencyTime: 0, estimated latency: 30, stop_sending flag: 1
-    //  , uplink queue size: 17, zeroUplinkQueue: 0, service flag: 0, numCHOut: 1, Time: 1673558308240
+    // CH: 1, change to out-of-service state, latency: 64, latencyTime: 1673815478924, estimated latency: 70, stop_sending flag: 1 , 
+    // uplink queue size: 19, zeroUplinkQueue: 0, service flag: 0, numCHOut: 1, Time: 1673815478930, packetNum: 8
 
     while (
         ((n = sscanf (sdlinep, 
             "%[^:]:%d, %[^,], %[^:]:%d %[^:]:%lf %[^:]:%d %[^:]:%d \
-            %[^:]:%d %[^:]:%d %[^:]:%d %[^:]:%d %[^:]:%lf",
+            %[^:]:%d %[^:]:%d %[^:]:%d %[^:]:%d %[^:]:%lf %[^:]:%d" ,
             dummy_str, &channel,
             state_str,  
             dummy_str, &sdp->bp_t2r,
@@ -365,14 +371,15 @@ int read_sd_line (FILE *fp, int ch, struct s_service *sdp) {
             dummy_str, &dummy_int, 
             dummy_str, &dummy_int,
             dummy_str, &dummy_int,
-            dummy_str, &sdp->state_transition_epoch_ms)) !=21)
+            dummy_str, &sdp->state_transition_epoch_ms, 
+            dummy_str, &sdp->bp_packet_num)) !=23)
         || channel !=ch) {
 
-        if (n != 21) // did not successfully parse this line
-            FWARN(warn_fp, "read_sd_line: Skipping line %s\n", sdlinep)
+        if (n != 23) // did not successfully parse this line
+            FWARN(warn_fp, "read_sd_line: Skipping line %s\n", sdlinep);
 
         // else did not match the channel
-        else if (fgets (sdline, MAX_SD_LINE_SIZE, fp) == NULL)
+        if (fgets (sdline, MAX_SD_LINE_SIZE, fp) == NULL)
             // reached end of the file
             return 0;
     } // while not successfully scanned a transmit log line
@@ -521,24 +528,26 @@ void emit_stats (
     // avg latency by occupancy
     if (print_header) fprintf (fp, "count, ");          else if (index >= 31) fprintf (fp, ","); else fprintf (fp, "%d, ", lp->count);
     if (print_header) fprintf (fp, ",");                else if (index >= 31) fprintf (fp, ","); else fprintf (fp, "%d, ", index);
-    if (print_header) fprintf (fp, "%s avg latency,", file_namep);    else if ((index >= 31) || (lp->count ==0)) fprintf (fp, ","); 
+    if (print_header) fprintf (fp, "%s avg L,", file_namep);    else if ((index >= 31) || (lp->count ==0)) fprintf (fp, ","); 
                                                         else fprintf (fp, "%.0f, ", lp->latency/lp->count);
 
     // latency spike
     if (print_header) fprintf (fp, "L: occ, ");         else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%d,", lsp->max_occ);
+    if (print_header) fprintf (fp, "start_TS,");        else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%.0lf,", osp->start_tx_epoch_ms); 
     if (print_header) fprintf (fp, "start, ");          else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%d,", lsp->start_packet_num); 
-    if (print_header) fprintf (fp, "stop, ");           else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%d,", lsp->stop_packet_num); 
-    if (print_header) fprintf (fp, "duration_pkts, ");  else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%d,", lsp->stop_packet_num - lsp->start_packet_num + 1); 
-    if (print_header) fprintf (fp, "duration_ms, ");    else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%.0lf,", lsp->duration_ms); 
+    if (print_header) fprintf (fp, "stop, ");           else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%d,", (lsp->startp+lsp->duration_pkt)->packet_num); 
+    if (print_header) fprintf (fp, "dur_pkt, ");        else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%d,", lsp->duration_pkt); 
+    if (print_header) fprintf (fp, "dur_ms, ");         else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%.0lf,", lsp->duration_ms); 
     if (print_header) fprintf (fp, "max t2r, ");        else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%.0lf,", lsp->max_latency); 
     if (print_header) fprintf (fp, "max t2r pnum, ");   else if (index >= len_lspike_table) fprintf (fp, ","); else fprintf (fp, "%d,", lsp->max_lat_packet_num); 
 
     // occupancy spike
     if (print_header) fprintf (fp, "O: occ,");          else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%d,", osp->max_occ); 
+    if (print_header) fprintf (fp, "start_TS,");        else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%.0lf,", osp->start_tx_epoch_ms); 
     if (print_header) fprintf (fp, "start,");           else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%d,", osp->start_packet_num); 
-    if (print_header) fprintf (fp, "stop,");            else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%d,", osp->stop_packet_num); 
-    if (print_header) fprintf (fp, "duration_pkts,");   else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%d,", osp->stop_packet_num - osp->start_packet_num + 1); 
-    if (print_header) fprintf (fp, "duration_ms,");     else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%.0lf,", osp->duration_ms); 
+    if (print_header) fprintf (fp, "stop,");            else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%d,", (osp->startp+osp->duration_pkt)->packet_num);
+    if (print_header) fprintf (fp, "dur_pkt,");         else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%d,", osp->duration_pkt); 
+    if (print_header) fprintf (fp, "dur_ms,");          else if (index >= len_ospike_table) fprintf (fp, ","); else fprintf (fp, "%.0lf,", osp->duration_ms); 
 
     // latency bins by occupancy table
     int i; 
@@ -575,39 +584,44 @@ void emit_stats (
 
 void emit_aux (int print_header, int probe, int have_txlog, int have_latency_log, int have_service_log, struct s_carrier *cp, FILE *fp) {
 
-    if (print_header) fprintf (fp, "packet_num,");          else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->packet_num); 
-    if (print_header) fprintf (fp, "camera_epoch_ms,");     else if (probe) fprintf (fp, ","); else fprintf (fp, "%.0lf,", cp->camera_epoch_ms); 
-    if (print_header) fprintf (fp, "tx_epoch_ms,");         else fprintf (fp, "%.0lf,", cp->tx_epoch_ms); 
-    if (print_header) fprintf (fp, "rx_epoch_ms,");         else fprintf (fp, "%.0lf,", cp->rx_epoch_ms); 
-    if (print_header) fprintf (fp, "retx,");                else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->retx); 
-    if (print_header) fprintf (fp, "t2r,");                 else fprintf (fp, "%.0lf,", cp->t2r_latency_ms); 
-    if (print_header) fprintf (fp, "socc,");                else fprintf (fp, "%d, ", cp->usocc); 
+    if (print_header) fprintf (fp, "pkt#,");        else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->packet_num); 
+    if (print_header) fprintf (fp, "C_epoch_ms,");  else if (probe) fprintf (fp, ","); else fprintf (fp, "%.0lf,", cp->camera_epoch_ms); 
+    if (print_header) fprintf (fp, "tx_epoch_ms,"); else fprintf (fp, "%.0lf,", cp->tx_epoch_ms); 
+    if (print_header) fprintf (fp, "rx_epoch_ms,"); else fprintf (fp, "%.0lf,", cp->rx_epoch_ms); 
+    if (print_header) fprintf (fp, "t2r,");         else fprintf (fp, "%.0lf,", cp->t2r_latency_ms); 
+    if (print_header) fprintf (fp, "retx,");        else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->retx); 
+    if (print_header) fprintf (fp, "socc,");        else fprintf (fp, "%d, ", cp->usocc); 
+
     if (!have_latency_log) goto SKIP_LATENCY_EMIT_AUX;
-    if (print_header) fprintf (fp, "est_bpt2r,");           else fprintf (fp, "%d, ", cp->ldp->est_t2r_ms); 
-    if (print_header) fprintf (fp, "bpt2r,");               else fprintf (fp, "%d, ", cp->ldp->t2r_ms); 
-    if (print_header) fprintf (fp, "bp_pkt,");              else fprintf (fp, "%d, ", cp->ldp->packet_num); 
-    if (print_header) fprintf (fp, "bp_epoch_ms,");         else fprintf (fp, "%.0lf,", cp->ldp->bp_epoch_ms); 
+    if (print_header) fprintf (fp, "est_bpt2r,");   else fprintf (fp, "%d, ", cp->est_t2r_ms); 
+    if (print_header) fprintf (fp, "bpt2r,");       else fprintf (fp, "%d, ", cp->ldp->t2r_ms); 
+    if (print_header) fprintf (fp, "bp_pkt,");      else fprintf (fp, "%u, ", cp->ldp->packet_num); 
+    if (print_header) fprintf (fp, "bp_epoch_ms,"); else fprintf (fp, "%.0lf,", cp->ldp->bp_epoch_ms); 
     SKIP_LATENCY_EMIT_AUX:
+
     if (!have_service_log) goto SKIP_SERVICE_EMIT_AUX;
-    if (print_header) fprintf (fp, "s_st,");                else fprintf (fp, "%d, ", cp->sdp->state); 
-    if (print_header) fprintf (fp, "s_bpt2r,");             else fprintf (fp, "%d, ", cp->sdp->bp_t2r); 
-    if (print_header) fprintf (fp, "s_est_t2r,");           else fprintf (fp, "%d, ", cp->sdp->est_t2r); 
-    if (print_header) fprintf (fp, "s_socc,");              else fprintf (fp, "%d, ", cp->sdp->socc); 
-    if (print_header) fprintf (fp, "s_st_tr,");             else fprintf (fp, "%.0lf,", cp->sdp->state_transition_epoch_ms); 
-    if (print_header) fprintf (fp, "s_bp_epoch_ms,");       else fprintf (fp, "%.0lf,", cp->sdp->bp_t2r_epoch_ms); 
+    if (print_header) fprintf (fp, "s_st,");        else fprintf (fp, "%d, ", cp->sdp->state); 
+    if (print_header) fprintf (fp, "s_socc,");      else fprintf (fp, "%d, ", cp->sdp->socc); 
+    if (print_header) fprintf (fp, "s_est_t2r,");   else fprintf (fp, "%d, ", cp->sdp->est_t2r); 
+    if (print_header) fprintf (fp, "s_bpt2r,");     else fprintf (fp, "%d, ", cp->sdp->bp_t2r); 
+    if (print_header) fprintf (fp, "s_st_tr,");     else fprintf (fp, "%.0lf,", cp->sdp->state_transition_epoch_ms); 
+    if (print_header) fprintf (fp, "s_bp_epoch,");  else fprintf (fp, "%.0lf,", cp->sdp->bp_t2r_epoch_ms); 
+    if (print_header) fprintf (fp, "s_bp_pkt,");    else fprintf (fp, "%d,", cp->sdp->bp_packet_num); 
     SKIP_SERVICE_EMIT_AUX:
+
     if (!have_txlog) goto SKIP_TXLOG_EMIT_AUX;
-    if (print_header) fprintf (fp, "iocc,");                else fprintf (fp, "%d, ", cp->iocc);
-    if (print_header) fprintf (fp, "socc_epoch_ms,");       else fprintf (fp, "%.0lf,", cp->socc_epoch_ms);
+    if (print_header) fprintf (fp, "iocc,");        else fprintf (fp, "%d, ", cp->iocc);
+    if (print_header) fprintf (fp, "socc_epoch,");  else fprintf (fp, "%.0lf,", cp->socc_epoch_ms);
     SKIP_TXLOG_EMIT_AUX:
-    if (print_header) fprintf (fp, "vx_epoch_ms,");         else if (probe) fprintf (fp, ","); else fprintf (fp, "%.0lf,", cp->vx_epoch_ms); 
-    if (print_header) fprintf (fp, "plen,");                else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->packet_len); 
-    if (print_header) fprintf (fp, "frame_start,");         else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_start); 
-    if (print_header) fprintf (fp, "frame_num,");           else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_num); 
-    if (print_header) fprintf (fp, "frame_rate,");          else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_rate); 
-    if (print_header) fprintf (fp, "frame_res,");           else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_res); 
-    if (print_header) fprintf (fp, "frame_end,");           else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_end); 
-    if (print_header) fprintf (fp, "check_packet_num,");    else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->check_packet_num); 
+    
+    if (print_header) fprintf (fp, "vx_epoch_ms,"); else if (probe) fprintf (fp, ","); else fprintf (fp, "%.0lf,", cp->vx_epoch_ms); 
+    if (print_header) fprintf (fp, "plen,");        else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->packet_len); 
+    if (print_header) fprintf (fp, "frame_start,"); else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_start); 
+    if (print_header) fprintf (fp, "frame_num,");   else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_num); 
+    if (print_header) fprintf (fp, "frame_rate,");  else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_rate); 
+    if (print_header) fprintf (fp, "frame_res,");   else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_res); 
+    if (print_header) fprintf (fp, "frame_end,");   else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_end); 
+    if (print_header) fprintf (fp, "chk_pkt_num,"); else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->check_packet_num); 
 
     fprintf (fp, "\n");
     return; 
@@ -697,6 +711,7 @@ void sort_md_by_tx (struct s_carrier *mdp, int len) {
     return;
 } // end of sort_md_by_tx
 
+// sorts lspike table by increasing occupancy
 void sort_lspike (struct s_lspike *sp, int len) {
     int i, j; 
     for (i=1; i<len; i++) {
@@ -719,6 +734,7 @@ void sort_lspike (struct s_lspike *sp, int len) {
     return;
 } // end of sort_lspike
 
+// sorts ospike table by increasing occupancy
 void sort_ospike (struct s_ospike *sp, int len) {
     int i, j; 
     for (i=1; i<len; i++) {
@@ -809,7 +825,7 @@ int extended_latency2index (int latency) {
         return 19;
 } // latency2index
 
-void sort_td (struct s_txlog *tdp, int len) {
+void sort_td_by_tx (struct s_txlog *tdp, int len) {
 
     int i, j; 
 
@@ -831,9 +847,34 @@ void sort_td (struct s_txlog *tdp, int len) {
     } // for elements in the log data array
 
     return;
-} // end of sort_td
+} // end of sort_td_by_tx
 
-// merge_sorts merges two sorted arrays into one
+void sort_ld_by_bp (struct s_latency *ldp, int len) {
+
+    int i, j; 
+
+    for (i=1; i<len; i++) {
+        j = i; 
+        while (j != 0) {
+            if ((ldp+j)->bp_epoch_ms < (ldp+j-1)->bp_epoch_ms) {
+                // slide jth element up by 1
+                struct s_latency temp = *(ldp+j-1); 
+                *(ldp+j-1) = *(ldp+j);
+                *(ldp+j) = temp; 
+            } // if slide up
+            else 
+                // done sliding up
+                break;
+            j--;
+        } // end of while jth elment is smaller than one above it
+
+    } // for elements in the log data array
+
+    return;
+} // end of sort_ld_by_bp
+
+// merge_sorts merges two sorted arrays into one. If elemets in the two arrays are 
+// equal, stream that emitted previous packet is given preference 
 void merge_sort (
     struct s_carrier *i1p, int len_i1, struct s_carrier *i2p, int len_i2, 
     struct s_carrier *op) {
@@ -841,15 +882,29 @@ void merge_sort (
     struct s_carrier *end_i1p = i1p + len_i1; 
     struct s_carrier *end_i2p = i2p + len_i2; 
 
+    int last_i1 = 1;        // 1 indicates that previous emitted packet was i1
     while ((i1p < end_i1p) || (i2p < end_i2p)) {
         if (i1p == end_i1p)
             *op++ = *i2p++; 
         else if (i2p == end_i2p)
             *op++ = *i1p++; 
-        else if (i1p->tx_epoch_ms < i2p->tx_epoch_ms)
+        else if (i1p->tx_epoch_ms == i2p->tx_epoch_ms) {
+            // maintain continuity with the previous packet
+            if (last_i1)
+                *op++ = *i1p++; // last_i1 is already set to 1
+            else {
+                *op++ = *i2p++; 
+                last_i1 = 0; 
+            }
+        } // i1 = i2
+        else if (i1p->tx_epoch_ms < i2p->tx_epoch_ms) {
             *op++ = *i1p++;
-        else
+            last_i1 = 1; 
+        } 
+        else {
             *op++ = *i2p++; 
+            last_i1 = 0; 
+        }
     } // while there are more items to be merged
 
     return;
@@ -879,43 +934,90 @@ struct s_service *find_closest_sdp (double epoch_ms, struct s_service *sdp, int 
 
 } // find_closest_sdp
 
-// adds pertinent infromation from service log to the metadata structure
-void add_service_log_info (struct s_service *sdp, int len_sdfile, struct s_carrier *mdp) {
+// returns pointer to the sdp equal to or closest smaller sdp to the specified epoch_ms
+struct s_latency *find_closest_ldp (double epoch_ms, struct s_latency *ldp, int len_ld) {
 
-    if ((mdp->sdp = find_closest_sdp (mdp->tx_epoch_ms, sdp, len_sdfile)) == NULL)
-        FATAL ("add_service_log_info: could not find service log entry for packet %d\n", 
-            mdp->packet_num)
+    struct  s_latency  *left, *right, *current;    // current, left and right index of the search
+
+    left = ldp; right = ldp + len_ld - 1; 
+
+    current = left + (right - left)/2; 
+    while (current != left) { // there are more than 2 elements to search
+        if (epoch_ms > current->bp_epoch_ms)
+            left = current;
+        else
+            right = current; 
+        current = left + (right - left)/2; 
+    } // while there are more than 2 elements left to search
     
-} // end of add_service_log_info
+    // when the while exits, the current is equal to (if current = left edge) or less than epoch_ms
+    // if there is sring of entries that match the epoch_ms, move to the right most edge as it is the most
+    // recently arrived information
+    while ((current+1)->bp_epoch_ms == epoch_ms)
+        current++; 
+    return current; 
+    /*
+    if ((current+1)->bp_epoch_ms == epoch_ms)
+        return current+1; 
+    else 
+        return current; 
+    */
+
+} // find_closest_ldp
+
+// find_packet_in_cd returns pointer to the packet in the specified metadata array
+// returns NULL if no match was found, else the specified packet num
+struct s_carrier* find_packet_in_cd (int packet_num, struct s_carrier *cdp, int len_cd) {
+
+    struct  s_carrier *left, *right, *current;    // current, left and right index of the search
+
+    left = cdp; right = cdp + len_cd - 1; 
+
+    current = left + (right - left)/2; 
+    while (current != left) { // there are more than 2 elements to search
+        if (packet_num > current->packet_num)
+            left = current;
+        else
+            right = current; 
+        current = left + (right - left)/2; 
+
+        // if current is a probe meta data then find the smaller data packet
+        while (current > left && current->probe) 
+            current--;     
+    } // while there are more than 2 elements left to search
+    
+    // when the while exits, the current is equal to (if current = left edge) or less than packet_num
+
+    return current;
+} // find_packet_in_cd
 
 int main (int argc, char* argv[]) {
     int occ_threshold = 10;                 // occupancy threshold for degraded channel
     int latency_threshold = 60;             // latency threshold for degraded cahnnel 
-    struct s_carrier *mdp, *pdp, *mpdp;     // pointers to metadata, probe data and combined data arrays
-    struct s_txlog *tdp;                    // pointer to tx log data array
-    struct s_service *sdp;                  // service log data array
+    struct s_carrier *mdp, *pdp, *mpdp;     // pointers to metadata, probe data and combined data
+    struct s_txlog *tdp;                    // pointer to tx log data 
+    struct s_service *sdp;                  // pointer to service log data 
+    struct s_latency *ldp;                  // pointer to latency log data 
     FILE *md_fp = NULL;                     // meta data file
     FILE *out_fp = NULL;                    // output file 
     FILE *aux_fp = NULL;                    // auxiliary output with decoded occ etc. 
+    FILE *lspike_fp = NULL;                 // latency spike output
     FILE *full_fp = NULL;                   // full probe + data tx file
     FILE *td_fp = NULL;                     // tx log file
     FILE *pr_fp = NULL;                     // probe transmission log file
     FILE *sr_fp = NULL;                     // service log file
-    int len_mdfile;                         // lines in meta data file not including header line
-    int len_tdfile;                         // lines in tx log file.  0 indicates the log does not exist
-    int len_prfile;                         // lines in probe log file .0 indicates the log does not exist
-    int len_srfile;                         // lines in service log file .0 indicates the log does not exist
-    int len_lafile;                         // lines in latency file. 0 means log file does not exist
-    double last_tx_epoch_ms;                // remembers tx of the last md line
+    FILE *ld_fp = NULL;                     // latency log file
+    int len_mdfile = 0;                     // lines in meta data file not including header line
+    int len_tdfile = 0;                     // lines in tx log file.  0 indicates the log does not exist
+    int len_prfile = 0;                     // lines in probe log file .0 indicates the log does not exist
+    int len_srfile = 0;                     // lines in service log file .0 indicates the log does not exist
+    int len_ldfile = 0;                     // lines in latency file. 0 means log file does not exist
     int last_socc;                          // remembers occ from the last update from modem
-    int last_packet_num;                    // remembers packet number of the last md line
     struct s_latency_table avg_lat_by_occ_table[31];
-    struct s_lspike lspike_table[MAX_SPIKES];
-    struct s_ospike ospike_table[MAX_SPIKES];
+    struct s_lspike lspike_table[MAX_SPIKES], *lspikep;
+    struct s_ospike ospike_table[MAX_SPIKES], *ospikep;
     int len_lspike_table;
     int len_ospike_table;
-    struct s_lspike lspike, *lspikep = &lspike; 
-    struct s_ospike ospike, *ospikep = &ospike; 
 
     int lat_bins_by_occ_table[31][10];
     struct s_occ_by_lat_bins occ_by_lat_bins_table[20];
@@ -930,6 +1032,8 @@ int main (int argc, char* argv[]) {
     int pr_specified = 0; 
     char sr_prefix[500], *sr_prefixp = sr_prefix; 
     int sr_specified = 0; 
+    char la_prefix[500], *la_prefixp = la_prefix; 
+    int la_specified = 0; 
     int ch;                                         // channel number to use from the tx log file
 
     struct s_files file_table[MAX_FILES];
@@ -994,6 +1098,15 @@ int main (int argc, char* argv[]) {
             sr_specified = 0; 
         }
 
+        else if (strcmp (*argv, "-la_pre") == MATCH) {
+            strcpy (la_prefix, *++argv); 
+            la_specified = 1; 
+        }
+        
+        else if (strcmp (*argv, "-no_la") == MATCH) {
+            la_specified = 0; 
+        }
+
         else if (strcmp (*argv, "-tx_pre") == MATCH) {
             strcpy (tx_prefix, *++argv); 
             tx_specified = 1; 
@@ -1007,27 +1120,38 @@ int main (int argc, char* argv[]) {
             strcpy (rx_prefix, *++argv); 
             int i; 
             for (i=0; i<3; i++) {
+
 	            strcpy (file_table[len_file_table].input_directory, ipathp); 
 
 	            sprintf (file_table[len_file_table].rx_prefix, "%s_ch%d", rx_prefix, i); 
+
 	            if (tx_specified) {
 	                strcpy (file_table[len_file_table].tx_prefix, tx_prefix); 
 	                file_table[len_file_table].tx_specified = 1;
 	            }
                 else
 	                file_table[len_file_table].tx_specified = 0;
+             
 	            if (pr_specified) {
 	                strcpy (file_table[len_file_table].pr_prefix, pr_prefix); 
 	                file_table[len_file_table].pr_specified = 1;
 	            }
                 else
 	                file_table[len_file_table].pr_specified = 1;
+
 	            if (sr_specified) {
 	                strcpy (file_table[len_file_table].sr_prefix, sr_prefix); 
 	                file_table[len_file_table].sr_specified = 1;
 	            }
                 else
 	                file_table[len_file_table].sr_specified = 0;
+             
+	            if (la_specified) {
+	                strcpy (file_table[len_file_table].la_prefix, la_prefix); 
+	                file_table[len_file_table].la_specified = 1;
+	            }
+                else
+	                file_table[len_file_table].la_specified = 0;
              
 	            file_table[len_file_table].channel = i; 
 
@@ -1057,6 +1181,9 @@ PROCESS_EACH_FILE:
 
     sprintf (bp, "%s%s_aux_occ.csv", opath, file_table[file_index].rx_prefix); 
 	aux_fp = open_file (bp, "w");
+
+    sprintf (bp, "%s%s_lspike_occ.csv", opath, file_table[file_index].rx_prefix); 
+	lspike_fp = open_file (bp, "w");
 
     sprintf (bp, "%s%s_warnings_occ.txt", opath, file_table[file_index].rx_prefix); 
    	warn_fp = open_file (bp, "w");
@@ -1095,7 +1222,7 @@ PROCESS_EACH_FILE:
 		    FATAL("Meta data file is empty%s", "\n")
 
 		// sort by timestamp
-        sort_td (td, len_tdfile); 
+        sort_td_by_tx (td, len_tdfile); 
 
     } // if tx log file exists
 
@@ -1120,49 +1247,11 @@ PROCESS_EACH_FILE:
     // sort by tx_epoch_ms
     sort_md_by_tx (md, len_mdfile); 
     
-    // average latency by occupancy table
-    for (i=0; i <31; i++) {
-        avg_lat_by_occ_table[i].latency = 0;
-        avg_lat_by_occ_table[i].count = 0;
-    } 
 
-    // occupancy by latency bins table
-    for (i=0; i<20; i++) {
-        occ_by_lat_bins_table[i].count = 0;
-        occ_by_lat_bins_table[i].sum = 0;
-        occ_by_lat_bins_table[i].squared_sum = 0;
-    } 
-
-    // latency bins by occupancy table
-    int j; 
-    for (i=0; i < 31; i++)
-        for (j=0; j < 10; j++)
-            lat_bins_by_occ_table[i][j] = 0;
-
-    // latency spike duration table
-    for (i=0; i < MAX_SPIKES; i++)
-        lspike_table[i].active = 0;
-    len_lspike_table = 0; 
-    lspikep = &lspike_table[len_lspike_table]; 
-
-    // occupancy spike duration table
-    for (i=0; i < MAX_SPIKES; i++)
-        ospike_table[i].active = 0;
-    len_ospike_table = 0; 
-    ospikep = &ospike_table[len_ospike_table]; 
-
-    last_tx_epoch_ms = 0; 
-    last_socc = 0; 
-    last_packet_num = 0; 
-
-    // skip header. print header
-    emit_aux (1, 0, 0, 0, 0, mdp, aux_fp); 
-    emit_stats (1, 0, file_table[file_index].rx_prefix, &avg_lat_by_occ_table[0], 0, &lspike_table[0], 0, &ospike_table[0], 
-        lat_bins_by_occ_table, occ_by_lat_bins_table, out_fp); 
-
-    
+    // aux output 
+    emit_aux (1, 0, len_tdfile, 0, 0, mdp, aux_fp);  // header
     // while there is a line to be read from any of the input files
-    for (i=0, mdp=md; i<len_mdfile; i++, mdp++) {
+    for (i=0, last_socc=0, mdp=md; i<len_mdfile; i++, last_socc = mdp-> socc, mdp++) {
 
         // auxiliary output
         emit_aux (0, 0, len_tdfile, 0, 0, mdp, aux_fp);
@@ -1181,143 +1270,10 @@ PROCESS_EACH_FILE:
             printf ("Invalid occupancy %d for packet %d", mdp->socc, mdp->packet_num);
             my_exit(-1);
         }
-        
-        // average latency by occupancy table
-        avg_lat_by_occ_table[mdp->socc].latency += mdp->t2r_latency_ms;
-        avg_lat_by_occ_table[mdp->socc].count++; 
-         
-        // latency bins by occupancy table
-        int idx = latency2index(mdp->t2r_latency_ms);
-        lat_bins_by_occ_table[mdp->socc][idx]++; 
-
-        // occupancy by latency bins table
-        idx = extended_latency2index(mdp->t2r_latency_ms);
-        occ_by_lat_bins_table[idx].count++;
-        occ_by_lat_bins_table[idx].sum += mdp->socc;
-        occ_by_lat_bins_table[idx].squared_sum += pow(mdp->socc, 2);
-
-        // latency spike table
-        if (mdp->tx_epoch_ms < last_tx_epoch_ms)
-            FATAL("Metadata file not sorted by tx time order at packet %d\n", mdp->packet_num);
-
-        switch (lspikep->active) {
-            case 0: // spike inactive
-                if (mdp->t2r_latency_ms > latency_threshold) {
-                    // start of a spike
-                    lspikep->active = 1;
-                    lspikep->max_occ = mdp->socc;
-                    lspikep->max_latency = mdp->t2r_latency_ms; 
-                    lspikep->max_lat_packet_num = mdp->packet_num; 
-                    lspikep->stop_packet_num = lspikep->start_packet_num = mdp->packet_num; 
-                    lspikep->start_tx_epoch_ms = mdp->tx_epoch_ms; 
-                } // start of a spike
-                // else stay inactive
-                break;
-            case 1: // spike active
-                // check for continuation 
-                if (mdp->t2r_latency_ms > latency_threshold) { // spike continues
-                    if (lspikep->max_occ < mdp->socc) 
-                        lspikep->max_occ = mdp->socc;
-                    if (lspikep->max_latency < mdp->t2r_latency_ms) {
-                        lspikep->max_latency = mdp->t2r_latency_ms; 
-                        lspikep->max_lat_packet_num = mdp->packet_num; 
-                    }
-                } // spike continues
-
-                // else spike completed
-                else {
-                    lspikep->stop_packet_num = last_packet_num; 
-                    lspikep->duration_ms = mdp->tx_epoch_ms - lspikep->start_tx_epoch_ms;
-                    lspikep->active = 0;
-                    len_lspike_table++; 
-                    if (len_lspike_table == MAX_SPIKES)
-                        FATAL ("Spike table is full. Increase MAX_SPIKE constant %d\n", MAX_SPIKES)
-                    lspikep = &lspike_table[len_lspike_table];
-                }
-                break;
-        } // end of latency spike state switch
-        
-        // occupancy spike table
-        switch (ospikep->active) {
-            case 0: // spike inactive
-                if (mdp->socc > occ_threshold) {
-                    // start of a spike
-                    ospikep->active = 1;
-                    ospikep->stop_packet_num = ospikep->start_packet_num = mdp->packet_num; 
-                    ospikep->max_occ = mdp->socc; 
-                    ospikep->start_tx_epoch_ms = mdp->tx_epoch_ms; 
-                } // start of a spike
-                // else stay inactive
-                break;
-            case 1: // spike active
-                // check for continuation of the spike
-                if (mdp->socc > occ_threshold) { // spike continues
-                    // update spike occ value if occ value increased 
-                    if (mdp->socc > ospikep->max_occ) {
-                        ospikep->max_occ = mdp->socc; 
-                    }
-                } // spike continues
-
-                // check for spike completion
-                else if (mdp->socc <= occ_threshold) { // spike completed
-                    ospikep->stop_packet_num = last_packet_num; 
-                    ospikep->duration_ms = mdp->tx_epoch_ms - ospikep->start_tx_epoch_ms;
-                    ospikep->active = 0;
-                    len_ospike_table++; 
-                    if (len_ospike_table == MAX_SPIKES)
-                        FATAL ("Spike table is full. Increase MAX_SPIKE constant %d\n", MAX_SPIKES)
-                    ospikep = &ospike_table[len_ospike_table];
-                }
-                break;
-        } // end of occupancy spike state switch
-
-        last_tx_epoch_ms = mdp->tx_epoch_ms; 
-        last_socc = mdp->socc; 
-        last_packet_num = mdp->packet_num; 
-        
         if (i % 5000 == 0)
             printf ("Reached line %d\n", i); 
 
-    } // while there are more lines to be read
-
-    // if a spike is still active when the file end is reached, then close it.
-    if (lspikep->active || ospikep->active) {
-
-        printf ("Spike was active when EOF was reached\n"); 
-
-        // roll back mdp to point to the last data line
-        mdp--; 
-        
-        if (lspikep->active) {
-            lspikep->stop_packet_num = mdp->packet_num; 
-            lspikep->duration_ms = mdp->tx_epoch_ms - lspikep->start_tx_epoch_ms;
-            lspikep->active = 0;
-            len_lspike_table++; 
-        } // if latency spike active 
-
-        if (ospikep->active) {
-            ospikep->stop_packet_num = mdp->packet_num; 
-            ospikep->duration_ms = mdp->tx_epoch_ms - ospikep->start_tx_epoch_ms;
-            ospikep->active = 0;
-            len_ospike_table++; 
-        } // if latency spike active 
-
-    } // spike was active when the end of the file was reached
-
-    // print output
-    sort_lspike (lspike_table, len_lspike_table);
-    sort_ospike (ospike_table, len_ospike_table);
-    int num_of_output_lines = MAX(len_ospike_table, MAX(31, len_lspike_table));
-    for (i=0; i < num_of_output_lines; i++){
-        emit_stats (0, i, 
-            file_table[file_index].rx_prefix,
-            &avg_lat_by_occ_table[MIN(31-1,i)], 
-            len_lspike_table, &lspike_table[i], 
-            len_ospike_table, &ospike_table[i], 
-            lat_bins_by_occ_table,
-            occ_by_lat_bins_table,
-            out_fp); 
-    } // for all oputput lines
+    } // for all lines in md araray
 
     //
     // full probe and data transmission output file
@@ -1333,7 +1289,7 @@ PROCESS_EACH_FILE:
     sprintf (bp, "%s%s_full_occ.csv", opath, file_table[file_index].rx_prefix); 
 	full_fp = open_file (bp, "w");
 
-    // allocate storate
+    // allocate storage for probe data
     pd = (struct s_carrier *) malloc (sizeof (struct s_carrier) * PR_BUFFER_SIZE);
     if (pd==NULL)
         FATAL("Could not allocate storage to read the probe data file in an array%s\n", "")
@@ -1350,6 +1306,7 @@ PROCESS_EACH_FILE:
         len_prfile++;
         if ((len_prfile) == MD_BUFFER_SIZE)
             FATAL ("probe data array is not large enough. Increase MD_BUFFER_SIZE%S\n", "");
+        pdp->socc = MIN(30, pdp->socc);
         pdp++;
     } // while there are more lines to be read
 
@@ -1362,6 +1319,48 @@ PROCESS_EACH_FILE:
     // merge sort the probe and the meta data
     mpdp = mpd; 
     merge_sort (pd, len_prfile, md, len_mdfile, mpdp); 
+    
+    // latency log
+
+    if (!file_table[file_index].la_specified)
+        goto SKIP_LATENCY_LOG;
+
+    // open log file
+    sprintf (bp, "%s%s.log", file_table[file_index].input_directory, file_table[file_index].la_prefix); 
+	ld_fp = open_file (bp, "r");
+    
+    // allocate storage
+    ld = (struct s_latency *) malloc (sizeof (struct s_latency) * LD_BUFFER_SIZE);
+    if (ld==NULL)
+        FATAL("Could not allocate storage to read the latency log file in an array%s\n", "")
+
+    // read latency log. assumed to be sorted by epoch_ms
+    printf ("Now reading latency log\n");
+    len_ldfile = 0; 
+    ldp = ld; 
+    while (read_ld_line (ld_fp, file_table[file_index].channel, ldp)) {
+        len_ldfile++;
+        if ((len_ldfile) == LD_BUFFER_SIZE)
+            FATAL ("latency data array is not large enough. Increase LD_BUFFER_SIZE%S\n", "");
+        ldp++;
+        if (len_ldfile % 10000 == 0)
+            printf ("Reached line %d of latency log\n", len_ldfile); 
+    } // while there are more lines to be read
+
+    if (len_ldfile == 0)
+        FATAL("latency log file is empty%s", "\n")
+
+    // sort by bp_epoch_ms
+    sort_ld_by_bp (ld, len_ldfile);
+
+    // add info from latency log to the mpdp
+    for (mpdp=mpd; mpdp < mpd+len_mdfile+len_prfile; mpdp++) {
+        mpdp->ldp = find_closest_ldp (mpdp->tx_epoch_ms, ld, len_ldfile);
+        // estimated bp t2r
+        mpdp->est_t2r_ms = 
+            mpdp->ldp->t2r_ms + (mpdp->tx_epoch_ms - mpdp->ldp->bp_epoch_ms);
+    }
+SKIP_LATENCY_LOG:
 
     // service log
 
@@ -1397,23 +1396,207 @@ PROCESS_EACH_FILE:
     // add info from service log to the mpdp
     for (mpdp=mpd, sdp=sd; mpdp < mpd+len_mdfile+len_prfile; mpdp++)
         mpdp->sdp = find_closest_sdp (mpdp->tx_epoch_ms, sdp, len_srfile);
+    printf ("Done reading service log\n");
+SKIP_SERVICE_LOG:
 
-    SKIP_SERVICE_LOG:
+    //
+    // analytics
+    //
+    // initialize structuresx
+    // average latency by occupancy table
+    for (i=0; i <31; i++) {
+        avg_lat_by_occ_table[i].latency = 0;
+        avg_lat_by_occ_table[i].count = 0;
+    } 
 
-    // latency log
-    len_lafile = 0; 
+    // occupancy by latency bins table
+    for (i=0; i<20; i++) {
+        occ_by_lat_bins_table[i].count = 0;
+        occ_by_lat_bins_table[i].sum = 0;
+        occ_by_lat_bins_table[i].squared_sum = 0;
+    } 
 
-    // emit output 
-    emit_aux (1, 0, len_tdfile, len_lafile, len_srfile, mpdp, full_fp); // header
+    // latency bins by occupancy table
+    int j; 
+    for (i=0; i < 31; i++)
+        for (j=0; j < 10; j++)
+            lat_bins_by_occ_table[i][j] = 0;
+
+    // latency spike duration table
+    for (i=0; i < MAX_SPIKES; i++)
+        lspike_table[i].active = 0;
+    len_lspike_table = 0; 
+    lspikep = lspike_table; 
+
+    // occupancy spike duration table
+    for (i=0; i < MAX_SPIKES; i++)
+        ospike_table[i].active = 0;
+    len_ospike_table = 0; 
+    ospikep = ospike_table; 
+    
+    // process all tx data
+    for (i=0, mpdp=mpd; i < len_mdfile + len_prfile; i++, mpdp++) {
+        
+        // average latency by occupancy table
+        avg_lat_by_occ_table[mpdp->socc].latency += mpdp->t2r_latency_ms;
+        avg_lat_by_occ_table[mpdp->socc].count++; 
+         
+        // latency bins by occupancy table
+        int idx = latency2index(mpdp->t2r_latency_ms);
+        lat_bins_by_occ_table[mpdp->socc][idx]++; 
+
+        // occupancy by latency bins table
+        idx = extended_latency2index(mpdp->t2r_latency_ms);
+        occ_by_lat_bins_table[idx].count++;
+        occ_by_lat_bins_table[idx].sum += mpdp->socc;
+        occ_by_lat_bins_table[idx].squared_sum += pow(mpdp->socc, 2);
+
+        switch (lspikep->active) {
+            case 0: // spike inactive
+                if (mpdp->t2r_latency_ms > latency_threshold) {
+                    // start of a spike
+                    lspikep->active = 1;
+                    lspikep->max_occ = mpdp->socc;
+                    lspikep->max_latency = mpdp->t2r_latency_ms; 
+                    lspikep->max_lat_packet_num = mpdp->packet_num; 
+                    lspikep->start_packet_num = mpdp->packet_num; 
+                    lspikep->start_tx_epoch_ms = mpdp->tx_epoch_ms; 
+                    lspikep->startp = mpdp; 
+                    lspikep->duration_pkt = 1; 
+                } // start of a spike
+                // else stay inactive
+                break;
+            case 1: // spike active
+                // check for continuation 
+                if (mpdp->t2r_latency_ms > latency_threshold) { // spike continues
+                    if (lspikep->max_occ < mpdp->socc) 
+                        lspikep->max_occ = mpdp->socc;
+                    if (lspikep->max_latency < mpdp->t2r_latency_ms) {
+                        lspikep->max_latency = mpdp->t2r_latency_ms; 
+                        lspikep->max_lat_packet_num = mpdp->packet_num; 
+                    }
+                    lspikep->duration_pkt++; 
+                } // spike continues
+
+                // else spike completed
+                else {
+                    lspikep->duration_ms = mpdp->tx_epoch_ms - lspikep->start_tx_epoch_ms;
+                    lspikep->active = 0;
+                    len_lspike_table++; 
+                    if (len_lspike_table == MAX_SPIKES)
+                        FATAL ("Spike table is full. Increase MAX_SPIKE constant %d\n", MAX_SPIKES)
+                    lspikep++;
+                }
+                break;
+        } // end of latency spike state switch
+        
+        // occupancy spike table
+        switch (ospikep->active) {
+            case 0: // spike inactive
+                if (mpdp->socc > occ_threshold) {
+                    // start of a spike
+                    ospikep->active = 1;
+                    ospikep->start_packet_num = mpdp->packet_num; 
+                    ospikep->max_occ = mpdp->socc; 
+                    ospikep->start_tx_epoch_ms = mpdp->tx_epoch_ms; 
+                    ospikep->startp = mpdp; 
+                    ospikep->duration_pkt = 1; 
+                } // start of a spike
+                // else stay inactive
+                break;
+            case 1: // spike active
+                // check for continuation of the spike
+                if (mpdp->socc > occ_threshold) { // spike continues
+                    // update spike occ value if occ value increased 
+                    if (mpdp->socc > ospikep->max_occ) {
+                        ospikep->max_occ = mpdp->socc; 
+                    }
+                    ospikep->duration_pkt++; 
+                } // spike continues
+
+                // check for spike completion
+                else if (mpdp->socc <= occ_threshold) { // spike completed
+                    ospikep->duration_ms = mpdp->tx_epoch_ms - ospikep->start_tx_epoch_ms;
+                    ospikep->active = 0;
+                    len_ospike_table++; 
+                    if (len_ospike_table == MAX_SPIKES)
+                        FATAL ("Spike table is full. Increase MAX_SPIKE constant %d\n", MAX_SPIKES)
+                    ospikep++;
+                }
+                break;
+        } // end of occupancy spike state switch
+
+    } // while there are more lines to be read
+
+    // if a spike is still active when the file end is reached, then close it.
+    if (lspikep->active || ospikep->active) {
+
+        printf ("Spike was active when EOF was reached\n"); 
+
+        // roll back mpdp to point to the last data line
+        mpdp--; 
+        
+        if (lspikep->active) {
+            lspikep->duration_pkt++; 
+            lspikep->duration_ms = mpdp->tx_epoch_ms - lspikep->start_tx_epoch_ms;
+            lspikep->active = 0;
+            len_lspike_table++; 
+        } // if latency spike active 
+
+        if (ospikep->active) {
+            ospikep->duration_pkt++; 
+            ospikep->duration_ms = mpdp->tx_epoch_ms - ospikep->start_tx_epoch_ms;
+            ospikep->active = 0;
+            len_ospike_table++; 
+        } // if latency spike active 
+
+    } // spike was active when the end of the file was reached
+
+    // 
+    // emit outputs
+    //
+
+    // summary analytics report
+    sort_lspike (lspike_table, len_lspike_table);
+    sort_ospike (ospike_table, len_ospike_table);
+    emit_stats (1, 0, file_table[file_index].rx_prefix, &avg_lat_by_occ_table[0], 0, &lspike_table[0], 0, &ospike_table[0], 
+        lat_bins_by_occ_table, occ_by_lat_bins_table, out_fp); // header
+    int num_of_output_lines = MAX(len_ospike_table, MAX(31, len_lspike_table));
+    for (i=0; i < num_of_output_lines; i++){
+        emit_stats (0, i, 
+            file_table[file_index].rx_prefix,
+            &avg_lat_by_occ_table[MIN(31-1,i)], 
+            len_lspike_table, &lspike_table[i], 
+            len_ospike_table, &ospike_table[i], 
+            lat_bins_by_occ_table,
+            occ_by_lat_bins_table,
+            out_fp); 
+    } // for all oputput lines
+
+    // full tx (encode + probe) output
+    emit_aux (1, 0, len_tdfile, len_ldfile, len_srfile, mpd, full_fp); // header
     for (i=0, mpdp=mpd; i<(len_mdfile+len_prfile); i++, mpdp++) {
-        emit_aux (0, mpdp->probe, len_tdfile, len_lafile, len_srfile, mpdp, full_fp); 
+        emit_aux (0, mpdp->probe, len_tdfile, len_ldfile, len_srfile, mpdp, full_fp); 
         if (i % 5000 == 0)
             printf ("Reached line %d\n", i); 
     } // for all lines
 
-    // close files
+    // spike tx output
+    fprintf (lspike_fp, "spk#, dur_pkt, dur_ms, maxL, maxO,");
+    emit_aux (1, 0, len_tdfile, len_ldfile, len_srfile, mpd, lspike_fp); // header
+    for (lspikep = lspike_table; lspikep < (lspike_table+len_lspike_table); lspikep++) {
+        struct s_carrier *startp;
+        for (startp = lspikep->startp; startp < lspikep->startp + lspikep->duration_pkt+2; startp++) {
+            if ((startp < mdp) || (startp >= (mpd + len_mdfile + len_prfile)))
+                continue; 
+            fprintf (lspike_fp, "%d,%d,%.0lf,%.0lf,%d,", 
+                lspikep - lspike_table + 1, lspikep->duration_pkt, lspikep->duration_ms,lspikep->max_latency, lspikep->max_occ); 
+            emit_aux (0, startp->probe, len_tdfile, len_ldfile, len_srfile, startp, lspike_fp); 
+        } // for all packets in a spike
+    } // for all spikes
 
-    fclose (full_fp); fclose (pr_fp); 
+    // close files
+    fclose (full_fp); fclose (pr_fp); fclose (lspike_fp);  
 
 SKIP_FULL:
 
