@@ -186,7 +186,7 @@ class T_variables:
 
 class Hijacker:
   def __init__(self, unit_test = False, wb = 2.78892):
-    self.clientSocket = None
+    self.threads = []
     self.steer = 0.0
     self.steerRate = 0.0
     self.prevSteer = 0.0
@@ -208,36 +208,40 @@ class Hijacker:
       self.thread = threading.Thread(target = self.listener_thread)
       self.thread.start()
       self.connected = False
+
+  def isConnected(self):
+      return any([t.is_alive() for t in self.threads])
     
   def listener_thread(self):
     while True:
-      self.clientSoocket = None
+      print("Waiting for socket connection")
+      (clientSocket, address) = self.serversocket.accept()
+      print("Got connection from ", address)
+      t = threading.Thread(target = self.socket_handler_thread, args=(clientSocket))
+      t.start()
+      self.threads.append(t)
+  
+  def socket_handler_thread(self, clientSocket):
+      clientSocket.send(b"Hello Remnav\r\n")
+      line = b''
       try:
-        print("Waiting for socket connection")
-        (self.clientSocket, address) = self.serversocket.accept()
-        print("Got connection from ", address)
-        self.clientSocket.send(b"Hello Remnav\r\n")
-        line = b''
-        self.connected = True
         while True:
-          chunk = self.clientSocket.recv(1024)
+          chunk = clientSocket.recv(1024)
           if chunk == b'':
             print("Socket error")
             return
           for cc in chunk:
             c = chr(cc).encode()
             if c == b'\r' or c == b'\n':
-              self.clientSocket.send(b'Got Cmd:' + line + b'\r\n')
+              clientSocket.send(b'Got Cmd:' + line + b'\r\n')
               r = self.process_line(line)
               if r is not None:
-                self.clientSocket.send(r)
+                clientSocket.send(r)
               line = b''
             else:
               line += c
       except OSError:
         print("Got socket error")
-        self.clientSocket = None
-        self.connected = False
 
   def setSteer(self, s):
     if s < -self.steerLimit:
@@ -307,7 +311,7 @@ class Hijacker:
   #
   def convert_message(self, lp, v_ego):
     self.v_ego = v_ego
-    if not self.connected:
+    if not self.isConnected():
       return
     
     if self.hijackMode:
