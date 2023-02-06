@@ -190,7 +190,7 @@ class Hijacker:
     self.steer = 0.0
     self.steerRate = 0.0
     self.prevSteer = 0.0
-    self.prevCurvature = 0.0
+    self.prevCurvatures = [0.0] * CONTROL_N
     self.wheelBase = wb  # Highlander wheel base is 109.8 inches => 2.78892 meters.
     self.steerLimit = 0.244346   # Maximum steering deflection
     self.v_ego = 0.0
@@ -198,6 +198,7 @@ class Hijacker:
     self.nextDisplayTime = time.time() + self.displayTime
     self.hijackMode = True
     if unit_test:
+      self.bike = BicycleModel(self.steer, self.wheelBase) # Initial
       self.connected = True
     else:
       self.serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -210,7 +211,7 @@ class Hijacker:
       self.connected = False
 
   def isConnected(self):
-      return any([t.is_alive() for t in self.threads])
+    return any([t.is_alive() for t in self.threads])
     
   def listener_thread(self):
     while True:
@@ -222,26 +223,26 @@ class Hijacker:
       self.threads.append(t)
   
   def socket_handler_thread(self, clientSocket):
-      clientSocket.send(b"Hello Remnav\r\n")
-      line = b''
-      try:
-        while True:
-          chunk = clientSocket.recv(1024)
-          if chunk == b'':
-            print("Socket error")
-            return
-          for cc in chunk:
-            c = chr(cc).encode()
-            if c == b'\r' or c == b'\n':
-              clientSocket.send(b'Got Cmd:' + line + b'\r\n')
-              r = self.process_line(line)
-              if r is not None:
-                clientSocket.send(r)
-              line = b''
-            else:
-              line += c
-      except OSError:
-        print("Got socket error")
+    clientSocket.send(b"Hello Remnav\r\n")
+    line = b''
+    try:
+      while True:
+        chunk = clientSocket.recv(1024)
+        if chunk == b'':
+          print("Socket error")
+          return
+        for cc in chunk:
+          c = chr(cc).encode()
+          if c == b'\r' or c == b'\n':
+            clientSocket.send(b'Got Cmd:' + line + b'\r\n')
+            r = self.process_line(line)
+            if r is not None:
+              clientSocket.send(r)
+            line = b''
+          else:
+            line += c
+    except OSError:
+      print("Got socket error")
 
   def setSteer(self, s):
     if s < -self.steerLimit:
@@ -309,17 +310,16 @@ class Hijacker:
   #
   # Called by controls thread to re-write the lateral plan message
   #
-  def convert_message(self, lp, v_ego):
+  def convert_message(self, lp, v_ego, unit_test = False):
     self.v_ego = v_ego
-    if not self.isConnected():
+    if not self.isConnected() and not unit_test:
       return
     
-    if self.hijackMode:
+    if self.hijackMode or unit_test:
       #
       # Now, compute my own psi, curvature, curvatureRates
       #
       self.bike = BicycleModel(self.steer, self.wheelBase) # Initial
-      
       for i in range(0, CONTROL_N):
         t = T_IDXS[i]     # time
         tv = T_variables(t, v_ego, 0, self.bike)
@@ -329,11 +329,12 @@ class Hijacker:
       if lp.psis[1] < 0:
         lp.curvatures = [-l for l in lp.curvatures]
       if v_ego == 0.0:
-        lp.curvatureRates[0] = 0.0
+        lp.curvatureRates = [0.0] * CONTROL_N
       else:
-        lp.curvatureRates[0] = (lp.curvatures[0] - self.prevCurvature) / v_ego
+        lp.curvatureRates = [(lp.curvatures[i] - self.prevCurvatures[i]) for i in range(CONTROL_N-1)] + [0.0]
+        #lp.curvatureRates = (lp.curvatures[0] - self.prevCurvatures) / v_ego
       self.prev_steer = self.steer
-      self.prevCurvature = lp.curvatures[0]
+      self.prevCurvatures = lp.curvatures[:]
     if self.nextDisplayTime < time.time():
       self.nextDisplayTime = time.time() + self.displayTime
       self.displayMessage(lp, v_ego)
@@ -545,7 +546,54 @@ def test_hijack_one():
     EXPECT_EQ(angle, lp.psis[i])
   EXPECT_EQ(sum(lp.curvatureRates), lp.curvatures[0])
 
+def compare_vectors(name, a,b):
+  assert(len(a) == len(b))
+  for i in range(len(a)):
+    assert(math.isclose(a[i],b[i], rel_tol=.2, abs_tol=.02))
+
+def test_hijack_20():
+  h = Hijacker(unit_test = True, wb = 2.78892)
+  #
+  # Captured from steering of circle 20 meters
+  #
+  dPathPoints = [0, 0, 0, 0.026550274, 0.05372455, 0.088928819, 0.13442566, 0.19223996, 0.2645787, 0.35388255, 0.46292061, 0.59476608, 0.75279433, 0.94067883, 1.1623834, 1.4221542, 1.7245075]
+  psis = [0, 0.0014200993, 0.0056772064, 0.012761615, 0.022656741, 0.03533867, 0.050775837, 0.068929121, 0.089752682, 0.11319585, 0.13920636, 0.16773508, 0.19874203, 0.2322036, 0.26811978, 0.30652034, 0.34746757]
+  curvatures = [0.060510062, 0.060487557, 0.060419444, 0.060304023, 0.060138922, 0.059921786, 0.059651189, 0.059327718, 0.058955144, 0.058541514, 0.058100097, 0.057649896, 0.057215549, 0.056826349, 0.056514017, 0.056308974, 0.056234609]
+  curvatureRates = [-0.0023042962, -0.0023250023, -0.0023638096, -0.0024151721, -0.0024705292, -0.0025190185, -0.0025479405, -0.002543455, -0.0024915063, -0.002379003, -0.0021952703, -0.0019337814, -0.001594173, -0.0011845409, -0.00072402, -0.000245646, 0]
+  vEgo = 2.3951607
+  h.setSteer(math.asin(h.wheelBase / 19.25))
+  lp = fake_lp()
+  h.convert_message(lp, vEgo, unit_test = True)  # sets prevCurvature
+  h.setSteer(math.asin(h.wheelBase / 20.0)) # Just enough to wiggle it
+  h.convert_message(lp, vEgo, unit_test = True)  # need twice to set prevCurvature
+  compare_vectors("Points", lp.dPathPoints, dPathPoints)
+  compare_vectors("Psis", lp.psis, psis)
+  compare_vectors("Curvature", lp.curvatures, curvatures)
+  compare_vectors("CurvatureRates", lp.curvatureRates, curvatureRates)
+
+def test_hijack_neg_20():
+  h = Hijacker(unit_test = True, wb = 2.78892)
+  #
+  # Captured from steering of circle -20 meters
+  #
+  dPathPoints = [0, 0, 0, -0.028721547, -0.057425648, -0.094976462, -0.1437466, -0.20597461, -0.28411329, -0.38090459, -0.49945468, -0.64321172, -0.81596327, -1.0218306, -1.2652601, -1.5510132, -1.8841535]
+  psis = [0, -0.0014817833, -0.0059251413, -0.01332381, -0.023666453, -0.036935527, -0.053106096, -0.072145, -0.094010808, -0.11865499, -0.14602478, -0.17606792, -0.2087393, -0.24400921, -0.28187218, -0.32235503, -0.36552134]
+  curvatures = [-0.059550948, -0.059537902, -0.059497572, -0.059426546, -0.0593197, -0.059171055, -0.058974944, -0.058727376, -0.058427565, -0.058079403, -0.057692803, -0.057284568, -0.056878604, -0.056505114, -0.056198411, -0.055992953, -0.055917166]
+  curvatureRates = [0.001335961, 0.0013765817, 0.0014545759, 0.0015630238, 0.0016912515, 0.0018256324, 0.0019500603, 0.0020467218, 0.0020971468, 0.0020835728, 0.0019906391, 0.0018074242, 0.0015298149, 0.0011631992, 0.00072547136, 0.0002503398, 0]
+  vEgo = 2.5472887
+  h.setSteer(math.asin(h.wheelBase / -19.25))
+  lp = fake_lp()
+  h.convert_message(lp, vEgo, unit_test = True)  # sets prevCurvature
+  h.setSteer(math.asin(h.wheelBase / -20.0)) # Just enough to wiggle it
+  h.convert_message(lp, vEgo, unit_test = True)  # need twice to set prevCurvature
+  compare_vectors("Points", lp.dPathPoints, dPathPoints)
+  compare_vectors("Psis", lp.psis, psis)
+  compare_vectors("Curvature", lp.curvatures, curvatures)
+  compare_vectors("CurvatureRates", lp.curvatureRates, curvatureRates)
+
 if __name__ == '__main__':
+  test_hijack_neg_20()
+  test_hijack_20()
   test_hijack_command()
   test_hijack_zero()
   test_hijack_one()
