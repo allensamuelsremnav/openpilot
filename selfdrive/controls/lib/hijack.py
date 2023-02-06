@@ -194,7 +194,7 @@ class Hijacker:
     self.wheelBase = wb  # Highlander wheel base is 109.8 inches => 2.78892 meters.
     self.steerLimit = 0.244346   # Maximum steering deflection
     self.v_ego = 0.0
-    self.displayTime = 10.0 # seconds between lateral plan messages
+    self.displayTime = math.inf # seconds between lateral plan messages
     self.nextDisplayTime = time.time() + self.displayTime
     self.hijackMode = True
     if unit_test:
