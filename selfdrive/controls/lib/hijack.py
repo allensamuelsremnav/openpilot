@@ -334,7 +334,7 @@ class Hijacker:
         lp.curvatureRates = [(lp.curvatures[i] - self.prevCurvatures[i]) for i in range(CONTROL_N-1)] + [0.0]
         #lp.curvatureRates = (lp.curvatures[0] - self.prevCurvatures) / v_ego
       self.prev_steer = self.steer
-      self.prevCurvatures = lp.curvatures[:]
+      self.prevCurvatures = [lp.curvatures[i] for i in range(CONTROL_N)] # avoid capnp style array/list
     if self.nextDisplayTime < time.time():
       self.nextDisplayTime = time.time() + self.displayTime
       self.displayMessage(lp, v_ego)
