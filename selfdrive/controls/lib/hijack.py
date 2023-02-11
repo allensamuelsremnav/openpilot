@@ -3,6 +3,7 @@ import threading
 import socket
 import math
 import time
+from common.realtime import config_realtime_process, Priority
 
 CONTROL_N = 17  # from controls/lib/drive_helpers.py
 PORT = 6379
@@ -223,6 +224,7 @@ class Hijacker:
       self.threads.append(t)
   
   def socket_handler_thread(self, clientSocket):
+    config_realtime_process(4, Priority.CTRL_HIGH)
     clientSocket.send(b"Hello Remnav\r\n")
     line = b''
     try:
