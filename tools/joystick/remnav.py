@@ -1,4 +1,4 @@
-import pygame, socket, threading, sys, getopt, time
+import pygame, socket, threading, sys, getopt, time, queue
 from typing import Dict
 
 options, arguments = getopt.getopt(
@@ -26,7 +26,9 @@ pygame.init()
 pygame.display.set_mode((100, 100))
 
 # Indexed by TAG value with the time it was sent.
-outstanding_tags : Dict[float,float] = {}       
+outstanding_tags : Dict[float,float] = {}
+steer_tags : Dict[float, float] = {}
+
 tag = 0
 def new_tag():
     global tag
@@ -38,6 +40,23 @@ def process_rtt(rtt):
     global max_rtt
     max_rtt = max(max_rtt, rtt)
 
+printqueue = queue.Queue()
+logqueue = queue.Queue()
+
+def printer():
+    while True:
+        print(printqueue.get())
+
+def logger():
+    f = open("log","a")
+    while True:
+        f.write(logqueue.get())
+        f.write("\n")
+        f.flush()
+
+
+
+
 def listener(s):
     try:
         while True:
@@ -45,7 +64,7 @@ def listener(s):
             t = time.time()
             for raw_line in m.split('\n'):
                 l = raw_line.strip('\r')
-                print(f"Received: {l}")
+                printqueue.put(f"Received: {l}")
                 if l.startswith('<'):
                     # Process the tag
                     tg = l[1:].split('>')[0]
@@ -53,12 +72,15 @@ def listener(s):
                         # Found it
                         start = outstanding_tags[tg]
                         del outstanding_tags[tg]
+                        st = steer_tags[tg]
+                        del steer_tags[tg]
                         cur = time.time()
                         t = cur-start
                         process_rtt(t)
-                        print(f"({t:.3f}) {l}")
+                        logqueue.put(f'{{"time":{time.time():.4f}, "steer":{st:.2f}, "tag":{tg}, "rtt": {t:.3f}, "maxrtt":{max_rtt:.3f} }}')
+                        printqueue.put(f"RTT ({t:.3f}) {l}")
                     else:
-                        print(l)
+                        printqueue.put(l)
     except socket.error:
         print("Got exception on write")
         quit()            
@@ -71,7 +93,6 @@ if pygame.joystick.get_count() == 0:
 
 j = pygame.joystick.Joystick(0)
 j.init()
-print("Found ",j.get_numbuttons()," joy buttons, and ", j.get_numhats(), " hats")
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -81,30 +102,24 @@ print("Connected")
 
 x = threading.Thread(target=listener, args=(s,))
 x.start()
+y = threading.Thread(target=printer)
+y.start()
+z = threading.Thread(target=logger)
+z.start()
 
 linebuffer = ""
-v_ratio = 1.0 # +/-30 degrees steering angle
-gb = 0.0
-
-def send_command(c,v):
-    tg = new_tag()
-    cmd = f"<{tg}>{c} {v:.2f}\r\n"
-    print(f"<{tg}> Sending {cmd}")
-    s.send(bytes(cmd,"utf-8"))
-    outstanding_tags[tg] = time.time()
+v_ratio = 1 # +/-30 degrees steering angle
 
 def do_motion(v):
-    send_command("s", v * v_ratio)
-
-def do_joybutton(b):
-    gb = 0
-    send_command("gb", 0)
-    send_command("s", 0)
-
-def do_joyhat(h):
-    global gb
-    gb = gb + (h * .01)
-    send_command("gb", gb)
+    v = v * -v_ratio
+    tg = new_tag()
+    t = time.time()
+    cmd = f"<{tg}>s {v:.2f}\r\n"
+    printqueue.put(f"<{tg}> Sending {cmd}")
+    logqueue.put(f'{{"time":{t:.4f}, "steer":{v:.2f}, "tag":{tg} }}')
+    s.send(bytes(cmd,"utf-8"))
+    outstanding_tags[tg] = t
+    steer_tags[tg] = v
 
 def handle_key(k):
     global linebuffer, v_ratio
@@ -134,13 +149,7 @@ try:
         if event.type == pygame.QUIT:
             sys.exit()
         if event.type == pygame.JOYAXISMOTION:
-            print("Wheel ", -event.value)
-            do_motion(-event.value)
-        elif event.type == pygame.JOYBUTTONDOWN:
-            print("Joy button ", event.button)
-            do_joybutton(event.button)
-        elif event.type == pygame.JOYHATMOTION:
-            do_joyhat(j.get_hat(0)[1])
+            do_motion(event.value)
         elif event.type == pygame.KEYDOWN:
             handle_key(event.unicode)
 except KeyboardInterrupt:
