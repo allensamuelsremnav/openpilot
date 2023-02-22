@@ -64,10 +64,12 @@ struct s_carrier {
     double vx_epoch_ms;             // encoder output epoch time after stripping out the embedded occ and v2t delay
     double tx_epoch_ms;             // tx epoch time = encoder epoch + v2t latency
     double rx_epoch_ms;             // rx epoch time
+    double ert_epoch_ms;            // expected time to retire
     int socc;                       // sampled occupancy at tx_epoch_ms either from tx log or rx metadata 
     int usocc;                      // unclipped sampled occupancy
     int iocc;                       // interpolated occupancy from tx log at tx_epoch_ms
     double socc_epoch_ms;           // time when the occupacny for this packet was sampled
+    int bit_rate_kbps;              // bit rate reported by the modem
     int packet_len;
     int frame_start;
     int frame_num;
@@ -77,11 +79,14 @@ struct s_carrier {
     double camera_epoch_ms;
     int retx;
     int check_packet_num;
-    double t2r_latency_ms;          // rx_epoch_ms - tx_epoch_ms
+    float t2r_latency_ms;           // rx_epoch_ms - tx_epoch_ms
+    float r2t_latency_ms;           // bp_epoch_ms - rx_epoch_ms
+    float ert_ms;                   // ert_epoch_ms = tx_epoch_ms
+    int est_t2r_ms;                 // t2r_ms + tx_epoch_ms + bp_epoch_ms
     int probe;                      // 1=probe packet 0=data packet
     struct s_service *sdp;          // serivce log data 
-    struct s_latency *ldp;          // latency log data 
-    int est_t2r_ms;                 // t2r_ms + tx_epoch_ms + bp_epoch_ms
+    struct s_latency *ldp;          // latency log data sorted by bp_epoch_ms
+    struct s_latency *lsp;          // latency log data sorted by packet number
 };
 
 struct s_latency_table {
@@ -127,7 +132,8 @@ struct s_carrier *pd;                   // probe log data
 struct s_carrier *mpd;                  // combined metada and probe data
 struct s_txlog *td;                     // tx log data array
 struct s_service *sd;                   // service log data array
-struct s_latency *ld;                   // latency log data array
+struct s_latency *ld;                   // latency log data array sorted by packet_num
+struct s_latency *ls;                   // latency log data array sorted by bp_epoch_ms
 
 
 #define		FATAL(STR, ARG) {printf (STR, ARG); my_exit(-1);}
@@ -141,6 +147,7 @@ int my_exit (int n) {
     if (mpd != NULL) free (mpd); 
     if (sd != NULL) free (sd); 
     if (ld != NULL) free (ld); 
+    if (ls != NULL) free (ls); 
     exit (n);
 } // my_exit
 
@@ -196,7 +203,8 @@ int interpolate_occ (double tx_epoch_ms, struct s_txlog *current, struct s_txlog
 // and interpolated occupancy, interpolated between the sampled occupancy above and the next (later) sample
 void find_occ_from_tdfile (
     double tx_epoch_ms, struct s_txlog *tdp, int len_tdfile, 
-    int *iocc, int *socc, double *socc_epoch_ms) {
+    int *iocc, int *socc, double *socc_epoch_ms, int *bit_rate_kbps) {
+
     struct s_txlog *left, *right, *current;    // current, left and right index of the search
 
     left = tdp; right = tdp + len_tdfile -1; 
@@ -216,14 +224,15 @@ void find_occ_from_tdfile (
         current = left + (right - left)/2; 
     } // while there are more than 2 elements left to search
 
-    // on exiting the while the left is smaller than tx_epoch_ms, the right can be bigger or equal 
-    // so need to check if the right should be used
+    // on exiting the while, the left is smaller or equal (if current = left edge) than tx_epoch_ms, 
+    // the right can be bigger or equal so need to check if the right should be used
     if (tx_epoch_ms == right->epoch_ms) 
         current = right; 
 
     *socc = current->occ; 
     *iocc = interpolate_occ (tx_epoch_ms, current, MIN((current+1), (tdp+len_tdfile+1)));
     *socc_epoch_ms = current->epoch_ms; 
+    *bit_rate_kbps = current->actual_rate;
 
     return;
 } // find_occ_from_tdfile
@@ -272,7 +281,9 @@ int read_md_line (int read_header, FILE *fp, int len_tdfile, struct s_txlog *tdp
 
     // if tx log exists then overwrite occupancy from tx log file
     if (len_tdfile) { // log file exists
-        find_occ_from_tdfile (mdp->tx_epoch_ms, tdp, len_tdfile, &(mdp->iocc), &(mdp->socc), &(mdp->socc_epoch_ms));
+        find_occ_from_tdfile (
+            mdp->tx_epoch_ms, tdp, len_tdfile, &(mdp->iocc), &(mdp->socc), &(mdp->socc_epoch_ms),
+            &(mdp->bit_rate_kbps));
     }
     // make a copy of the socc for unmodified socc output
     mdp->usocc = mdp->socc; 
@@ -327,7 +338,9 @@ int read_pr_line (
 
     mdp->t2r_latency_ms = mdp->rx_epoch_ms - mdp->tx_epoch_ms; 
     if (len_tdfile) { // log file exists
-        find_occ_from_tdfile (mdp->tx_epoch_ms, tdp, len_tdfile, &(mdp->iocc), &(mdp->socc), &(mdp->socc_epoch_ms));
+        find_occ_from_tdfile (
+            mdp->tx_epoch_ms, tdp, len_tdfile, &(mdp->iocc), &(mdp->socc), &(mdp->socc_epoch_ms),
+            &(mdp->bit_rate_kbps));
     }
     // make a copy of the socc for unmodified socc output
     mdp->usocc = mdp->socc; 
@@ -421,11 +434,10 @@ int read_td_line (FILE *fp, int ch, struct s_txlog *tdp) {
         dummy_string,
         &tdp->actual_rate)) !=11) || (tdp->channel !=ch)) {
 
-        if (n != 11) // did not successfully parse this line
+        if (n != 11) // did not successfully parse this line. so skip it
             FWARN(warn_fp, "read_td_line: Skipping line %s\n", tdlinep)
 
-        // else did not match the channel
-        else if (fgets (tdline, MAX_TD_LINE_SIZE, fp) == NULL)
+        if (fgets (tdline, MAX_TD_LINE_SIZE, fp) == NULL)
             // reached end of the file
             return 0;
 
@@ -585,37 +597,13 @@ void emit_stats (
 void emit_aux (int print_header, int probe, int have_txlog, int have_latency_log, int have_service_log, struct s_carrier *cp, FILE *fp) {
 
     if (print_header) fprintf (fp, "pkt#,");        else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->packet_num); 
-    if (print_header) fprintf (fp, "C_epoch_ms,");  else if (probe) fprintf (fp, ","); else fprintf (fp, "%.0lf,", cp->camera_epoch_ms); 
-    if (print_header) fprintf (fp, "tx_epoch_ms,"); else fprintf (fp, "%.0lf,", cp->tx_epoch_ms); 
-    if (print_header) fprintf (fp, "rx_epoch_ms,"); else fprintf (fp, "%.0lf,", cp->rx_epoch_ms); 
-    if (print_header) fprintf (fp, "t2r,");         else fprintf (fp, "%.0lf,", cp->t2r_latency_ms); 
-    if (print_header) fprintf (fp, "retx,");        else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->retx); 
-    if (print_header) fprintf (fp, "socc,");        else fprintf (fp, "%d, ", cp->usocc); 
-
-    if (!have_latency_log) goto SKIP_LATENCY_EMIT_AUX;
-    if (print_header) fprintf (fp, "est_bpt2r,");   else fprintf (fp, "%d, ", cp->est_t2r_ms); 
-    if (print_header) fprintf (fp, "bpt2r,");       else fprintf (fp, "%d, ", cp->ldp->t2r_ms); 
-    if (print_header) fprintf (fp, "bp_pkt,");      else fprintf (fp, "%u, ", cp->ldp->packet_num); 
-    if (print_header) fprintf (fp, "bp_epoch_ms,"); else fprintf (fp, "%.0lf,", cp->ldp->bp_epoch_ms); 
-    SKIP_LATENCY_EMIT_AUX:
-
-    if (!have_service_log) goto SKIP_SERVICE_EMIT_AUX;
-    if (print_header) fprintf (fp, "s_st,");        else fprintf (fp, "%d, ", cp->sdp->state); 
-    if (print_header) fprintf (fp, "s_socc,");      else fprintf (fp, "%d, ", cp->sdp->socc); 
-    if (print_header) fprintf (fp, "s_est_t2r,");   else fprintf (fp, "%d, ", cp->sdp->est_t2r); 
-    if (print_header) fprintf (fp, "s_bpt2r,");     else fprintf (fp, "%d, ", cp->sdp->bp_t2r); 
-    if (print_header) fprintf (fp, "s_st_tr,");     else fprintf (fp, "%.0lf,", cp->sdp->state_transition_epoch_ms); 
-    if (print_header) fprintf (fp, "s_bp_epoch,");  else fprintf (fp, "%.0lf,", cp->sdp->bp_t2r_epoch_ms); 
-    if (print_header) fprintf (fp, "s_bp_pkt,");    else fprintf (fp, "%d,", cp->sdp->bp_packet_num); 
-    SKIP_SERVICE_EMIT_AUX:
-
-    if (!have_txlog) goto SKIP_TXLOG_EMIT_AUX;
-    if (print_header) fprintf (fp, "iocc,");        else fprintf (fp, "%d, ", cp->iocc);
-    if (print_header) fprintf (fp, "socc_epoch,");  else fprintf (fp, "%.0lf,", cp->socc_epoch_ms);
-    SKIP_TXLOG_EMIT_AUX:
-    
-    if (print_header) fprintf (fp, "vx_epoch_ms,"); else if (probe) fprintf (fp, ","); else fprintf (fp, "%.0lf,", cp->vx_epoch_ms); 
+    if (print_header) fprintf (fp, "C_TS,");        else if (probe) fprintf (fp, ","); else fprintf (fp, "%.0lf,", cp->camera_epoch_ms); 
+    if (print_header) fprintf (fp, "tx_TS,");       else fprintf (fp, "%.0lf,", cp->tx_epoch_ms); 
+    if (print_header) fprintf (fp, "rx_TS,");       else fprintf (fp, "%.0lf,", cp->rx_epoch_ms); 
+    if (print_header) fprintf (fp, "t2r,");         else fprintf (fp, "%.0f,", cp->t2r_latency_ms); 
+    if (print_header) fprintf (fp, "kbps,");        else fprintf (fp, "%d, ", cp->bit_rate_kbps); 
     if (print_header) fprintf (fp, "plen,");        else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->packet_len); 
+    if (print_header) fprintf (fp, "retx,");        else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->retx); 
     if (print_header) fprintf (fp, "frame_start,"); else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_start); 
     if (print_header) fprintf (fp, "frame_num,");   else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_num); 
     if (print_header) fprintf (fp, "frame_rate,");  else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_rate); 
@@ -627,6 +615,57 @@ void emit_aux (int print_header, int probe, int have_txlog, int have_latency_log
     return; 
 } // end of emit_aux
 
+void emit_full (int print_header, int probe, int have_txlog, int have_latency_log, int have_service_log, struct s_carrier *cp, FILE *fp) {
+
+    if (print_header) fprintf (fp, "pkt#,");        else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->packet_num); 
+    if (print_header) fprintf (fp, "C_TS,");        else if (probe) fprintf (fp, ","); else fprintf (fp, "%.0lf,", cp->camera_epoch_ms); 
+    if (print_header) fprintf (fp, "tx_TS,");       else fprintf (fp, "%.0lf,", cp->tx_epoch_ms); 
+    if (print_header) fprintf (fp, "rx_TS,");       else fprintf (fp, "%.0lf,", cp->rx_epoch_ms); 
+    if (print_header) fprintf (fp, "r2t_TS,");      else fprintf (fp, "%.0lf,", cp->ldp->bp_epoch_ms); 
+    if (print_header) fprintf (fp, "ert_TS,");      else if (probe) fprintf (fp, ","); else fprintf (fp, "%.0lf,", cp->ert_epoch_ms); 
+    if (print_header) fprintf (fp, "socc_TS,");     else fprintf (fp, "%.0lf,", cp->socc_epoch_ms);
+    if (print_header) fprintf (fp, "t2r,");         else fprintf (fp, "%.0f,", cp->t2r_latency_ms); 
+    if (print_header) fprintf (fp, "r2t,");         else if (probe) fprintf (fp, ","); else fprintf (fp, "%.0f,", cp->r2t_latency_ms); 
+    if (print_header) fprintf (fp, "est_t2r,");     else fprintf (fp, "%d, ", cp->est_t2r_ms); 
+    if (print_header) fprintf (fp, "ert,");         else if (probe) fprintf (fp, ","); else fprintf (fp, "%.0f,", cp->ert_ms); 
+    if (print_header) fprintf (fp, "socc,");        else fprintf (fp, "%d, ", cp->usocc); 
+    if (print_header) fprintf (fp, "kbps,");        else fprintf (fp, "%d, ", cp->bit_rate_kbps); 
+    if (print_header) fprintf (fp, "plen,");        else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->packet_len); 
+    if (print_header) fprintf (fp, "retx,");        else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->retx); 
+
+    if (!have_latency_log) goto SKIP_LATENCY_EMIT_FULL;
+    if (print_header) fprintf (fp, "bp_pkt_TS,");   else fprintf (fp, "%.0lf,", cp->lsp->bp_epoch_ms); 
+    if (print_header) fprintf (fp, "bp_pkt,");      else fprintf (fp, "%u, ", cp->lsp->packet_num); 
+    if (print_header) fprintf (fp, "bp_t2r,");      else fprintf (fp, "%d, ", cp->lsp->t2r_ms); 
+    SKIP_LATENCY_EMIT_FULL:
+
+    if (!have_service_log) goto SKIP_SERVICE_EMIT_FULL;
+    if (print_header) fprintf (fp, "s_st,");        else fprintf (fp, "%d, ", cp->sdp->state); 
+    if (print_header) fprintf (fp, "s_socc,");      else fprintf (fp, "%d, ", cp->sdp->socc); 
+    if (print_header) fprintf (fp, "s_est_t2r,");   else fprintf (fp, "%d, ", cp->sdp->est_t2r); 
+    if (print_header) fprintf (fp, "s_bp_t2r,");    else fprintf (fp, "%d, ", cp->sdp->bp_t2r); 
+    if (print_header) fprintf (fp, "s_st_tr,");     else fprintf (fp, "%.0lf,", cp->sdp->state_transition_epoch_ms); 
+    if (print_header) fprintf (fp, "s_bp_TS,");     else fprintf (fp, "%.0lf,", cp->sdp->bp_t2r_epoch_ms); 
+    if (print_header) fprintf (fp, "s_bp_pkt,");    else fprintf (fp, "%d,", cp->sdp->bp_packet_num); 
+    SKIP_SERVICE_EMIT_FULL:
+
+    if (!have_txlog) goto SKIP_TXLOG_EMIT_FULL;
+    // if (print_header) fprintf (fp, "iocc,");        else fprintf (fp, "%d, ", cp->iocc);
+    SKIP_TXLOG_EMIT_FULL:
+    
+    // if (print_header) fprintf (fp, "vx_epoch_ms,"); else if (probe) fprintf (fp, ","); else fprintf (fp, "%.0lf,", cp->vx_epoch_ms); 
+    if (print_header) fprintf (fp, "frame_start,"); else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_start); 
+    if (print_header) fprintf (fp, "frame_num,");   else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_num); 
+    if (print_header) fprintf (fp, "frame_rate,");  else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_rate); 
+    if (print_header) fprintf (fp, "frame_res,");   else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_res); 
+    if (print_header) fprintf (fp, "frame_end,");   else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->frame_end); 
+    if (print_header) fprintf (fp, "chk_pkt_num,"); else if (probe) fprintf (fp, ","); else fprintf (fp, "%d, ", cp->check_packet_num); 
+
+    fprintf (fp, "\n");
+    return; 
+} // end of emit_full
+
+/*
 void emit_prb (int print_header, int have_txlog, int have_service_log, struct s_carrier *cp, FILE *fp) {
 
     if (print_header) fprintf (fp, "packet_num,");          else fprintf (fp, ","); 
@@ -635,6 +674,7 @@ void emit_prb (int print_header, int have_txlog, int have_service_log, struct s_
     if (print_header) fprintf (fp, "rx_epoch_ms,");         else fprintf (fp, "%.0lf,", cp->rx_epoch_ms); 
     if (print_header) fprintf (fp, "t2r,");                 else fprintf (fp, "%.0lf,", cp->t2r_latency_ms); 
     if (print_header) fprintf (fp, "socc,");                else if (have_txlog) fprintf (fp, "%d, ", cp->usocc); else fprintf(fp, ","); 
+    if (print_header) fprintf (fp, "kbps,");                else fprintf (fp, "%d, ", cp->bit_rate_kbps); 
     if (!have_service_log) goto SKIP_SERVICE_EMIT_PRB;
     if (print_header) fprintf (fp, "s_st,");                else fprintf (fp, "%d, ", cp->sdp->state); 
     if (print_header) fprintf (fp, "s_bpt2r,");             else fprintf (fp, "%d, ", cp->sdp->bp_t2r); 
@@ -659,6 +699,8 @@ void emit_prb (int print_header, int have_txlog, int have_service_log, struct s_
     return; 
 
 } // end of emit_prb
+
+*/
 
 // prints program usage
 void print_usage (void) {
@@ -849,7 +891,8 @@ void sort_td_by_tx (struct s_txlog *tdp, int len) {
     return;
 } // end of sort_td_by_tx
 
-void sort_ld_by_bp (struct s_latency *ldp, int len) {
+// sorts latency data array by receipt epoch_ms
+void sort_ld_by_bp_epoch_ms (struct s_latency *ldp, int len) {
 
     int i, j; 
 
@@ -871,7 +914,31 @@ void sort_ld_by_bp (struct s_latency *ldp, int len) {
     } // for elements in the log data array
 
     return;
-} // end of sort_ld_by_bp
+} // end of sort_ld_by_bp_epoch_ms
+
+// sorts latency data array by packet number
+void sort_ld_by_packet_num (struct s_latency *ldp, int len) {
+
+    int i, j; 
+
+    for (i=1; i<len; i++) {
+        j = i; 
+        while (j != 0) {
+            if ((ldp+j)->packet_num < (ldp+j-1)->packet_num) {
+                // slide jth element up by 1
+                struct s_latency temp = *(ldp+j-1); 
+                *(ldp+j-1) = *(ldp+j);
+                *(ldp+j) = temp; 
+            } // if slide up
+            else 
+                // done sliding up
+                break;
+            j--;
+        } // end of while jth elment is smaller than one above it
+    } // for elements in the log data array
+
+    return;
+} // end of sort_ld_by_packet_num
 
 // merge_sorts merges two sorted arrays into one. If elemets in the two arrays are 
 // equal, stream that emitted previous packet is given preference 
@@ -935,6 +1002,38 @@ struct s_service *find_closest_sdp (double epoch_ms, struct s_service *sdp, int 
 } // find_closest_sdp
 
 // returns pointer to the sdp equal to or closest smaller sdp to the specified epoch_ms
+struct s_latency *find_ldp_by_packet_num (int packet_num, double rx_epoch_ms, struct s_latency *ldp, int len_ld) {
+
+    struct  s_latency  *left, *right, *current;    // current, left and right index of the search
+
+    left = ldp; right = ldp + len_ld - 1; 
+
+    current = left + (right - left)/2; 
+    while (current != left) { // there are more than 2 elements to search
+        if (packet_num > current->packet_num)
+            left = current;
+        else
+            right = current; 
+        current = left + (right - left)/2; 
+    } // while there are more than 2 elements left to search
+    
+    // when the while exits, the current is equal to (if current = left edge) or less than specified packet_num
+    if (current->packet_num == packet_num)
+        left = current; 
+    else if ((current+1)->packet_num == packet_num)
+        left = current + 1;
+    else // no match, the back propagated packet got lost, so use the nearest smaller packet
+        left = current ; // correct thing to do will be to find closest bigger bp_epoch_ms packet
+    
+    // now search to the right and see which element is closest is the specified rx_epoch_ms
+    // assumes that same numbered packets are in ascending bp_epoch_ms
+    while ((left->bp_epoch_ms < rx_epoch_ms) && (left < (ldp+len_ld-1)))
+        left++;
+    return left;
+
+} // find_ldp_by_packet_num
+
+// returns pointer to the sdp equal to or closest smaller sdp to the specified epoch_ms
 struct s_latency *find_closest_ldp (double epoch_ms, struct s_latency *ldp, int len_ld) {
 
     struct  s_latency  *left, *right, *current;    // current, left and right index of the search
@@ -951,18 +1050,11 @@ struct s_latency *find_closest_ldp (double epoch_ms, struct s_latency *ldp, int 
     } // while there are more than 2 elements left to search
     
     // when the while exits, the current is equal to (if current = left edge) or less than epoch_ms
-    // if there is sring of entries that match the epoch_ms, move to the right most edge as it is the most
+    // if there is string of entries that match the epoch_ms, move to the right most edge as it is the most
     // recently arrived information
     while ((current+1)->bp_epoch_ms == epoch_ms)
         current++; 
     return current; 
-    /*
-    if ((current+1)->bp_epoch_ms == epoch_ms)
-        return current+1; 
-    else 
-        return current; 
-    */
-
 } // find_closest_ldp
 
 // find_packet_in_cd returns pointer to the packet in the specified metadata array
@@ -997,7 +1089,8 @@ int main (int argc, char* argv[]) {
     struct s_carrier *mdp, *pdp, *mpdp;     // pointers to metadata, probe data and combined data
     struct s_txlog *tdp;                    // pointer to tx log data 
     struct s_service *sdp;                  // pointer to service log data 
-    struct s_latency *ldp;                  // pointer to latency log data 
+    struct s_latency *ldp;                  // pointer to latency log data sorted by packet_num
+    struct s_latency *lsp;                  // pointer to latency log data sorted by bp_epoch_ms
     FILE *md_fp = NULL;                     // meta data file
     FILE *out_fp = NULL;                    // output file 
     FILE *aux_fp = NULL;                    // auxiliary output with decoded occ etc. 
@@ -1271,7 +1364,7 @@ PROCESS_EACH_FILE:
             my_exit(-1);
         }
         if (i % 5000 == 0)
-            printf ("Reached line %d\n", i); 
+            printf ("Reached aux output ine %d\n", i); 
 
     } // for all lines in md araray
 
@@ -1331,18 +1424,20 @@ PROCESS_EACH_FILE:
     
     // allocate storage
     ld = (struct s_latency *) malloc (sizeof (struct s_latency) * LD_BUFFER_SIZE);
-    if (ld==NULL)
+    ls = (struct s_latency *) malloc (sizeof (struct s_latency) * LD_BUFFER_SIZE);
+    if (ld==NULL || ls==NULL)
         FATAL("Could not allocate storage to read the latency log file in an array%s\n", "")
 
     // read latency log. assumed to be sorted by epoch_ms
     printf ("Now reading latency log\n");
     len_ldfile = 0; 
-    ldp = ld; 
+    ldp = ld; lsp = ls; 
     while (read_ld_line (ld_fp, file_table[file_index].channel, ldp)) {
         len_ldfile++;
         if ((len_ldfile) == LD_BUFFER_SIZE)
             FATAL ("latency data array is not large enough. Increase LD_BUFFER_SIZE%S\n", "");
-        ldp++;
+        *lsp = *ldp; 
+        ldp++; lsp++; 
         if (len_ldfile % 10000 == 0)
             printf ("Reached line %d of latency log\n", len_ldfile); 
     } // while there are more lines to be read
@@ -1351,15 +1446,31 @@ PROCESS_EACH_FILE:
         FATAL("latency log file is empty%s", "\n")
 
     // sort by bp_epoch_ms
-    sort_ld_by_bp (ld, len_ldfile);
+    sort_ld_by_bp_epoch_ms (ls, len_ldfile);
+    
+    // sort by packet_num
+    sort_ld_by_packet_num (ld, len_ldfile); 
 
-    // add info from latency log to the mpdp
+    // add est_t2r and r2t and ert info from latency log to the mpdp
     for (mpdp=mpd; mpdp < mpd+len_mdfile+len_prfile; mpdp++) {
-        mpdp->ldp = find_closest_ldp (mpdp->tx_epoch_ms, ld, len_ldfile);
-        // estimated bp t2r
+        mpdp->lsp = find_closest_ldp (mpdp->tx_epoch_ms, ls, len_ldfile);
         mpdp->est_t2r_ms = 
-            mpdp->ldp->t2r_ms + (mpdp->tx_epoch_ms - mpdp->ldp->bp_epoch_ms);
-    }
+            mpdp->lsp->t2r_ms + 
+            MAX(0,(mpdp->tx_epoch_ms - mpdp->lsp->bp_epoch_ms)); // MAX if bp > tx in the beginning
+
+        if ((mpdp->ldp = find_ldp_by_packet_num (mpdp->packet_num, mpdp->rx_epoch_ms, ld, len_ldfile))
+            == NULL)
+            FATAL("could not find packet %d in the latency array\n", mpdp->packet_num)
+        mpdp->r2t_latency_ms = mpdp->ldp->bp_epoch_ms - mpdp->rx_epoch_ms;
+
+        int t_mobile = (file_index % 3) == 2;
+        mpdp->ert_ms = 
+            (t_mobile? 75 : 30) + 20 +                      // avg r2t + 3-sigma
+            ((mpdp->socc < 10)? 30 : mpdp->est_t2r_ms) +      // avg t2r (3-sigma in guardband)
+            60;                                             // guardband
+        mpdp->ert_epoch_ms = mpdp->tx_epoch_ms + mpdp->ert_ms;
+    } // for
+
 SKIP_LATENCY_LOG:
 
     // service log
@@ -1574,16 +1685,16 @@ SKIP_SERVICE_LOG:
     } // for all oputput lines
 
     // full tx (encode + probe) output
-    emit_aux (1, 0, len_tdfile, len_ldfile, len_srfile, mpd, full_fp); // header
+    emit_full (1, 0, len_tdfile, len_ldfile, len_srfile, mpd, full_fp); // header
     for (i=0, mpdp=mpd; i<(len_mdfile+len_prfile); i++, mpdp++) {
-        emit_aux (0, mpdp->probe, len_tdfile, len_ldfile, len_srfile, mpdp, full_fp); 
+        emit_full (0, mpdp->probe, len_tdfile, len_ldfile, len_srfile, mpdp, full_fp); 
         if (i % 5000 == 0)
-            printf ("Reached line %d\n", i); 
+            printf ("Reached full output line %d\n", i); 
     } // for all lines
 
     // spike tx output
     fprintf (lspike_fp, "spk#, dur_pkt, dur_ms, maxL, maxO,");
-    emit_aux (1, 0, len_tdfile, len_ldfile, len_srfile, mpd, lspike_fp); // header
+    emit_full (1, 0, len_tdfile, len_ldfile, len_srfile, mpd, lspike_fp); // header
     for (lspikep = lspike_table; lspikep < (lspike_table+len_lspike_table); lspikep++) {
         struct s_carrier *startp;
         for (startp = lspikep->startp; startp < lspikep->startp + lspikep->duration_pkt+2; startp++) {
@@ -1591,7 +1702,7 @@ SKIP_SERVICE_LOG:
                 continue; 
             fprintf (lspike_fp, "%d,%d,%.0lf,%.0lf,%d,", 
                 lspikep - lspike_table + 1, lspikep->duration_pkt, lspikep->duration_ms,lspikep->max_latency, lspikep->max_occ); 
-            emit_aux (0, startp->probe, len_tdfile, len_ldfile, len_srfile, startp, lspike_fp); 
+            emit_full (0, startp->probe, len_tdfile, len_ldfile, len_srfile, startp, lspike_fp); 
         } // for all packets in a spike
     } // for all spikes
 
