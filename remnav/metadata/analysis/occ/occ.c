@@ -1209,8 +1209,23 @@ int main (int argc, char* argv[]) {
             tx_specified = 0; 
         }
 
-        else if (strcmp (*argv, "-rx_pre") == MATCH) {
-            strcpy (rx_prefix, *++argv); 
+        // short tx prefix
+        else if (strcmp (*argv, "-stx_pre") == MATCH) {
+            sprintf (tx_prefix, "%s_%s", "uplink_queue", *++argv); 
+            sprintf (la_prefix, "%s_%s", "latency", *argv); 
+            sprintf (sr_prefix, "%s_%s", "service", *argv); 
+            tx_specified = la_specified = sr_specified = 1; 
+        }
+
+        else if ((strcmp (*argv, "-rx_pre") == MATCH) || (strcmp (*argv, "-srx_pre") == MATCH)) {
+            
+            if (strcmp (*argv, "-srx_pre") == MATCH) {
+                sprintf (pr_prefix, "probe_%s", *++argv);
+                pr_specified = 1; 
+                strcpy (rx_prefix, *argv); 
+            }
+            else strcpy (rx_prefix, *++argv); 
+
             int i; 
             for (i=0; i<3; i++) {
 
@@ -1342,6 +1357,7 @@ PROCESS_EACH_FILE:
     
 
     // aux output 
+    printf ("Emitting Aux output\n");
     emit_aux (1, 0, len_tdfile, 0, 0, mdp, aux_fp);  // header
     // while there is a line to be read from any of the input files
     for (i=0, last_socc=0, mdp=md; i<len_mdfile; i++, last_socc = mdp-> socc, mdp++) {
@@ -1363,8 +1379,10 @@ PROCESS_EACH_FILE:
             printf ("Invalid occupancy %d for packet %d", mdp->socc, mdp->packet_num);
             my_exit(-1);
         }
+        /*
         if (i % 5000 == 0)
-            printf ("Reached aux output ine %d\n", i); 
+            printf ("Reached aux output line %d\n", i); 
+        */
 
     } // for all lines in md araray
 
@@ -1393,6 +1411,7 @@ PROCESS_EACH_FILE:
         FATAL("Could not allocate storage for combined probe and metadata array%s\n", "")
 
     // read probe data
+    printf ("Reading Probe log\n"); 
     len_prfile = 0; 
     pdp = pd; 
     while (read_pr_line (pr_fp, len_tdfile, td, file_table[file_index].channel, pdp)) {
@@ -1406,7 +1425,7 @@ PROCESS_EACH_FILE:
     if (len_prfile == 0)
         FATAL("Probe log file is empty%s", "\n")
 
-    // sort by tx_epoch_ms
+    // sort probe data by tx_epoch_ms
     sort_md_by_tx (pd, len_prfile); 
 
     // merge sort the probe and the meta data
@@ -1429,7 +1448,7 @@ PROCESS_EACH_FILE:
         FATAL("Could not allocate storage to read the latency log file in an array%s\n", "")
 
     // read latency log. assumed to be sorted by epoch_ms
-    printf ("Now reading latency log\n");
+    printf ("Reading latency log\n");
     len_ldfile = 0; 
     ldp = ld; lsp = ls; 
     while (read_ld_line (ld_fp, file_table[file_index].channel, ldp)) {
@@ -1438,8 +1457,10 @@ PROCESS_EACH_FILE:
             FATAL ("latency data array is not large enough. Increase LD_BUFFER_SIZE%S\n", "");
         *lsp = *ldp; 
         ldp++; lsp++; 
+        /*
         if (len_ldfile % 10000 == 0)
             printf ("Reached line %d of latency log\n", len_ldfile); 
+        */
     } // while there are more lines to be read
 
     if (len_ldfile == 0)
@@ -1489,7 +1510,7 @@ SKIP_LATENCY_LOG:
         FATAL("Could not allocate storage to read the service data file in an array%s\n", "")
 
     // read service log. assumed to be sorted by epoch_ms
-    printf ("Now reading service log\n");
+    printf ("Reading service log\n");
     len_srfile = 0; 
     sdp = sd; 
     while (read_sd_line (sr_fp, file_table[file_index].channel, sdp)) {
@@ -1497,8 +1518,10 @@ SKIP_LATENCY_LOG:
         if ((len_srfile) == SD_BUFFER_SIZE)
             FATAL ("service data array is not large enough. Increase SD_BUFFER_SIZE%S\n", "");
         sdp++;
+        /*
         if (len_srfile % 10000 == 0)
             printf ("Reached line %d of service log\n", len_srfile); 
+        */
     } // while there are more lines to be read
 
     if (len_srfile == 0)
@@ -1642,7 +1665,7 @@ SKIP_SERVICE_LOG:
     // if a spike is still active when the file end is reached, then close it.
     if (lspikep->active || ospikep->active) {
 
-        printf ("Spike was active when EOF was reached\n"); 
+        // printf ("Spike was active when EOF was reached\n"); 
 
         // roll back mpdp to point to the last data line
         mpdp--; 
@@ -1668,6 +1691,7 @@ SKIP_SERVICE_LOG:
     //
 
     // summary analytics report
+    printf ("Emitting analytics output\n"); 
     sort_lspike (lspike_table, len_lspike_table);
     sort_ospike (ospike_table, len_ospike_table);
     emit_stats (1, 0, file_table[file_index].rx_prefix, &avg_lat_by_occ_table[0], 0, &lspike_table[0], 0, &ospike_table[0], 
@@ -1685,11 +1709,14 @@ SKIP_SERVICE_LOG:
     } // for all oputput lines
 
     // full tx (encode + probe) output
+    printf ("Emitting full_occ report\n"); 
     emit_full (1, 0, len_tdfile, len_ldfile, len_srfile, mpd, full_fp); // header
     for (i=0, mpdp=mpd; i<(len_mdfile+len_prfile); i++, mpdp++) {
         emit_full (0, mpdp->probe, len_tdfile, len_ldfile, len_srfile, mpdp, full_fp); 
+        /*
         if (i % 5000 == 0)
             printf ("Reached full output line %d\n", i); 
+        */
     } // for all lines
 
     // spike tx output

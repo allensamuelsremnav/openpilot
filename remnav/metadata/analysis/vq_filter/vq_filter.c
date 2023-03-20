@@ -14,6 +14,7 @@
 #define HZ_5    3
 #define RES_HD  0
 #define RES_SD  1
+#define CRITICAL_RUN_LENGTH 20
 #define MD_BUFFER_SIZE 100
 #define MAX_LINE_SIZE    1000 
 #define NUM_OF_MD_FIELDS    12
@@ -90,7 +91,7 @@ struct s_avgqdata {
     int packet_num;
 }; 
 
-struct meta_data {      // dedup meta data
+struct s_metadata {      // dedup meta data
     int         packet_num;                 // incrementing number starting from 0
     double      vx_epoch_ms;                // time since epoch in ms
     double      tx_epoch_ms;                // time since epoch in ms
@@ -169,7 +170,7 @@ struct s_txlog {
 };
 
 struct s_cmetadata {
-    int packet_num;                     // packet number read from this line of the carrier meta_data finle 
+    int packet_num;                     // packet number read from this line of the carrier s_metadata finle 
     double vx_epoch_ms; 
     double tx_epoch_ms; 
     double rx_epoch_ms;
@@ -210,7 +211,7 @@ struct s_carrier {
     struct s_cmetadata *csp;            // carrier metadata array sorted by rx TS
     int len_cd;                         // number of enteries in the cd array
 
-    int packet_num;                     // packet number read from this line of the carrier meta_data finle 
+    int packet_num;                     // packet number read from this line of the carrier s_metadata finle 
     double vx_epoch_ms; 
     double tx_epoch_ms; 
     double rx_epoch_ms;
@@ -226,6 +227,8 @@ struct s_carrier {
     double socc_epoch_ms;               // time when the occupacny for this packet was sampled
 
     int tx;                             // set to 1 if this carrier tranmitted the packet being considered
+    int cr;                             // set to 1 if this carrier supplied the dedup output
+    int cr_value_ms;                    // how far ahead was this carrier against second best
     struct s_cmetadata *bp_csp;         // pointer to the carrier metadata that provided the bp info
 
     int waiting_to_go_out_of_service;   // 1 if run finished but channel is still in service
@@ -259,29 +262,29 @@ int my_exit (int n);
 int read_md (
     int skip_header,                        // if 1 then skip the header lines
     FILE *fp, 
-    struct meta_data *p);    
+    struct s_metadata *p);    
 
 // initializes the frame structure for a new frame
 void init_frame (
     struct frame *fp,
-    struct meta_data *lmdp,                 // last packet's meta data
-    struct meta_data *cmdp,                 // current packet's meta data; current may be NULL at EOF
+    struct s_metadata *lmdp,                 // last packet's meta data
+    struct s_metadata *cmdp,                 // current packet's meta data; current may be NULL at EOF
     int    first_frame);                    // 1 if first frame
 
 // updates per packet stats of the frame
 void update_frame_packet_stats (
     struct frame *fp,                       // current frame pointer
-    struct meta_data *lmdp,                 // last packet's meta data
-    struct meta_data *cmdp);                // current packet's meta data; current may be NULL at EOF
+    struct s_metadata *lmdp,                 // last packet's meta data
+    struct s_metadata *cmdp);                // current packet's meta data; current may be NULL at EOF
 
 // calculates and update bit-rate of n-1 frame
 void update_bit_rate (                      // updates stats of the last frame
     struct frame *fp,
-    struct meta_data *lmdp,                 // last packet's meta data
-    struct meta_data *cmdp);                 // current packet's meta data; current may be NULL at EOF
+    struct s_metadata *lmdp,                 // last packet's meta data
+    struct s_metadata *cmdp);                 // current packet's meta data; current may be NULL at EOF
 
 void initialize_cp_from_cd (
-    struct meta_data *mdp,
+    struct s_metadata *mdp,
     struct s_carrier *cp, 
     int t_mobile);
 
@@ -319,7 +322,7 @@ void update_session_frame_stats (                 // updates stats for the speci
 // updates session per packet stats - called after every meta data line read
 void update_session_packet_stats (
     struct frame *fp,                       // current frame pointer
-    struct meta_data *mdp, 
+    struct s_metadata *mdp, 
     struct s_session *ssp); 
 
 // emits the stats for the specified metric
@@ -340,7 +343,7 @@ void emit_session_stats (
 void per_packet_analytics (
     struct s_session *ssp, 
     struct frame *fp,
-    struct meta_data *mdp,
+    struct s_metadata *mdp,
     struct s_carrier *c0p, struct s_carrier *c1p, struct s_carrier *c2p);
 
 void carrier_metadata_clients (int print_header, struct s_session *ssp, struct frame *fp, 
@@ -374,7 +377,7 @@ int check_annotation (unsigned frame_num);
 void decode_sendtime (double *vx_epoch_ms, double *tx_epoch_ms, int *socc);
 
 // outputs per carrier stats
-void emit_packet_stats (struct s_carrier *cp, struct frame *fp); 
+void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrier_num, struct frame *fp); 
 
 void emit_packet_header (FILE *fp);
 
@@ -489,7 +492,7 @@ int     frame_size_modulation_threshold = 6000; // size in bytes the frame size 
 char    comamnd_line[5000];                     // string store the command line 
 
 // globals - storage
-struct  meta_data md[MD_BUFFER_SIZE];           // buffer to store meta data lines*/
+struct  s_metadata md[MD_BUFFER_SIZE];           // buffer to store meta data lines*/
 int     md_index;                               // current meta data buffer pointer
 struct  s_gps gps[MAX_GPS];                     // gps data array 
 int	    len_gps; 		                        // length of gps array
@@ -509,7 +512,7 @@ struct  s_latency *ls0=NULL, *ls1=NULL, *ls2=NULL;  // latency log data array so
 int     len_ld0=0, len_ld1=0, len_ld2=0;
 
 int main (int argc, char* argv[]) {
-    struct  meta_data *cmdp, *lmdp;             // last and current meta data lines
+    struct  s_metadata *cmdp, *lmdp;             // last and current meta data lines
     struct  frame cf, *cfp = &cf;               // current frame
     struct  s_session sstat, *ssp=&sstat;       // session stats 
     struct  s_carrier c0, c1, c2; 
@@ -557,6 +560,15 @@ int main (int argc, char* argv[]) {
         // receive dedup meta data file prefix
         else if (strcmp (*argv, "-rx_pre") == MATCH) {
             strcpy (rx_prep, *++argv); 
+        }
+
+        // short tx prefix
+        else if (strcmp (*argv, "-stx_pre") == MATCH) {
+            sprintf (tx_prep, "%s_%s", "uplink_queue", *++argv); 
+            sprintf (la_prep, "%s_%s", "latency", *argv); 
+            sprintf (brm_prep, "%s_%s", "bitrate", *argv); 
+            sprintf (avgq_prep, "%s_%s", "avgQ", *argv); 
+            have_tx_log = have_la_log = have_brm_log = have_avgq_log = 1; 
         }
 
         // per carrier meta data availabiliyt
@@ -1898,7 +1910,7 @@ void print_usage (void) {
 // updates session per packet stats - called after every meta data line read
 void update_session_packet_stats (
     struct frame *fp,                       // current frame pointer
-    struct meta_data *mdp,                  // current dedup meta data line
+    struct s_metadata *mdp,                  // current dedup meta data line
     struct s_session *ssp) {                // current packet's meta data; current may be NULL at EOF
 
     update_metric_stats (ssp->c2vp, 0, mdp->vx_epoch_ms - fp->camera_epoch_ms, MAX_C2V_LATENCY, MIN_C2V_LATENCY);
@@ -1910,8 +1922,8 @@ void update_session_packet_stats (
 // updates per packet stats of the frame
 void update_frame_packet_stats (
     struct frame *fp,                       // current frame pointer
-    struct meta_data *lmdp,                 // last packet's meta data
-    struct meta_data *cmdp) {               // current packet's meta data; current may be NULL at EOF
+    struct s_metadata *lmdp,                 // last packet's meta data
+    struct s_metadata *cmdp) {               // current packet's meta data; current may be NULL at EOF
 
     fp->packet_count++; 
 
@@ -1939,8 +1951,8 @@ void update_frame_packet_stats (
 // initializes the frame structure for a new frame
 void init_frame (
     struct frame *fp,                       // current frame pointer
-    struct meta_data *lmdp,                 // last packet's meta data
-    struct meta_data *cmdp,                 // current packet's meta data; current may be NULL at EOF
+    struct s_metadata *lmdp,                 // last packet's meta data
+    struct s_metadata *cmdp,                 // current packet's meta data; current may be NULL at EOF
     int	   first_frame) {                   // 1 if it is the first frame. NOT USED
 
     fp->frame_count = first_frame? 1 : fp->frame_count + 1; 
@@ -2010,7 +2022,7 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "CTS, ");
     fprintf (fp, "Late, ");
     fprintf (fp, "Miss, ");
-    fprintf (fp, "Mbps, ");
+    fprintf (fp, "CMbps, ");
     fprintf (fp, "anno, ");
     fprintf (fp, "0fst, ");
     fprintf (fp, "SzB, ");
@@ -2068,9 +2080,10 @@ void emit_packet_header (FILE *ps_fp) {
 	fprintf (ps_fp, "LPN, ");
     fprintf (ps_fp, "Late, ");
 	fprintf (ps_fp, "Miss, ");
-	fprintf (ps_fp, "Mbps, ");
+	fprintf (ps_fp, "CMbps, ");
 	fprintf (ps_fp, "SzP, ");
 	fprintf (ps_fp, "SzB, ");
+    fprintf (ps_fp, "EMbps,");
 	fprintf (ps_fp, "Fc2t, ");
 	fprintf (ps_fp, "Ft2r, ");
 	fprintf (ps_fp, "Fc2r, ");
@@ -2082,17 +2095,17 @@ void emit_packet_header (FILE *ps_fp) {
     // Delivered packet meta data
     fprintf (ps_fp, "retx, ");
     fprintf (ps_fp, "ch, ");
-    fprintf (ps_fp, "kbps, ");
+    fprintf (ps_fp, "MMbps, ");
     fprintf (ps_fp, "tx_TS, ");
     fprintf (ps_fp, "rx_TS, ");
     fprintf (ps_fp, "Pc2r, ");
     fprintf (ps_fp, "Pt2r, ");
-    fprintf (ps_fp, "qst,");
+    fprintf (ps_fp, "est,");
     
     // per carrier meta data
     int i; 
     for (i=0; i<3; i++) {
-        fprintf (ps_fp, "C%d: c2r, c2v, t2r, r2t, est_t2r, ert, socc, kbps, retx, rlen,", i); 
+        fprintf (ps_fp, "C%d: c2r, c2v, t2r, r2t, est_t2r, ert, socc, MMbps, retx, rlen, cr,", i); 
         fprintf (ps_fp, "tx_TS, rx_TS, r2t_TS, ert_TS, socc_TS, bp_pkt_TS, bp_pkt, bp_t2r,"); 
         fprintf (ps_fp, "Ravg, IS, qst, qsz, avg_ms, avg_pkt,");
     }
@@ -2126,7 +2139,7 @@ void init_packet_stats (
     return;
 } // init_packet_stats
 
-void emit_frame_stats_for_per_packet_file (struct frame *fp, struct meta_data *mdp, struct s_brmdata *brmdp) {
+void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *mdp, struct s_brmdata *brmdp) {
 
         // Frame metadata for reference (repeated for every packet)
         fprintf (ps_fp, "%u, ", fp->frame_count);
@@ -2137,6 +2150,7 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct meta_data *m
 	    fprintf (ps_fp, "%.1f, ", fp->nm1_bit_rate);
 	    fprintf (ps_fp, "%u, ", fp->packet_count);
 	    fprintf (ps_fp, "%u, ", fp->size);
+        fprintf (ps_fp, "%.1f,", (fp->size*8)/FRAME_PERIOD_MS/1000); 
 	    fprintf (ps_fp, "%.1f, ", fp->tx_epoch_ms_1st_packet - fp->camera_epoch_ms);
 	    fprintf (ps_fp, "%.1f, ", fp->rx_epoch_ms_latest_packet - fp->tx_epoch_ms_1st_packet);
 	    fprintf (ps_fp, "%.1f, ", fp->rx_epoch_ms_latest_packet - fp->camera_epoch_ms);
@@ -2148,7 +2162,7 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct meta_data *m
         // Delivered packet meta data
         fprintf (ps_fp, "%u, ", mdp->retx);
         fprintf (ps_fp, "%u, ", mdp->ch);
-        fprintf (ps_fp, "%d, ", mdp->kbps);
+        fprintf (ps_fp, "%.1f, ", ((float) mdp->kbps)/1000);
         fprintf (ps_fp, "%.0lf, ", mdp->tx_epoch_ms);
         fprintf (ps_fp, "%.0lf, ", mdp->rx_epoch_ms);
         fprintf (ps_fp, "%.1f, ", mdp->rx_epoch_ms - fp->camera_epoch_ms);
@@ -2227,7 +2241,7 @@ void carrier_metadata_clients (
 	starting_index = (md_index + MD_BUFFER_SIZE - fp->packet_count) % MD_BUFFER_SIZE; 
     for (i=0; i < fp->packet_count; i++) {
 
-        struct meta_data *mdp = md + ((starting_index + i) % MD_BUFFER_SIZE);
+        struct s_metadata *mdp = md + ((starting_index + i) % MD_BUFFER_SIZE);
 
         // Per carrier meta data
         initialize_cp_from_cd (mdp, c0p, 0); 
@@ -2249,15 +2263,17 @@ void carrier_metadata_clients (
        run_length_state_machine (c2p); 
 
         // per carrier packet stats
-        struct s_brmdata *brmdp = c0p->tx? c0p->brmdp : c1p->tx? c1p->brmdp : c2p->brmdp;  
+        struct s_brmdata *brmdp;
+        brmdp = mdp->ch==0? c0p->brmdp : mdp->ch==1? c1p->brmdp : c2p->brmdp;  
         mdp->kbps = mdp->ch==0? c0p->tdp->actual_rate : mdp->ch==1? c1p->tdp->actual_rate : c2p->tdp->actual_rate;
         emit_frame_stats_for_per_packet_file (fp, mdp, brmdp); 
-	    emit_packet_stats (c0p, fp);
-	    emit_packet_stats (c1p, fp);
-	    emit_packet_stats (c2p, fp);
+	    emit_packet_stats (c0p, mdp, 0, fp);
+	    emit_packet_stats (c1p, mdp, 1, fp);
+	    emit_packet_stats (c2p, mdp, 2, fp);
+
+        // per packet analytics
         per_packet_analytics (ssp, fp, mdp, c0p, c1p, c2p); 
 	
-        // per packet analytics
         fprintf (ps_fp, "\n");
     } // for every packet in the frame
 
@@ -2268,7 +2284,7 @@ void carrier_metadata_clients (
 void per_packet_analytics (
     struct s_session *ssp, 
     struct frame *fp,
-    struct meta_data *mdp,
+    struct s_metadata *mdp,
     struct s_carrier *c0p, struct s_carrier *c1p, struct s_carrier *c2p) {
 
 		// dtx: difference in the tx times of the channels attempting this packet
@@ -2586,7 +2602,7 @@ float bp_t2r_ms (struct s_carrier *cp, struct s_cmetadata *csp, int len_cs) {
 
 // scans for the packet in specified mdp in the carrier meta data array and
 // initialize cp with the relevant info
-void initialize_cp_from_cd ( struct meta_data *mdp, struct s_carrier *cp, int t_mobile) {
+void initialize_cp_from_cd ( struct s_metadata *mdp, struct s_carrier *cp, int t_mobile) {
 
     struct s_cmetadata *cdp; 
 
@@ -2610,7 +2626,7 @@ void initialize_cp_from_cd ( struct meta_data *mdp, struct s_carrier *cp, int t_
         if (cp->len_ld) cp->est_t2r_ms = cp->lsp->t2r_ms + MAX(0, (cp->tx_epoch_ms - cp->lsp->bp_epoch_ms)); // max if bp_epoch > tx_epoch
         cp->ert_ms = 
             (t_mobile? 75 : 30) + 20 +                      // avg r2t + 3-sigma
-            ((cp->socc < 10)? 30 : cp->est_t2r_ms) +          // avg t2r (3-sigma in guardband)
+            ((cp->socc < 10)? 30 : cp->est_t2r_ms) +        // avg t2r (3-sigma in guardband)
             60;                                             // guardband
         cp->ert_epoch_ms = cp->tx_epoch_ms + cp->ert_ms;
         cp->tx = 1; 
@@ -2631,7 +2647,7 @@ void initialize_cp_from_cd ( struct meta_data *mdp, struct s_carrier *cp, int t_
 } // initialize_cp_from_cd
 
 // outputs per carrier stats and fills out some of the fields of s_carrier structure from cd array
-void emit_packet_stats (struct s_carrier *cp, struct frame *fp) {
+void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrier_num, struct frame *fp) {
 
 	if (cp->tx) {
         // if this carrier transmitted this packet
@@ -2642,9 +2658,12 @@ void emit_packet_stats (struct s_carrier *cp, struct frame *fp) {
 	    if (cp->len_ld) fprintf (ps_fp, "%0.1f,", cp->est_t2r_ms);                              // est_t2r
         if (cp->len_ld) fprintf (ps_fp, "%.0f,", cp->ert_ms); else fprintf (ps_fp, ",");        // ert
         fprintf (ps_fp, "%d,", cp->socc);                                                       // socc
-        if (cp->len_td) fprintf (ps_fp, "%d,", cp->tdp->actual_rate); else fprintf (ps_fp, ",");// kbps
+        if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000); 
+        else fprintf (ps_fp, ",");  // MMbps
         fprintf (ps_fp, "%d,", cp->retx);                                                       // retx
         if (cp->end_of_run_flag) fprintf(ps_fp, "%d,", cp->run_length); else fprintf (ps_fp,","); // rlen
+        fprintf (ps_fp, "%d,", 
+            cp->run_length && (cp->run_length <= CRITICAL_RUN_LENGTH) && (mdp->ch == carrier_num)? 1 : 0); 
 
 	    fprintf (ps_fp, "%.0lf,", cp->tx_epoch_ms);                                             // tx_TS
 	    fprintf (ps_fp, "%.0lf,", cp->rx_epoch_ms);                                             // rx_TS
@@ -2672,9 +2691,10 @@ void emit_packet_stats (struct s_carrier *cp, struct frame *fp) {
         fprintf (ps_fp, ",");       // est_t2r
         fprintf (ps_fp, ",");       // ert
         fprintf (ps_fp, "%d,", cp->socc);
-        if (cp->len_td) fprintf (ps_fp, "%d,", cp->tdp->actual_rate); else fprintf (ps_fp, ",");
+        if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000); else fprintf (ps_fp, ",");
         fprintf (ps_fp, ",");       // retx
         if (cp->end_of_run_flag) fprintf(ps_fp, "%d,", cp->run_length); else fprintf (ps_fp,",");
+        fprintf (ps_fp, ","); 
 
         fprintf (ps_fp, ",");       // tx_TS
         fprintf (ps_fp, ",");       // rx_TS
@@ -2831,7 +2851,7 @@ void skip_combined_md_file_header (FILE *fp) {
 } // skip_combined_md_file_header
 
 // reads next line of the meta data file. returns 0 if reached end of file
-int read_md (int skip_header, FILE *fp, struct meta_data *p) {
+int read_md (int skip_header, FILE *fp, struct s_metadata *p) {
     char    mdline[MAX_LINE_SIZE], *mdlp = mdline; 
 
     // read next line
@@ -2895,7 +2915,7 @@ void decode_sendtime (double *vx_epoch_ms, double *tx_epoch_ms, int *socc) {
 
 // called after the last packet of the frame is received. Updates stats for the current frame
 // calculates and updates bit_rate. If end of the file then checks the last frame for missing packets
-void update_bit_rate (struct frame *fp, struct meta_data *lmdp, struct meta_data *cmdp) {
+void update_bit_rate (struct frame *fp, struct s_metadata *lmdp, struct s_metadata *cmdp) {
     double transit_time;
 
     //bit-rate. For the first frame, bit-rate is approximate bit rate of the. For subsequent frames bit-rate is 
