@@ -15,8 +15,9 @@
 #define RES_HD  0
 #define RES_SD  1
 #define CRITICAL_RUN_LENGTH 20
-#define MD_BUFFER_SIZE 100
+#define MD_BUFFER_SIZE (20*60*30*15)
 #define MAX_LINE_SIZE    1000 
+#define MAX_SD_LINE_SIZE 1000
 #define NUM_OF_MD_FIELDS    12
 #define NUM_OF_PARAMS 3
 #define NUMBER_OF_BINS      20
@@ -51,6 +52,7 @@
 #define BRM_BUFFER_SIZE (20*60*100*3)
 #define AVGQ_BUFFER_SIZE (20*60*1000*3)
 #define LD_BUFFER_SIZE (20*60*1000)
+#define SD_BUFFER_SIZE (20*60*1000)
 #define IN_SERVICE 1
 #define OUT_OF_SERVICE 0
 
@@ -232,8 +234,14 @@ struct s_carrier {
     struct s_cmetadata *bp_csp;         // pointer to the carrier metadata that provided the bp info
 
     int waiting_to_go_out_of_service;   // 1 if run finished but channel is still in service
-    int run_length;                     // run length of the last active cycle
+    double last_state_transition_TS;    // closest state transition of the last packet txed
+    int last_run_length;                // run length of the last in_serivice state
+    int run_length;                     // run length of the current in_service state
     int end_of_run_flag;                // previous run length finished with last packet
+    int pending_packet_count;           // number of packets pending to be txed when channel goes in service
+    int critical;                       // 1 if this pending packet used by dedup
+    int enable_indicator; 
+    int indicator;                      // indicator function to mark start of critical pkt delivery
 
     // structures associated with current packet
     struct s_avgqdata *avgqdp; 
@@ -352,8 +360,8 @@ void carrier_metadata_clients (int print_header, struct s_session *ssp, struct f
 // prints program usage
 void print_usage (void);
 
-// tracks length of reasonably fast service of a resuming channel
-void run_length_state_machine (struct s_carrier *cp);
+// tracks length in packets reasoably faset (occ<=10) of service of a resuming channel
+void run_length_state_machine (struct s_carrier *cp, struct s_service *sd, int len_sd);
 
 // returns the next channel state
 int channel_state_machine (int channels_in_service, struct s_carrier *cp);
@@ -387,8 +395,6 @@ void skip_combined_md_file_header (FILE *fp);
 
 void skip_carrier_md_file_header (FILE *fp, char *cname);
 
-void skip_combined_md_file_header (FILE *fp);
-
 void print_command_line (FILE *fp);
 
 // returns number of enteries found in the gps file
@@ -399,6 +405,9 @@ void read_cd (char *);
 
 // reads latency log file in ld array
 void read_ld (FILE *);
+
+// reads service log file in sd array
+void read_sd (FILE *);
 
 // reads transmit log file into td array 
 void read_td (FILE *);
@@ -413,6 +422,9 @@ void read_brmd (FILE *fp);
 
 // reads bit-rate modulation file into avgqd array sorted by timestamp
 void read_avgqd (FILE *fp);
+
+// returns pointer to equal to or closest smaller mdp to the specified camera_epoch_ms
+struct s_metadata *find_closest_mdp (double camera_epoch_ms, struct s_metadata *headp, int len);
 
 // returns pointer to equal to or closest smaller brmdata to the specified epoch_ms
 struct s_brmdata *find_closest_brmdp (double epoch_ms, struct s_brmdata *headp, int len);
@@ -457,7 +469,8 @@ char    tx_pre[500], *tx_prep = tx_pre;         // transmit log prefix not inclu
 char    brm_pre[500], *brm_prep = brm_pre;      // bit-rate modulation log file
 char    avgq_pre[500], *avgq_prep = avgq_pre;   // rolling average queue size log file
 char    rx_pre[500], *rx_prep = rx_pre;         // receive side meta data prefix not including the .csv extension
-char    la_pre[500], *la_prep = la_pre;         // latency file prefix 
+char    ld_pre[500], *ld_prep = ld_pre;         // latency file prefix 
+char    sd_pre[500], *sd_prep = sd_pre;         // service file prefix 
 FILE    *md_fp = NULL;                          // meta data file name
 FILE    *an_fp = NULL;                          // annotation file name
 FILE    *fs_fp = NULL;                          // frame statistics output file
@@ -469,6 +482,7 @@ FILE    *c2_fp = NULL;                          // carrier 0 meta data file
 FILE    *gps_fp = NULL;                         // gps data file
 FILE    *td_fp = NULL;                          // transmit log data file
 FILE    *ld_fp = NULL;                          // latency log data file
+FILE    *sd_fp = NULL;                          // service log data file
 FILE    *brmd_fp = NULL;                        // bit-rate modulation data file pointer
 FILE    *avgqd_fp = NULL;                       // rolling average queue size data file pointer
 FILE    *warn_fp = NULL;                        // warning outputs go to this file
@@ -479,7 +493,8 @@ unsigned anlist[MAX_NUM_OF_ANNOTATIONS][2];     // mmanual annotations
 int     len_anlist=0;                           // length of the annotation list
 int     have_carrier_metadata = 0;              // set to 1 if per carrier meta data is available
 int     have_tx_log = 0;                        // set to 1 if transmit log is available
-int     have_la_log = 0;                        // set to 1 if latency log is available
+int     have_ld_log = 0;                        // set to 1 if latency log is available
+int     have_sd_log = 0;                        // set to 1 if service log is available
 int     have_brm_log = 0;                       // 1 if bit-rate modulation log is available
 int     have_avgq_log = 0;                      // 1 if rolling average log is available
 int     new_sendertime_format = 2;              // set to 1 if using embedded sender time format
@@ -493,6 +508,7 @@ char    comamnd_line[5000];                     // string store the command line
 
 // globals - storage
 struct  s_metadata md[MD_BUFFER_SIZE];           // buffer to store meta data lines*/
+int     len_md=1; 
 int     md_index;                               // current meta data buffer pointer
 struct  s_gps gps[MAX_GPS];                     // gps data array 
 int	    len_gps; 		                        // length of gps array
@@ -510,6 +526,8 @@ int     len_sd;
 struct  s_latency *ld0=NULL, *ld1=NULL, *ld2=NULL;  // latency log data array sorted by packet num
 struct  s_latency *ls0=NULL, *ls1=NULL, *ls2=NULL;  // latency log data array sorted by bp_epoch_ms
 int     len_ld0=0, len_ld1=0, len_ld2=0;
+struct  s_service *sd0=NULL, *sd1=NULL, *sd2=NULL;  // serivce log data array sorted by state transition time
+int     len_sd0=0, len_sd1=0, len_sd2=0;
 
 int main (int argc, char* argv[]) {
     struct  s_metadata *cmdp, *lmdp;             // last and current meta data lines
@@ -540,9 +558,14 @@ int main (int argc, char* argv[]) {
             strcpy (tx_prep, *++argv); 
         }
 
-        else if (strcmp (*argv, "-la_pre") == MATCH) {
-            strcpy (la_prep, *++argv); 
-            have_la_log = 1; 
+        else if (strcmp (*argv, "-ld_pre") == MATCH) {
+            strcpy (ld_prep, *++argv); 
+            have_ld_log = 1; 
+        }
+        
+        else if (strcmp (*argv, "-sd_pre") == MATCH) {
+            strcpy (sd_prep, *++argv); 
+            have_sd_log = 1; 
         }
         
         // bit-rate modulation logfile
@@ -565,10 +588,11 @@ int main (int argc, char* argv[]) {
         // short tx prefix
         else if (strcmp (*argv, "-stx_pre") == MATCH) {
             sprintf (tx_prep, "%s_%s", "uplink_queue", *++argv); 
-            sprintf (la_prep, "%s_%s", "latency", *argv); 
+            sprintf (ld_prep, "%s_%s", "latency", *argv); 
+            sprintf (sd_prep, "%s_%s", "service", *argv); 
             sprintf (brm_prep, "%s_%s", "bitrate", *argv); 
             sprintf (avgq_prep, "%s_%s", "avgQ", *argv); 
-            have_tx_log = have_la_log = have_brm_log = have_avgq_log = 1; 
+            have_tx_log = have_ld_log = have_sd_log = have_brm_log = have_avgq_log = 1; 
         }
 
         // per carrier meta data availabiliyt
@@ -710,16 +734,30 @@ int main (int argc, char* argv[]) {
     }
 
     // latency log file
-    if (have_la_log) {
-         sprintf (bp, "%s%s.log", ipathp, la_prep); 
+    if (have_ld_log) {
+         sprintf (bp, "%s%s.log", ipathp, ld_prep); 
         if ((ld_fp = open_file (bp, "r")) != NULL) {
                 read_ld(ld_fp);
+        }
+    }
+
+    // service log file
+    if (have_sd_log) {
+         sprintf (bp, "%s%s.log", ipathp, sd_prep); 
+        if ((sd_fp = open_file (bp, "r")) != NULL) {
+                read_sd(sd_fp);
         }
     }
 
     // dedup metadata file
     sprintf (bp, "%s%s.csv", ipathp, rx_prep);
     md_fp = open_file (bp, "r");
+    skip_combined_md_file_header (md_fp);
+    while (read_md (0, md_fp, md+len_md) != 0) {
+        len_md++; 
+        if (md_index == MD_BUFFER_SIZE) 
+            FATAL("Dedump meta data buffer full. Increase MD_BUFFER_SIZE\n", "")
+    }
         
     // per carrier meta data files
     if (have_carrier_metadata) {
@@ -766,8 +804,19 @@ int main (int argc, char* argv[]) {
     // print_command_line (ss_fp);
 
     // while there are more lines to read from the meta data file
-    skip_combined_md_file_header (md_fp);
-    while (read_md (0, md_fp, cmdp) != 0) { 
+//    skip_combined_md_file_header (md_fp);
+//    while (read_md (0, md_fp, cmdp) != 0) { 
+    while (md_index < len_md) { 
+        cmdp = md + md_index; 
+
+        /*
+        // fill out the camera_epoch_ms if empty
+        if (cmdp->camera_epoch_ms == 0)
+            cmdp->camera_epoch_ms = lmdp->camera_epoch_ms; 
+        */
+        
+        if (cmdp->camera_epoch_ms == 0)
+            printf ("camera_epoch=0\n");
 
         //  if first frame then skip till a clean frame start 
         if (waiting_for_first_frame) {
@@ -874,9 +923,12 @@ int main (int argc, char* argv[]) {
             update_session_packet_stats (cfp, cmdp, ssp);
         } // start of a new frame
 
+        if (cmdp->camera_epoch_ms == 0)
+            printf ("camera_epoch=0\n");
+
         md_index = (md_index + 1) % MD_BUFFER_SIZE; 
         lmdp = cmdp;
-        cmdp = &md[md_index]; 
+        cmdp = md+md_index; 
     } // while there are more lines to be read from the meta data file
 
     if (waiting_for_first_frame) { // something horribly wrong
@@ -926,7 +978,7 @@ struct s_service *find_closest_sdp (double epoch_ms, struct s_service *sdp, int 
 
 } // find_closest_sdp
 
-// returns pointer to the sdp equal to or closest smaller ldp to the specified epoch_ms
+// returns pointer to the ldp equal to or closest smaller ldp to the specified epoch_ms
 struct s_latency *find_ldp_by_packet_num (int packet_num, double rx_epoch_ms, struct s_latency *ldp, int len_ld) {
 
     struct  s_latency  *left, *right, *current;    // current, left and right index of the search
@@ -958,7 +1010,7 @@ struct s_latency *find_ldp_by_packet_num (int packet_num, double rx_epoch_ms, st
     return left;
 } // find_ldp_by_packet_num
 
-// returns pointer to the sdp equal to or closest smaller sdp to the specified epoch_ms
+// returns pointer to the ldp equal to or closest smaller ldp to the specified epoch_ms
 struct s_latency *find_closest_ldp_by_bp_epoch_ms (double epoch_ms, struct s_latency *ldp, int len_ld) {
 
     struct  s_latency  *left, *right, *current;    // current, left and right index of the search
@@ -1069,6 +1121,45 @@ int read_ld_line (FILE *fp, int ch, struct s_latency *ldp) {
     return 1;
 } // end of read_ld_line
 
+void read_sd (FILE *fp) {
+
+    // allocate storate for service data log
+    sd0 = (struct s_service *) malloc (sizeof (struct s_latency) * SD_BUFFER_SIZE); 
+    sd1 = (struct s_service *) malloc (sizeof (struct s_latency) * SD_BUFFER_SIZE); 
+    sd2 = (struct s_service *) malloc (sizeof (struct s_latency) * SD_BUFFER_SIZE); 
+
+    if (sd0==NULL || sd1==NULL || sd2==NULL)
+        FATAL("Could not allocate storage to read the service log file in an array%s\n", "")
+
+    int i; 
+    struct s_service *sdp;
+	int *len_sdp;
+    
+    for (i=0; i<3; i++) {
+
+        printf ("Reading service log data file for channel %d\n", i); 
+
+        sdp = i==0? sd0 : i==1? sd1 : sd2; 
+        len_sdp = i==0? &len_sd0 : i==1? &len_sd1 : &len_sd2; 
+        
+    	// read latency log file into array and sort it
+    	while (read_sd_line (fp, i, sdp)) {
+    		(*len_sdp)++;
+    		if (*len_sdp == SD_BUFFER_SIZE)
+    		    FATAL ("Service data array is not large enough to read the log file. Increase SD_BUFFER_SIZE%S\n", "")
+    		sdp++;
+    	} // while there are more lines to be read
+    
+    	if (*len_sdp == 0)
+    		FATAL("service log file is empty%s", "\n")
+    
+        fseek (fp, 0, SEEK_SET); 
+
+    } // for each channel
+
+    return; 
+} // end of read_sd
+
 // reads carrier metadata files in cd arrays
 void read_ld (FILE *fp) {
 
@@ -1106,7 +1197,7 @@ void read_ld (FILE *fp) {
     	} // while there are more lines to be read
     
     	if (*len_ldp == 0)
-    		FATAL("Bit rate modulation log file is empty%s", "\n")
+    		FATAL("latency data log file is empty%s", "\n")
     
         // sort 
         ldp = i==0? ld0 : i==1? ld1 : ld2; 
@@ -1883,7 +1974,7 @@ int check_annotation (unsigned frame_num) {
 // prints program usage
 void print_usage (void) {
     char    *usage1 = "Usage: vqfilter [-help] [-v] [-l <ddd>] [-b <dd.d>] [-fc <ddd>] [-ff <ddd>] [-j <dd>] [-ns1|ns2]  [-sa] [-ml <d>] [-mt <dddd>] ";
-    char    *usage2 = "[-a <file name>] [-gps <prefex>] [-tx_pre <prefix>] [-la_pre <prefix>] [-brm_pre <prefix>] [-avgq_pre <prefix>]i [-mdc] -ipath -opath -rx_pre <prefix>";
+    char    *usage2 = "[-a <file name>] [-gps <prefex>] [-tx_pre <prefix>] [-ld_pre <prefix>] [-brm_pre <prefix>] [-avgq_pre <prefix>]i [-mdc] -ipath -opath -rx_pre <prefix>";
     printf ("%s%s\n", usage1, usage2);
     printf ("\t-v enables full output - all 3, session, frame and late_frame files. Default 1 (enabled)\n");
     printf ("\t-l <ddd> is the maximumum acceptable camera to rx latency in ms. Default 110ms. Frames with longer lantency marked late.\n");
@@ -2105,7 +2196,7 @@ void emit_packet_header (FILE *ps_fp) {
     // per carrier meta data
     int i; 
     for (i=0; i<3; i++) {
-        fprintf (ps_fp, "C%d: c2r, c2v, t2r, r2t, est_t2r, ert, socc, MMbps, retx, rlen, cr,", i); 
+        fprintf (ps_fp, "C%d: c2r, c2v, t2r, r2t, est_t2r, ert, socc, MMbps, retx, ppkts, tgap, cr, I, rlen,", i); 
         fprintf (ps_fp, "tx_TS, rx_TS, r2t_TS, ert_TS, socc_TS, bp_pkt_TS, bp_pkt, bp_t2r,"); 
         fprintf (ps_fp, "Ravg, IS, qst, qsz, avg_ms, avg_pkt,");
     }
@@ -2133,8 +2224,10 @@ void init_packet_stats (
     cp->cdhead = cdhead; 
     cp->len_cd = len_cd;
     cp->csp = csp; 
+    cp->last_run_length = 0;        // not started any transmission yet
     cp->run_length = 0;             // not started any transmission yet
     cp->end_of_run_flag = 0;        // no run finished yet
+    cp->last_state_transition_TS = 0; 
     cp->waiting_to_go_out_of_service = 0; // so that a run can start with the first packet
     return;
 } // init_packet_stats
@@ -2172,13 +2265,58 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
         return;
 } // emit_frame_stats_for_per_packet_file
 
-// tracks length of reasonably fast service of a resuming channel
+// tracks length in packets reasoably faset (occ<=10) of service of a resuming channel
+void run_length_state_machine (struct s_carrier *cp, struct s_service *sd, int len_sd) {
+
+    struct s_service *closest_state_transition = find_closest_sdp (cp->tx_epoch_ms, sd, len_sd);
+    double closest_state_transition_TS =  closest_state_transition->state_transition_epoch_ms; 
+
+    // if a run finished with the previous packet, reset run state
+    if (cp->end_of_run_flag) {
+        cp->last_run_length = 0; 
+        cp->end_of_run_flag = 0; 
+    }
+    // if this channel did not participate in this transaction than run has ended
+    if (cp->run_length) { // a run is in progress
+
+        if (cp->tx) { // previous run continuing or finished and a new one started
+            if (closest_state_transition_TS == cp->last_state_transition_TS)
+                // current run is continuing
+                cp->run_length++;
+            else { // previous run finished and a new one started with this packet
+                cp->last_run_length = cp->run_length; 
+                cp->run_length = 1; 
+                cp->end_of_run_flag = 1; 
+                cp->enable_indicator = 1;
+            } // previous run finished and a new one started with this packet
+        } else { // previous run finshed and a new run did not start
+                cp->last_run_length = cp->run_length; 
+                cp->run_length = 0; 
+                cp->end_of_run_flag = 1; 
+        } // previous run finshed and a new run did not start
+
+    } else { // no run is in progress
+        // check for start of a run
+        if (cp->tx) {
+            cp->run_length = 1; 
+            cp->enable_indicator = 1;
+        } // a new run started
+    } // no run in progress
+
+    if (cp->tx)
+        cp->last_state_transition_TS = closest_state_transition_TS; 
+
+    return; 
+} // run_length_state_machine
+
+/*
 void run_length_state_machine (struct s_carrier *cp) {
 
     // if a run finished with the previous packet, reset run state
     if (cp->end_of_run_flag) {
         cp->run_length = 0; 
         cp->end_of_run_flag = 0; 
+        cp->enable_indicator = 0; 
     }
     
     // now wait for the channel to go out of service 
@@ -2188,6 +2326,7 @@ void run_length_state_machine (struct s_carrier *cp) {
     else if (cp->run_length == 0) { // a run is not active
         if (cp->tx) // start of a run
             cp->run_length = 1; 
+            cp->enable_indicator = 1; 
     } // start of a run
     else { // active run
         if (cp->tx && (cp->socc <= 10)) // run continues
@@ -2198,8 +2337,12 @@ void run_length_state_machine (struct s_carrier *cp) {
         }
     } // active run
 
+    // if start of a run then compute how many packets are pending in the encoder queue
+
+
     return;
 } // run_length_state_machine
+*/
 
 /*
 // returns the next channel state
@@ -2257,10 +2400,34 @@ void carrier_metadata_clients (
         channel_state_machine (channels_in_service, c2p); 
         */
 
-       // run length state machine 
-       run_length_state_machine (c0p); 
-       run_length_state_machine (c1p); 
-       run_length_state_machine (c2p); 
+        // run length state machine 
+        run_length_state_machine (c0p, sd0, len_sd0); 
+        run_length_state_machine (c1p, sd1, len_sd1); 
+        run_length_state_machine (c2p, sd2, len_sd2); 
+
+        // if start of the run then find how many packets are in the channel's transmit queue
+        // when the run starts cxp is the first packet that the channel is going to transmit
+        // so find the closest packet whose camera_epoch_ms is less than the tx_epoch_ms of this packet
+        int j; 
+        for (j=0; j<3; j++) {
+            struct s_carrier *tmp_cp = j==0? c0p : j==1? c1p : c2p; 
+            // struct s_cmetadata *tmp_cd = j==0? cd0 : j==1? cd1 : cd2; 
+            // int len_cd = j==0? len_cd0 : j==1? len_cd1 : len_cd2; 
+            if (tmp_cp->run_length == 1) { // channel going in service
+                struct s_metadata *txlastp = find_closest_mdp (tmp_cp->tx_epoch_ms, md, len_md);
+                tmp_cp->pending_packet_count = txlastp->packet_num - tmp_cp->packet_num + 1; 
+            } // channel going in service
+
+            tmp_cp->critical = 
+                (tmp_cp->run_length <= tmp_cp->pending_packet_count) && (mdp->ch == j)? 
+                tmp_cp->run_length : 0; 
+            
+            if (tmp_cp->enable_indicator && tmp_cp->critical) {
+                tmp_cp->indicator = 1; 
+                tmp_cp->enable_indicator = 0; 
+            } else if (tmp_cp->indicator) // reset the indicator if set
+                tmp_cp->indicator = 0; 
+        } // for each channel
 
         // per carrier packet stats
         struct s_brmdata *brmdp;
@@ -2529,6 +2696,30 @@ struct s_brmdata *find_closest_brmdp (double epoch_ms, struct s_brmdata *headp, 
 
 } // find_closest_brmdp
 
+// returns pointer to equal to or closest smaller mdp to the specified camera_epoch_ms
+struct s_metadata *find_closest_mdp (double camera_epoch_ms, struct s_metadata *headp, int len) {
+
+    struct  s_metadata  *left, *right, *current;    // current, left and right index of the search
+
+    left = headp; right = headp + len - 1; 
+
+    current = left + (right - left)/2; 
+    while (current != left) { // there are more than 2 elements to search
+        if (camera_epoch_ms > current->camera_epoch_ms)
+            left = current;
+        else
+            right = current; 
+        current = left + (right - left)/2; 
+    } // while there are more than 2 elements left to search
+    
+    // when the while exits, the current is equal to (if current = left edge) or less than camera_epoch_ms
+    if ((current+1)->camera_epoch_ms == camera_epoch_ms)
+        return current+1; 
+    else 
+        return current; 
+
+} // find_closest_mdp
+
 // returns pointer to equal to or avgqdata closest to the specified packet number with closest tx_epoc
 struct s_avgqdata *find_avgqdp (int packet_num, double tx_epoch_ms, struct s_avgqdata *avgqdatap, int len_avgqd) {
 
@@ -2658,12 +2849,22 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
 	    if (cp->len_ld) fprintf (ps_fp, "%0.1f,", cp->est_t2r_ms);                              // est_t2r
         if (cp->len_ld) fprintf (ps_fp, "%.0f,", cp->ert_ms); else fprintf (ps_fp, ",");        // ert
         fprintf (ps_fp, "%d,", cp->socc);                                                       // socc
-        if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000); 
-        else fprintf (ps_fp, ",");  // MMbps
+        if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000);          // MMbps
+        else fprintf (ps_fp, ",");                                                              
         fprintf (ps_fp, "%d,", cp->retx);                                                       // retx
-        if (cp->end_of_run_flag) fprintf(ps_fp, "%d,", cp->run_length); else fprintf (ps_fp,","); // rlen
-        fprintf (ps_fp, "%d,", 
-            cp->run_length && (cp->run_length <= CRITICAL_RUN_LENGTH) && (mdp->ch == carrier_num)? 1 : 0); 
+        if ((cp->run_length == 1) || (cp->indicator == 1)) { // channel entering service
+            fprintf(ps_fp, "%d,", cp->pending_packet_count); 
+            fprintf (ps_fp, "%d,", (int) (cp->tx_epoch_ms - fp->camera_epoch_ms)); 
+        }
+        else {
+            fprintf (ps_fp,","); // pending packet count
+            fprintf (ps_fp,","); // pending packets time gap
+        }
+        fprintf (ps_fp, "%d,", cp->critical); // cr
+        fprintf (ps_fp, "%d,", cp->indicator); // I
+        if (cp->end_of_run_flag) 
+            fprintf(ps_fp, "%d,", cp->last_run_length); // rlen
+        else fprintf (ps_fp,","); 
 
 	    fprintf (ps_fp, "%.0lf,", cp->tx_epoch_ms);                                             // tx_TS
 	    fprintf (ps_fp, "%.0lf,", cp->rx_epoch_ms);                                             // rx_TS
@@ -2693,8 +2894,11 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
         fprintf (ps_fp, "%d,", cp->socc);
         if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000); else fprintf (ps_fp, ",");
         fprintf (ps_fp, ",");       // retx
-        if (cp->end_of_run_flag) fprintf(ps_fp, "%d,", cp->run_length); else fprintf (ps_fp,",");
-        fprintf (ps_fp, ","); 
+        fprintf (ps_fp, ",");       // pending_packet_count
+        fprintf (ps_fp, ",");       // pending packets time gap
+        fprintf (ps_fp, ",");       // cr
+        fprintf (ps_fp, ",");       // indicator function
+        if (cp->end_of_run_flag) fprintf(ps_fp, "%d,", cp->last_run_length); else fprintf (ps_fp,",");
 
         fprintf (ps_fp, ",");       // tx_TS
         fprintf (ps_fp, ",");       // rx_TS
@@ -2877,6 +3081,8 @@ int read_md (int skip_header, FILE *fp, struct s_metadata *p) {
 
         else { // successful scan
             decode_sendtime (&p->vx_epoch_ms, &p->tx_epoch_ms, &p->socc);
+            if (p->camera_epoch_ms == 0)
+                p->camera_epoch_ms = (p-1)->camera_epoch_ms; 
             return 1;
         } // successful scan
 
