@@ -45,7 +45,7 @@
 #define MAX_T2R_LATENCY 100
 #define MIN_T2R_LATENCY 10
 // #define FRAME_PERIOD_MS 33.34 33.34049421
-#define FRAME_PERIOD_MS 33.34049421193 
+#define FRAME_PERIOD_MS 33.36490893
 #define MAX_GPS			25000				// maximum entries in the gps file. fatal if there are more.
 #define TX_BUFFER_SIZE (20*60*1000)
 #define CD_BUFFER_SIZE (20*60*1000)
@@ -238,7 +238,10 @@ struct s_carrier {
     int last_run_length;                // run length of the last in_serivice state
     int run_length;                     // run length of the current in_service state
     int end_of_run_flag;                // previous run length finished with last packet
+    int fast_run_length;                // # of packets with socc < 10 in a run
+    int last_fast_run_length;           // # of packets in the last fast run
     int pending_packet_count;           // number of packets pending to be txed when channel goes in service
+    int tgap;                           // gen time of the lastest packet - tx time of resuming packet
     int critical;                       // 1 if this pending packet used by dedup
     int enable_indicator; 
     int indicator;                      // indicator function to mark start of critical pkt delivery
@@ -592,7 +595,7 @@ int main (int argc, char* argv[]) {
             sprintf (sd_prep, "%s_%s", "service", *argv); 
             sprintf (brm_prep, "%s_%s", "bitrate", *argv); 
             sprintf (avgq_prep, "%s_%s", "avgQ", *argv); 
-            have_tx_log = have_ld_log = have_sd_log = have_brm_log = have_avgq_log = 1; 
+            have_tx_log = have_ld_log = have_sd_log = have_brm_log = have_avgq_log = 1;
         }
 
         // per carrier meta data availabiliyt
@@ -1249,7 +1252,9 @@ int read_sd_line (FILE *fp, int ch, struct s_service *sdp) {
             dummy_str, &dummy_int,
             dummy_str, &sdp->state_transition_epoch_ms, 
             dummy_str, &sdp->bp_packet_num)) !=23)
-        || channel !=ch) {
+        || channel !=ch // skip if not this channel
+        // collect only going in service timestampls
+        || (strcmp(state_str, "change to out-of-service state") == 0)) {
 
         if (n != 23) // did not successfully parse this line
             FWARN(warn_fp, "read_sd_line: Skipping line %s\n", sdlinep);
@@ -1261,7 +1266,7 @@ int read_sd_line (FILE *fp, int ch, struct s_service *sdp) {
     } // while not successfully scanned a transmit log line
 
     if (strcmp(state_str, "change to out-of-service state") == 0)
-        sdp->state = 0; 
+        sdp->state = 0;  // should not happen
     else if (strcmp(state_str, "change to in-service state") == 0)
         sdp->state = 1; 
     else
@@ -1558,9 +1563,10 @@ void read_avgqd (FILE *fp) {
     	} // while there are more lines to be read
     
     	if (*len_avgqdp == 0)
-    		FATAL("Bit rate modulation log file is empty%s", "\n")
+    		FATAL("AVGQ log file is empty%s", "\n")
     
         avgqdp = i==0? avgqd0 : i==1? avgqd1 : avgqd2; 
+        printf ("Sorting rolling average data\n");
         sort_avgqd (avgqdp, *len_avgqdp); // sort by packet num
 
         fseek (fp, 0, SEEK_SET); 
@@ -1653,6 +1659,7 @@ void read_td (FILE *fp) {
         len_td = i==0? &len_td0 : i==1? &len_td1 : &len_td2; 
 
 		// read tx log file into array and sort it
+        printf ("Reading uplink queue size file for channel %d\n", i);
 		while (read_td_line (fp, i, tdp)) {
 		    (*len_td)++;
 		    if (*len_td == TX_BUFFER_SIZE)
@@ -1660,8 +1667,8 @@ void read_td (FILE *fp) {
 		    tdp++;
 		} // while there are more lines to be read
 
-		if (*len_td == 0)
-		    FATAL("Meta data file is empty%s", "\n")
+		// if (*len_td == 0)
+		   // FATAL("Meta data file is empty%s", "\n")
 
 		// sort by timestamp
         tdp = i==0? td0 : i==1? td1 : td2; 
@@ -2117,6 +2124,7 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "anno, ");
     fprintf (fp, "0fst, ");
     fprintf (fp, "SzB, ");
+    fprintf (fp, "EMbps,");
     fprintf (fp, "Lat, ");
     fprintf (fp, "Lon, ");
     fprintf (fp, "Spd, ");
@@ -2196,7 +2204,7 @@ void emit_packet_header (FILE *ps_fp) {
     // per carrier meta data
     int i; 
     for (i=0; i<3; i++) {
-        fprintf (ps_fp, "C%d: c2r, c2v, t2r, r2t, est_t2r, ert, socc, MMbps, retx, ppkts, tgap, cr, I, rlen,", i); 
+        fprintf (ps_fp, "C%d: c2r, c2v, t2r, r2t, est_t2r, ert, socc, MMbps, retx, tgap, ppkts, cr, I, rlen, flen, I,", i); 
         fprintf (ps_fp, "tx_TS, rx_TS, r2t_TS, ert_TS, socc_TS, bp_pkt_TS, bp_pkt, bp_t2r,"); 
         fprintf (ps_fp, "Ravg, IS, qst, qsz, avg_ms, avg_pkt,");
     }
@@ -2227,6 +2235,8 @@ void init_packet_stats (
     cp->last_run_length = 0;        // not started any transmission yet
     cp->run_length = 0;             // not started any transmission yet
     cp->end_of_run_flag = 0;        // no run finished yet
+    cp->fast_run_length = 0;             // not started any transmission yet
+    cp->last_fast_run_length = 0; 
     cp->last_state_transition_TS = 0; 
     cp->waiting_to_go_out_of_service = 0; // so that a run can start with the first packet
     return;
@@ -2255,7 +2265,9 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
         // Delivered packet meta data
         fprintf (ps_fp, "%u, ", mdp->retx);
         fprintf (ps_fp, "%u, ", mdp->ch);
-        fprintf (ps_fp, "%.1f, ", ((float) mdp->kbps)/1000);
+        if (mdp->kbps > 0) 
+            fprintf (ps_fp, "%.1f, ", ((float) mdp->kbps)/1000);
+        else fprintf (ps_fp, ","); 
         fprintf (ps_fp, "%.0lf, ", mdp->tx_epoch_ms);
         fprintf (ps_fp, "%.0lf, ", mdp->rx_epoch_ms);
         fprintf (ps_fp, "%.1f, ", mdp->rx_epoch_ms - fp->camera_epoch_ms);
@@ -2265,7 +2277,7 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
         return;
 } // emit_frame_stats_for_per_packet_file
 
-// tracks length in packets reasoably faset (occ<=10) of service of a resuming channel
+// tracks length in packets before a resuming channel goes out of service again
 void run_length_state_machine (struct s_carrier *cp, struct s_service *sd, int len_sd) {
 
     struct s_service *closest_state_transition = find_closest_sdp (cp->tx_epoch_ms, sd, len_sd);
@@ -2274,31 +2286,45 @@ void run_length_state_machine (struct s_carrier *cp, struct s_service *sd, int l
     // if a run finished with the previous packet, reset run state
     if (cp->end_of_run_flag) {
         cp->last_run_length = 0; 
+        cp->last_fast_run_length = 0; 
         cp->end_of_run_flag = 0; 
     }
-    // if this channel did not participate in this transaction than run has ended
-    if (cp->run_length) { // a run is in progress
 
+    if (cp->run_length) { // a run is in progress
         if (cp->tx) { // previous run continuing or finished and a new one started
-            if (closest_state_transition_TS == cp->last_state_transition_TS)
+            if (closest_state_transition_TS == cp->last_state_transition_TS) {
                 // current run is continuing
                 cp->run_length++;
-            else { // previous run finished and a new one started with this packet
+                if (cp->fast_run_length) { // fast run is in progress
+                    if (cp->socc <=10) // fast run continuing
+                        cp->fast_run_length++;
+                    else { // fast run ended
+                        cp->last_fast_run_length = cp->fast_run_length; 
+                        cp->fast_run_length = 0; 
+                    }
+                } 
+            } else { // previous run finished and a new one started with this packet
                 cp->last_run_length = cp->run_length; 
+                if (cp->fast_run_length) // if the fast run already ended no need to update
+                    cp->last_fast_run_length = cp->fast_run_length; 
                 cp->run_length = 1; 
+                cp->fast_run_length = 1; 
                 cp->end_of_run_flag = 1; 
                 cp->enable_indicator = 1;
             } // previous run finished and a new one started with this packet
         } else { // previous run finshed and a new run did not start
                 cp->last_run_length = cp->run_length; 
+                if (cp->fast_run_length) // if the fast run already ended no need to update
+                    cp->last_fast_run_length = cp->fast_run_length; 
                 cp->run_length = 0; 
+                cp->fast_run_length = 0; 
                 cp->end_of_run_flag = 1; 
         } // previous run finshed and a new run did not start
-
     } else { // no run is in progress
         // check for start of a run
         if (cp->tx) {
             cp->run_length = 1; 
+            cp->fast_run_length = 1; 
             cp->enable_indicator = 1;
         } // a new run started
     } // no run in progress
@@ -2416,6 +2442,7 @@ void carrier_metadata_clients (
             if (tmp_cp->run_length == 1) { // channel going in service
                 struct s_metadata *txlastp = find_closest_mdp (tmp_cp->tx_epoch_ms, md, len_md);
                 tmp_cp->pending_packet_count = txlastp->packet_num - tmp_cp->packet_num + 1; 
+                tmp_cp->tgap = (int) (tmp_cp->tx_epoch_ms - fp->camera_epoch_ms); 
             } // channel going in service
 
             tmp_cp->critical = 
@@ -2432,7 +2459,9 @@ void carrier_metadata_clients (
         // per carrier packet stats
         struct s_brmdata *brmdp;
         brmdp = mdp->ch==0? c0p->brmdp : mdp->ch==1? c1p->brmdp : c2p->brmdp;  
-        mdp->kbps = mdp->ch==0? c0p->tdp->actual_rate : mdp->ch==1? c1p->tdp->actual_rate : c2p->tdp->actual_rate;
+        mdp->kbps = mdp->ch==0? (len_td0? c0p->tdp->actual_rate : -1) : 
+                    mdp->ch==1? (len_td1? c1p->tdp->actual_rate : -1) : 
+                    (len_td2? c2p->tdp->actual_rate : -1);
         emit_frame_stats_for_per_packet_file (fp, mdp, brmdp); 
 	    emit_packet_stats (c0p, mdp, 0, fp);
 	    emit_packet_stats (c1p, mdp, 1, fp);
@@ -2551,6 +2580,7 @@ void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1
     fprintf (fs_fp, "%u, ", p->has_annotation);
     fprintf (fs_fp, "%d, ", (p->fast_channel_count != p->packet_count)); 
     fprintf (fs_fp, "%u, ", p->size);
+    fprintf (fs_fp, "%.1f,", (p->size*8)/FRAME_PERIOD_MS/1000); 
     fprintf (fs_fp, "%lf, ", p->coord.lat);
     fprintf (fs_fp, "%lf, ", p->coord.lon);
     fprintf (fs_fp, "%.1f, ", p->speed);
@@ -2853,18 +2883,25 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
         else fprintf (ps_fp, ",");                                                              
         fprintf (ps_fp, "%d,", cp->retx);                                                       // retx
         if ((cp->run_length == 1) || (cp->indicator == 1)) { // channel entering service
-            fprintf(ps_fp, "%d,", cp->pending_packet_count); 
-            fprintf (ps_fp, "%d,", (int) (cp->tx_epoch_ms - fp->camera_epoch_ms)); 
+            fprintf (ps_fp, "%d,", cp->tgap);                                                   // tgap
+            fprintf(ps_fp, "%d,", cp->pending_packet_count);                                    // pptks
         }
         else {
-            fprintf (ps_fp,","); // pending packet count
             fprintf (ps_fp,","); // pending packets time gap
+            fprintf (ps_fp,","); // pending packet count
         }
         fprintf (ps_fp, "%d,", cp->critical); // cr
         fprintf (ps_fp, "%d,", cp->indicator); // I
-        if (cp->end_of_run_flag) 
+        if (cp->end_of_run_flag) {
             fprintf(ps_fp, "%d,", cp->last_run_length); // rlen
-        else fprintf (ps_fp,","); 
+            fprintf(ps_fp, "%d,", cp->last_fast_run_length); // flen 
+            fprintf (ps_fp, "%d,", cp->last_run_length - cp->last_fast_run_length); // I
+        } else {
+            fprintf (ps_fp,","); // rlen
+            fprintf (ps_fp,","); // flen 
+            fprintf (ps_fp,","); // I 
+        }
+
 
 	    fprintf (ps_fp, "%.0lf,", cp->tx_epoch_ms);                                             // tx_TS
 	    fprintf (ps_fp, "%.0lf,", cp->rx_epoch_ms);                                             // rx_TS
@@ -2884,7 +2921,7 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
         if (cp->len_avgqd) fprintf (ps_fp, "%d,", cp->avgqdp->packet_num); else fprintf (ps_fp, ","); 
     } // if this carrier transmitted this meta data line, then print the carrier stats 
 
-	else { // stay silent except indicate the channel quality occ and run length
+	else { // stay silent except indicate the channel quality occ and run lengths
 	    fprintf (ps_fp, ",");       // c2r
 	    fprintf (ps_fp, ",");       // c2v
         fprintf (ps_fp, ",");       // t2r
@@ -2898,8 +2935,15 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
         fprintf (ps_fp, ",");       // pending packets time gap
         fprintf (ps_fp, ",");       // cr
         fprintf (ps_fp, ",");       // indicator function
-        if (cp->end_of_run_flag) fprintf(ps_fp, "%d,", cp->last_run_length); else fprintf (ps_fp,",");
-
+        if (cp->end_of_run_flag) {
+            fprintf(ps_fp, "%d,", cp->last_run_length); // rlen
+            fprintf(ps_fp, "%d,", cp->last_fast_run_length); // flen 
+            fprintf (ps_fp, "%d,", cp->last_run_length - cp->last_fast_run_length); // I
+        } else {
+            fprintf (ps_fp,","); // rlen
+            fprintf (ps_fp,","); // flen 
+            fprintf (ps_fp,","); // I 
+        }
         fprintf (ps_fp, ",");       // tx_TS
         fprintf (ps_fp, ",");       // rx_TS
         fprintf (ps_fp, ",");       // r2t_TS
