@@ -11,26 +11,26 @@ import (
 )
 
 func main() {
-	port := flag.String("addr", "", "port for UDP, e.g. 6007")
+	port := flag.String("port", "", "listen on this port for UDP, e.g. 6001")
+	bufSize := flag.Int("bufsize", 4096, "buffer size for incoming messages")
 	flag.Parse()
 	progName := filepath.Base(os.Args[0])
 
 	// listen to incoming udp packets
-	fullport := fmt.Sprintf(":%s", *port)
-	log.Printf("%s: port %s\n", progName, fullport)
-	pc, err := net.ListenPacket("udp", fullport)
+	log.Printf("%s: port %s\n", progName, *port)
+	pc, err := net.ListenPacket("udp", ":" + *port)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer pc.Close()
 
 	for {
-		buf := make([]byte, 1024)
+		buf := make([]byte, *bufSize)
 		n, addr, err := pc.ReadFrom(buf)
 		if err != nil {
-			continue
+			log.Fatal(err)
 		}
-		fmt.Printf("%s %d %s", addr, n, string(buf[:n]))
+		fmt.Printf("%s %d %s\n", addr, n, string(buf[:n]))
 	}
 
 }
