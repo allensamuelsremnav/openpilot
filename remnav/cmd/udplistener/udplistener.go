@@ -1,6 +1,9 @@
 // Application to debug UDP applications by listening on a port.
 package main
 
+// ncat apparently doesn't do well if there are two programs sending
+// to the port, either simultaneously or sequentially.
+
 import (
 	"flag"
 	"fmt"
@@ -18,7 +21,7 @@ func main() {
 
 	// listen to incoming udp packets
 	log.Printf("%s: port %s\n", progName, *port)
-	pc, err := net.ListenPacket("udp", ":" + *port)
+	pc, err := net.ListenPacket("udp", ":"+*port)
 	if err != nil {
 		log.Fatal(err)
 	}
