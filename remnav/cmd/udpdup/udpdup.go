@@ -3,9 +3,9 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	udp "remnav.com/remnav/net"
@@ -23,11 +23,11 @@ func main() {
 	log.Printf("%s, destination %s", os.Args[0], *dest)
 	log.Printf("%s, devices %v", os.Args[0], devices)
 
-	msgs := make(chan string)
+	msgs := make(chan []byte)
 	go udp.UDPDupDev(msgs, devices, *dest, *verbose)
 
 	for i := 0; i < *packets; i++ {
-		msgs <- fmt.Sprintf("%d", i)
+		msgs <- []byte(strconv.Itoa(i))
 		time.Sleep(1 * time.Second)
 	}
 	close(msgs)

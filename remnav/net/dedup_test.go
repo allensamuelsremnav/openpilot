@@ -1,28 +1,34 @@
 package net
 
 import (
+	"log"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 // Extract Key from comma-separated string: "type,timestamp,...."
-func getter(s string) Key {
-	tokens := strings.Split(s, ",")
-	return Key{Type: tokens[0], Timestamp: tokens[1]}
+func getter(b []byte) Key {
+	tokens := strings.Split(string(b), ",")
+	ts, ok := strconv.ParseInt(tokens[1], 10, 64)
+	if ok != nil {
+		log.Fatal(ok)
+	}
+	return Key{Type: tokens[0], Timestamp: ts}
 }
 
 // Pass raw strings through Latest filter.
 func pump(raw []string) []string {
-	rawch := make(chan string)
+	rawch := make(chan []byte)
 	go func() {
 		for _, r := range raw {
-			rawch <- r
+			rawch <- []byte(r)
 		}
 		close(rawch)
 	}()
 	var cooked []string
 	for f := range Latest(rawch, getter) {
-		cooked = append(cooked, f)
+		cooked = append(cooked, string(f))
 	}
 	return cooked
 }

@@ -5,8 +5,12 @@ import (
 	"time"
 )
 
+// https://github.com/golang/go/issues/19635
+const RFC339NanoNatural = "2006-01-02T15:04:05.000000000Z07:00"
+
 type Class struct {
 	Class string
+	Time  time.Time
 }
 
 type Device struct {

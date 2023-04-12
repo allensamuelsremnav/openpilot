@@ -8,7 +8,7 @@ import (
 )
 
 // UDPSendDev sends msgs over a named device to dest.
-func UDPSendDev(msgs <-chan string, device string, dest string, startedWG *sync.WaitGroup, completedWG *sync.WaitGroup, verbose bool) {
+func UDPSendDev(msgs <-chan []byte, device string, dest string, startedWG *sync.WaitGroup, completedWG *sync.WaitGroup, verbose bool) {
 	defer completedWG.Done()
 	// Initialize the dialer for an explicit device.
 	ibn, err := net.InterfaceByName(device)
@@ -47,18 +47,19 @@ func UDPSendDev(msgs <-chan string, device string, dest string, startedWG *sync.
 }
 
 // UDPDupDev sends duplicated messages over named devices to dest.
-func UDPDupDev(msgs <-chan string, devices []string, dest string, verbose bool) {
+func UDPDupDev(msgs <-chan []byte, devices []string, dest string, verbose bool) {
 	// Make a parallel array of channels and goroutines.
 	// This WaitGroup to be sure the senders are ready to receive.
 	var startedWG sync.WaitGroup
 	// This WaitGroup for all senders to complete.
 	var completedWG sync.WaitGroup
 
-	var chs []chan string
+	var chs []chan []byte
 	startedWG.Add(len(devices))
 	completedWG.Add(len(devices))
+
 	for _, d := range devices {
-		ch := make(chan string)
+		ch := make(chan []byte)
 		chs = append(chs, ch)
 		go UDPSendDev(ch, d, dest, &startedWG, &completedWG, verbose)
 	}
@@ -81,7 +82,7 @@ func UDPDupDev(msgs <-chan string, devices []string, dest string, verbose bool) 
 }
 
 // dup sends duplicated messages over network to destinations
-func dup(network string, msgs <-chan string, dests []string, verbose bool) {
+func dup(network string, msgs <-chan []byte, dests []string, verbose bool) {
 	var conns []net.Conn
 	for _, d := range dests {
 		conn, err := net.Dial(network, d)
@@ -105,6 +106,6 @@ func dup(network string, msgs <-chan string, dests []string, verbose bool) {
 }
 
 // UDPDup sends duplicated messages over network to destinations
-func UDPDup(msgs <-chan string, dests []string, verbose bool) {
+func UDPDup(msgs <-chan []byte, dests []string, verbose bool) {
 	dup("udp", msgs, dests, verbose)
 }
