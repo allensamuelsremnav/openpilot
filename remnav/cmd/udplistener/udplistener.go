@@ -11,17 +11,18 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 func main() {
-	port := flag.String("port", "", "listen on this port for UDP, e.g. 6001")
+	port := flag.Int("port", 6001, "listen on this port for UDP, e.g. 6001")
 	bufSize := flag.Int("bufsize", 4096, "buffer size for incoming messages")
 	flag.Parse()
 	progName := filepath.Base(os.Args[0])
 
 	// listen to incoming udp packets
-	log.Printf("%s: port %s\n", progName, *port)
-	pc, err := net.ListenPacket("udp", ":"+*port)
+	log.Printf("%s: port %d\n", progName, *port)
+	pc, err := net.ListenPacket("udp", ":"+strconv.Itoa(*port))
 	if err != nil {
 		log.Fatal(err)
 	}
