@@ -1,5 +1,9 @@
 package net
 
+import (
+	"log"
+)
+
 // All we require from Timestamp is that s < t ---> s is before t.
 type Key struct {
 	Type      string
@@ -16,6 +20,11 @@ func Latest(msgs <-chan []byte, get func(msg []byte) Key) <-chan []byte {
 		latest := make(map[string]int64)
 		for msg := range msgs {
 			key := get(msg)
+			if key.Timestamp == 0 {
+				log.Printf("message %s with zero timestamp",
+					key.Type)
+				continue
+			}
 			ts, ok := latest[key.Type]
 			if !ok || (ok && key.Timestamp > ts) {
 				latest[key.Type] = key.Timestamp

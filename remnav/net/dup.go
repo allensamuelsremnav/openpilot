@@ -38,7 +38,7 @@ func UDPSendDev(msgs <-chan []byte, device string, dest string, startedWG *sync.
 	for msg := range msgs {
 		_, err := conn.Write([]byte(msg))
 		if err != nil {
-			log.Print(err)
+			log.Printf("UDPSendDev: %v", err)
 		}
 		if verbose {
 			log.Printf("device %s, msg '%s'\n", device, msg)
@@ -70,7 +70,8 @@ func UDPDupDev(msgs <-chan []byte, devices []string, dest string, verbose bool) 
 			select {
 			case chs[j] <- msg:
 			default:
-				log.Printf("unable to send packet to %s", devices[j])
+				log.Printf("%s channel not ready, packet dropped",
+					devices[j])
 			}
 		}
 	}
