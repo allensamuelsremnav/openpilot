@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 
 	rnnet "remnav.com/remnav/net"
 )
@@ -32,15 +33,21 @@ func main() {
 
 	msgs, addrs := rnnet.Chan(pc, *bufSize)
 
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for msg := range msgs {
 			fmt.Println(string(msg))
 		}
 	}()
 
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for addr := range addrs {
 			fmt.Printf("ReadFrom %s", addr)
 		}
 	}()
+	wg.Wait()
 }
