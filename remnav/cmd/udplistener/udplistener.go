@@ -46,7 +46,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		for addr := range addrs {
-			fmt.Printf("ReadFrom %s", addr)
+			fmt.Printf("ReadFrom %s\n", addr)
 		}
 	}()
 	wg.Wait()
