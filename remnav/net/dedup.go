@@ -2,7 +2,32 @@ package net
 
 import (
 	"log"
+	"net"
 )
+
+// Make a chan for the packets and readfrom addr on a PacketConn
+func Chan(pc net.PacketConn, bufSize int) (<-chan []byte, chan net.Addr) {
+	msgs := make(chan []byte)
+	addrs := make(chan net.Addr)
+	go func() {
+		var prev net.Addr
+		for {
+			buf := make([]byte, bufSize)
+			n, addr, err := pc.ReadFrom(buf)
+			if err != nil {
+				log.Fatal(err)
+			}
+			msgs <- buf[:n]
+			if prev == nil || addr != prev {
+				prev = addr
+				addrs <- addr
+			}
+		}
+		close(msgs)
+		close(addrs)
+	}()
+	return msgs, addrs
+}
 
 // All we require from Timestamp is that s < t ---> s is before t.
 type Key struct {

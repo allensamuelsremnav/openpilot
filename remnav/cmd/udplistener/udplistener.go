@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+
+	rnnet "remnav.com/remnav/net"
 )
 
 func main() {
@@ -19,22 +21,26 @@ func main() {
 	bufSize := flag.Int("bufsize", 4096, "buffer size for incoming messages")
 	flag.Parse()
 	progName := filepath.Base(os.Args[0])
+	log.Printf("%s: port %d\n", progName, *port)
 
 	// listen to incoming udp packets
-	log.Printf("%s: port %d\n", progName, *port)
 	pc, err := net.ListenPacket("udp", ":"+strconv.Itoa(*port))
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer pc.Close()
 
-	for {
-		buf := make([]byte, *bufSize)
-		n, addr, err := pc.ReadFrom(buf)
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Printf("%s %d %s\n", addr, n, string(buf[:n]))
-	}
+	msgs, addrs := rnnet.Chan(pc, *bufSize)
 
+	go func() {
+		for msg := range msgs {
+			fmt.Println(string(msg))
+		}
+	}()
+
+	go func() {
+		for addr := range addrs {
+			fmt.Printf("ReadFrom %s", addr)
+		}
+	}()
 }
