@@ -44,9 +44,14 @@ func main() {
 
 	wg.Add(1)
 	go func() {
+		seen := make(map[net.Addr]bool)
 		defer wg.Done()
 		for addr := range addrs {
-			fmt.Printf("ReadFrom %s\n", addr)
+			_, ok := seen[addr]
+			if !ok {
+				fmt.Printf("ReadFrom %s\n", addr)
+				seen[addr] = true
+			}
 		}
 	}()
 	wg.Wait()
