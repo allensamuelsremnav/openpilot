@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <time.h>
 #define	FATAL(STR, ARG) {printf (STR, ARG); my_exit(-1);}
 #define	WARN(STR, ARG) {if (!silent) printf (STR, ARG);}
 #define	FWARN(FILE, STR, ARG) {if (!silent) fprintf (FILE, STR, ARG);}
@@ -44,6 +45,8 @@
 #define MIN_C2R_LATENCY 20
 #define MAX_T2R_LATENCY 100
 #define MIN_T2R_LATENCY 10
+#define MAX_EST_T2R_LATENCY 500
+#define MIN_EST_T2R_LATENCY 10
 // #define FRAME_PERIOD_MS 33.34 33.34049421
 #define FRAME_PERIOD_MS 33.36490893
 #define MAX_GPS			25000				// maximum entries in the gps file. fatal if there are more.
@@ -55,6 +58,11 @@
 #define SD_BUFFER_SIZE (20*60*1000)
 #define IN_SERVICE 1
 #define OUT_OF_SERVICE 0
+
+struct s_file_table_entry {
+    char rx_pre[500];           // receive side file name prefix
+    char tx_pre[500];           // transmit side file name prefix
+};
 
 struct s_service {
     int state;                  // 1=IN-SERVICE 0=OUT-OF-SERVICE
@@ -151,6 +159,9 @@ struct frame {
 	float			speed; 					// interpolated speed of this frame
 
     struct s_brmdata *brmdp;                // bit-rate modulation for this frame
+
+    int brm_changed;                        // 1 if this encoder quality state change in this frame
+    int brm_run_length;                     // valid if brm_changed==1 and counts run length of the previous brm state
 }; // frame
 
 struct stats {
@@ -159,7 +170,7 @@ struct stats {
     double      var;
     double      min;
     double      max;
-    double      distr[NUMBER_OF_BINS]; 
+    double      distr[NUMBER_OF_BINS];
 };
 
 struct s_txlog {
@@ -202,6 +213,9 @@ struct s_session {
     struct stats    v2t, *v2tp;             // best encoder to transmit for a packet
     struct stats    c2r, *c2rp;             // camera to receiver latency
     struct stats    best_t2r, *best_t2rp;   // best tx to rx delay for a packet
+    struct stats    c0_est_t2r, *c0_est_t2rp;     // estimated t2r
+    struct stats    c1_est_t2r, *c1_est_t2rp;     // estimated t2r
+    struct stats    c2_est_t2r, *c2_est_t2rp;     // estimated t2r
 };
 
 struct s_carrier {
@@ -267,6 +281,7 @@ struct s_gps {
 }; 
 
 // frees up storage before exiting
+void  my_free (); 
 int my_exit (int n);
 
 // reads a new meta data line. returns 0 if reached end of the file
@@ -287,6 +302,9 @@ void update_frame_packet_stats (
     struct frame *fp,                       // current frame pointer
     struct s_metadata *lmdp,                 // last packet's meta data
     struct s_metadata *cmdp);                // current packet's meta data; current may be NULL at EOF
+
+// called after receiving the last packet of the frame and updates brm stats
+void update_brm (struct frame *fp);
 
 // calculates and update bit-rate of n-1 frame
 void update_bit_rate (                      // updates stats of the last frame
@@ -524,8 +542,8 @@ struct  s_brmdata *brmdata = NULL;              // pointer to the brm data array
 int     len_brmd=0; 
 struct  s_avgqdata *avgqd0=NULL, *avgqd1=NULL, *avgqd2=NULL; // rolling avg data array
 int     len_avgqd0=0, len_avgqd1=0, len_avgqd2=0;        
-struct  s_service *sd;                          // service log data array
-int     len_sd; 
+// struct  s_service *sd;                          // service log data array
+// int     len_sd; 
 struct  s_latency *ld0=NULL, *ld1=NULL, *ld2=NULL;  // latency log data array sorted by packet num
 struct  s_latency *ls0=NULL, *ls1=NULL, *ls2=NULL;  // latency log data array sorted by bp_epoch_ms
 int     len_ld0=0, len_ld1=0, len_ld2=0;
@@ -533,7 +551,10 @@ struct  s_service *sd0=NULL, *sd1=NULL, *sd2=NULL;  // serivce log data array so
 int     len_sd0=0, len_sd1=0, len_sd2=0;
 
 int main (int argc, char* argv[]) {
-    struct  s_metadata *cmdp, *lmdp;             // last and current meta data lines
+    struct  s_file_table_entry file_table[100]; // file list
+    int     flist_idx = 0;                      // file list index
+    int     have_file_list = 0;                 // no file list read yet
+    struct  s_metadata *cmdp, *lmdp;            // last and current meta data lines
     struct  frame cf, *cfp = &cf;               // current frame
     struct  s_session sstat, *ssp=&sstat;       // session stats 
     struct  s_carrier c0, c1, c2; 
@@ -541,6 +562,11 @@ int main (int argc, char* argv[]) {
 
     unsigned waiting_for_first_frame;        // set to 1 till first clean frame start encountered
     char     buffer[1000], *bp=buffer;              // temp_buffer
+
+    clock_t start, end;
+    double execution_time;
+
+    int     short_arg_count = 0; 
 
     //  read command line arguments
     while (*++argv != NULL) {
@@ -581,21 +607,6 @@ int main (int argc, char* argv[]) {
         else if (strcmp (*argv, "-avgq_pre") == MATCH) {
             have_avgq_log = 1;
             strcpy (avgq_prep, *++argv); 
-        }
-
-        // receive dedup meta data file prefix
-        else if (strcmp (*argv, "-rx_pre") == MATCH) {
-            strcpy (rx_prep, *++argv); 
-        }
-
-        // short tx prefix
-        else if (strcmp (*argv, "-stx_pre") == MATCH) {
-            sprintf (tx_prep, "%s_%s", "uplink_queue", *++argv); 
-            sprintf (ld_prep, "%s_%s", "latency", *argv); 
-            sprintf (sd_prep, "%s_%s", "service", *argv); 
-            sprintf (brm_prep, "%s_%s", "bitrate", *argv); 
-            sprintf (avgq_prep, "%s_%s", "avgQ", *argv); 
-            have_tx_log = have_ld_log = have_sd_log = have_brm_log = have_avgq_log = 1;
         }
 
         // per carrier meta data availabiliyt
@@ -700,13 +711,68 @@ int main (int argc, char* argv[]) {
             my_exit (0); 
         }
 
+        // receive dedup meta data file prefix
+        else if (strcmp (*argv, "-rx_pre") == MATCH) {
+            strcpy (rx_prep, *++argv);
+        }
+
+        // receive dedup meta data file prefix (MUST BE BEFORE -stx)
+        else if (strcmp (*argv, "-srx_pre") == MATCH) {
+            strcpy (file_table[flist_idx].rx_pre, *++argv); 
+            short_arg_count++; 
+            have_file_list = 1; 
+        }
+        // short tx prefix (MUST BE AFTER -srx)
+        else if (strcmp (*argv, "-stx_pre") == MATCH) {
+            strcpy (file_table[flist_idx].tx_pre, *++argv); 
+            short_arg_count++; 
+            have_file_list = 1; 
+        }
+
         // invalid argument
         else {
             printf ("Invalid argument %s\n", *argv);
             print_usage (); 
             my_exit (-1); 
         }
+
+        if (short_arg_count == 2) { // both -srx and -stx args recad
+            flist_idx++;
+            short_arg_count = 0; 
+        }
     } // while there are more arguments to process
+
+    flist_idx--; // points to the last entry of the file list or -1 if no list
+    if (flist_idx < 0)
+        goto SKIP_FILE_LIST; 
+
+PROCESS_NEXT_FILE: 
+    rx_prep = file_table[flist_idx].rx_pre; 
+    sprintf (tx_prep, "%s_%s", "uplink_queue", file_table[flist_idx].tx_pre); 
+    sprintf (ld_prep, "%s_%s", "latency", file_table[flist_idx].tx_pre); 
+    sprintf (sd_prep, "%s_%s", "service", file_table[flist_idx].tx_pre); 
+    sprintf (brm_prep, "%s_%s", "bitrate", file_table[flist_idx].tx_pre); 
+    sprintf (avgq_prep, "%s_%s", "avgQ", file_table[flist_idx].tx_pre); 
+    have_tx_log = have_ld_log = have_sd_log = have_brm_log = have_avgq_log = 1;
+
+    printf ("rx_prep: %s\n", rx_prep); 
+    printf ("tx_prep: %s\n", tx_prep); 
+    printf ("ld_prep: %s\n", ld_prep); 
+    printf ("sd_prep: %s\n", sd_prep); 
+    printf ("brm_prep: %s\n", brm_prep); 
+    printf ("avgq_prep: %s\n", avgq_prep); 
+
+SKIP_FILE_LIST: 
+    start = clock();
+
+    // initialize variables for next iteration
+	len_md=1; 
+	len_cd0=0, len_cd1=0, len_cd2=0;
+	len_td0=0, len_td1=0, len_td2=0;
+	len_brmd=0; 
+	len_avgqd0=0, len_avgqd1=0, len_avgqd2=0;        
+	len_ld0=0, len_ld1=0, len_ld2=0;
+	len_sd0=0, len_sd1=0, len_sd2=0;
 
     // open remaining input and output files
     sprintf (bp, "%s%s_warnings_vqfilter.txt", opath, rx_prep);
@@ -909,7 +975,7 @@ int main (int argc, char* argv[]) {
             update_bit_rate (cfp, lmdp, cmdp);
 
             // update bit-rate-modulation data
-            cfp->brmdp = find_closest_brmdp (cfp->tx_epoch_ms_1st_packet, brmdata, len_brmd); 
+            update_brm (cfp);
 
             //
             // call end of frame clients
@@ -944,7 +1010,7 @@ int main (int argc, char* argv[]) {
     if (!lmdp->frame_end) // frame ended abruptly
        cfp->missing += 1; // not the correct number of missing packets but can't do better
     update_bit_rate (cfp, lmdp, cmdp); 
-    cfp->brmdp = find_closest_brmdp (cfp->tx_epoch_ms_1st_packet, brmdata, len_brmd); 
+    update_brm (cfp);
     update_session_frame_stats (ssp, cfp);
 
     // end of the file so emit both last frame and session stats
@@ -953,7 +1019,16 @@ int main (int argc, char* argv[]) {
         carrier_metadata_clients (0, ssp, cfp, c0p, c1p, c2p); 
     emit_session_stats(ssp, cfp);
 
-    my_exit (0); 
+    my_free (); 
+
+    end = clock();
+    execution_time = ((double)(end - start))/CLOCKS_PER_SEC;
+    printf ("Program execution time = %0.1fs\n", execution_time); 
+
+    if (flist_idx-- > 0) 
+            goto PROCESS_NEXT_FILE; 
+    else    return (0);
+
 } // end of main
 
 
@@ -1014,7 +1089,7 @@ struct s_latency *find_ldp_by_packet_num (int packet_num, double rx_epoch_ms, st
 } // find_ldp_by_packet_num
 
 // returns pointer to the ldp equal to or closest smaller ldp to the specified epoch_ms
-struct s_latency *find_closest_ldp_by_bp_epoch_ms (double epoch_ms, struct s_latency *ldp, int len_ld) {
+struct s_latency *find_closest_lsp_by_bp_epoch_ms (double epoch_ms, struct s_latency *ldp, int len_ld) {
 
     struct  s_latency  *left, *right, *current;    // current, left and right index of the search
 
@@ -1035,7 +1110,7 @@ struct s_latency *find_closest_ldp_by_bp_epoch_ms (double epoch_ms, struct s_lat
     while ((current+1)->bp_epoch_ms == epoch_ms)
         current++; 
     return current; 
-} // find_closest_ldp_by_bp_epoch_ms
+} // find_closest_lsp_by_bp_epoch_ms
 
 // sorts latency data array by packet number
 void sort_ld_by_packet_num (struct s_latency *ldp, int len) {
@@ -1088,7 +1163,8 @@ void sort_ld_by_bp_epoch_ms (struct s_latency *ldp, int len) {
 } // end of sort_ld_by_bp_epoch_ms
 
 // reads and parses a latency log file. Returns 0 if end of file reached
-// ch: 0, received a latency, numCHOut:0, packetNUm: 0, latency: 28, time: 1673813692132
+// ch: 1, received a latency, numCHOut:1, packetNum: 48851, latency: 28, time: 1681255250906, sent from ch: 0
+// ch: 1, received a latency, numCHOut:0, packetNum: 4294967295, latency: 14, time: 1681255230028, sent from ch: 1
 int read_ld_line (FILE *fp, int ch, struct s_latency *ldp) {
     char ldline[MAX_LINE_SIZE], *ldlinep = ldline; 
     char dummy_str[100];
@@ -1100,19 +1176,21 @@ int read_ld_line (FILE *fp, int ch, struct s_latency *ldp) {
 
     // parse the line
     int n; 
-    int channel;
+    int rx_channel, tx_channel;
 
     while (
         ((n = sscanf (ldlinep, 
-            "%[^:]:%d, %[^:]:%d %[^:]:%d %[^:]:%d %[^:]:%lf",
-            dummy_str, &channel,
+            "%[^:]:%d, %[^:]:%d %[^:]:%d %[^:]:%d %[^:]:%lf %[^:]:%d",
+            dummy_str, &rx_channel,
             dummy_str, &dummy_int,
             dummy_str, &ldp->packet_num, 
             dummy_str, &ldp->t2r_ms, 
-            dummy_str, &ldp->bp_epoch_ms)) !=10)
-        || channel !=ch) {
+            dummy_str, &ldp->bp_epoch_ms,
+            dummy_str, &tx_channel)) !=12)
+        || (rx_channel !=ch) 
+        || (tx_channel !=ch)) {
 
-        if (n != 10) // did not successfully parse this line
+        if (n != 12) // did not successfully parse this line
             FWARN(warn_fp, "read_ld_line: Skipping line %s\n", ldlinep)
 
         // else did not match the channel
@@ -1330,8 +1408,7 @@ int read_pr_line (
 
 } // end of read_pr_line
 
-// free up storage before exiting
-int my_exit (int n) {
+void my_free () {
 
     if (td0 != NULL) free (td0); 
     if (td1 != NULL) free (td1); 
@@ -1341,7 +1418,51 @@ int my_exit (int n) {
     if (cd1 != NULL) free (cd1); 
     if (cd2 != NULL) free (cd2); 
 
+    if (cs0 != NULL) free (cs0); 
+    if (cs1 != NULL) free (cs1); 
+    if (cs2 != NULL) free (cs2); 
+
+    if (sd0 != NULL) free (sd0); 
+    if (sd1 != NULL) free (sd1); 
+    if (sd2 != NULL) free (sd2); 
+
+    if (ld0 != NULL) free (ld0); 
+    if (ld1 != NULL) free (ld1); 
+    if (ld2 != NULL) free (ld2); 
+    
+    if (ls0 != NULL) free (ls0); 
+    if (ls1 != NULL) free (ls1); 
+    if (ls2 != NULL) free (ls2); 
+
+    if (avgqd0 != NULL) free (avgqd0);
+    if (avgqd1 != NULL) free (avgqd1);
+    if (avgqd2 != NULL) free (avgqd2);
+
+    if (brmdata != NULL) free (brmdata);
+
+	if (md_fp) fclose (md_fp);
+	if (an_fp) fclose (an_fp);
+	if (fs_fp) fclose (fs_fp); 
+	if (ss_fp) fclose (ss_fp); 
+	if (ps_fp) fclose (ps_fp); 
+	if (c0_fp) fclose (c0_fp); 
+	if (c1_fp) fclose (c1_fp); 
+	if (c2_fp) fclose (c2_fp); 
+	if (gps_fp) fclose (gps_fp); 
+	if (td_fp) fclose (td_fp); 
+	if (ld_fp) fclose (ld_fp); 
+	if (sd_fp) fclose (sd_fp); 
+	if (brmd_fp) fclose (brmd_fp); 
+	if (avgqd_fp) fclose (avgqd_fp); 
+	if (warn_fp) fclose (warn_fp); 
+} // end of my_free
+
+// free up storage before exiting
+int my_exit (int n) {
+
+    my_free (); 
     exit (n);
+
 } // my_exit
 
 FILE *open_file (char *filep, char *modep) {
@@ -1832,7 +1953,7 @@ void read_cd (char *fnamep) {
                 if ((cdp->ldp = find_ldp_by_packet_num (cdp->packet_num, cdp->rx_epoch_ms, ldp, len_ld))
                     == NULL)
                     FATAL("read_cd: could not find packet %d in the latency array\n", cdp->packet_num)
-                cdp->lsp = find_closest_ldp_by_bp_epoch_ms (cdp->tx_epoch_ms, lsp, len_ld);
+                cdp->lsp = find_closest_lsp_by_bp_epoch_ms (cdp->tx_epoch_ms, lsp, len_ld);
             } // have latency log file
 
             if (len_brmd) // bit-rate modulation data file exists
@@ -2088,7 +2209,10 @@ void init_frame (
     fp->packet_count = fp->latest_packet_count = 1; 
     fp->latest_packet_num = cmdp->packet_num; 
     fp->fast_channel_count = 0;
-
+    if (first_frame) 
+        fp->brm_changed = 0;
+    if (fp->brm_changed)
+        fp->brm_run_length = 1; 
 } // end of init_frame
 
 void print_command_line (FILE *fp) {
@@ -2159,6 +2283,8 @@ void emit_frame_header (FILE *fp) {
     // bit-rate modulation
     fprintf (fp, "ebr, ");
     fprintf (fp, "estate, ");
+    fprintf (fp, "esrl, ");
+    fprintf (fp, "lqsrl,");
     fprintf (fp, "c0q, ");
     fprintf (fp, "c1q, ");
     fprintf (fp, "c2q, ");
@@ -2535,8 +2661,14 @@ void per_packet_analytics (
         // eff: time wasted between encoding and transmission
 	    fprintf (ps_fp, "%0.1f, ", (mdp->rx_epoch_ms - fp->camera_epoch_ms) - fastest_tx_to_rx - c2v_latency); 
 	
-	    // update session packet stats (wrong place for this code)
+	    // update carrier based session packet stats 
 	    update_metric_stats (ssp->best_t2rp, 0, fastest_tx_to_rx, MAX_T2R_LATENCY, MIN_T2R_LATENCY);
+        if (c0p->tx)
+	        update_metric_stats (ssp->c0_est_t2rp, 1, c0p->est_t2r_ms, MAX_EST_T2R_LATENCY, MIN_EST_T2R_LATENCY);
+        if (c1p->tx)
+	        update_metric_stats (ssp->c1_est_t2rp, 1, c1p->est_t2r_ms, MAX_EST_T2R_LATENCY, MIN_EST_T2R_LATENCY);
+        if (c2p->tx)
+	    update_metric_stats (ssp->c2_est_t2rp, 1, c2p->est_t2r_ms, MAX_EST_T2R_LATENCY, MIN_EST_T2R_LATENCY);
 
         // opt: was fastest channel used to transfer this packet
         if ((mdp->rx_epoch_ms - mdp->tx_epoch_ms) < (fastest_tx_to_rx + 2))  // 2 is arbitrary grace duration
@@ -2634,6 +2766,14 @@ void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1
     // bit-rate modulation stats
     fprintf (fs_fp, "%d, ", p->brmdp->bit_rate);
     fprintf (fs_fp, "%d, ", p->brmdp->encoder_state);
+    if (p->brm_changed) {
+        fprintf (fs_fp, "%d, ", p->brm_run_length);
+    } else
+        fprintf (fs_fp, ","); 
+    if (p->brm_changed && (p->brmdp->encoder_state == 0)) // previous state != 0 i.e low quality
+        fprintf (fs_fp, "%d,", p->brm_run_length);
+    else
+        fprintf (fs_fp, ","); 
     fprintf (fs_fp, "%d, ", p->brmdp->channel_quality_state[0]);
     fprintf (fs_fp, "%d, ", p->brmdp->channel_quality_state[1]);
     fprintf (fs_fp, "%d, ", p->brmdp->channel_quality_state[2]);
@@ -3036,6 +3176,9 @@ void emit_session_stats (struct s_session *ssp, struct frame *fp) {
     compute_metric_stats (ssp->c2vp, ssp->pcp->count); 
     compute_metric_stats (ssp->v2tp, ssp->pcp->count); 
     compute_metric_stats (ssp->best_t2rp, ssp->pcp->count); 
+    compute_metric_stats (ssp->c0_est_t2rp, ssp->c0_est_t2rp->count); 
+    compute_metric_stats (ssp->c1_est_t2rp, ssp->c1_est_t2rp->count); 
+    compute_metric_stats (ssp->c2_est_t2rp, ssp->c2_est_t2rp->count); 
     compute_metric_stats (ssp->c2rp, ssp->pcp->count); 
 
     fprintf (ss_fp, "Total number of frames in the session, %u\n", fp->frame_count); 
@@ -3051,6 +3194,9 @@ void emit_session_stats (struct s_session *ssp, struct frame *fp) {
     emit_metric_stats ("C->V latency", "C->V latency", ssp->c2vp, 0, MAX_C2V_LATENCY, MIN_C2V_LATENCY); 
     emit_metric_stats ("V->T latency", "V->T latency", ssp->v2tp, 0, 50, 0); 
     emit_metric_stats ("Best TX->RX latency", "Best TX->RX latency", ssp->best_t2rp, 0, MAX_T2R_LATENCY, MIN_T2R_LATENCY); 
+    emit_metric_stats ("C0 est_t2r", "C0 est_t2r", ssp->c0_est_t2rp, 1, MAX_EST_T2R_LATENCY, MIN_EST_T2R_LATENCY);
+    emit_metric_stats ("C1 est_t2r", "C1 est_t2r", ssp->c1_est_t2rp, 1, MAX_EST_T2R_LATENCY, MIN_EST_T2R_LATENCY);
+    emit_metric_stats ("C2 est_t2r", "C2 est_t2r", ssp->c2_est_t2rp, 1, MAX_EST_T2R_LATENCY, MIN_EST_T2R_LATENCY);
     emit_metric_stats ("C->Rx latency", "C->Rx latency", ssp->c2rp, 0, MAX_C2R_LATENCY, MIN_C2R_LATENCY); 
     emit_metric_stats ("Packets in frame", "Packets in frame", ssp->pcp, 1, MAX_PACKETS_IN_A_FRAME, MIN_PACKETS_IN_A_FRAME); 
     emit_metric_stats ("Bytes in frame", "Bytes in frame", ssp->bcp, 1, MAX_BYTES_IN_A_FRAME, MIN_BYTES_IN_A_FRAME);
@@ -3086,6 +3232,7 @@ void emit_metric_stats (
     for (index=0; index < NUMBER_OF_BINS; index++)
         fprintf (ss_fp, ", %.1f", s->distr[index]);
     fprintf (ss_fp, "\n");
+    return; 
 } // end of emit_metric_stats
 
 void skip_combined_md_file_header (FILE *fp) {
@@ -3184,6 +3331,24 @@ void update_bit_rate (struct frame *fp, struct s_metadata *lmdp, struct s_metada
 
 } // end of update_bit_rate
 
+// called after receiving the last packet of the frame and updates brm stats
+void update_brm (struct frame *fp) {
+
+    struct s_brmdata *brmdp = find_closest_brmdp (fp->tx_epoch_ms_1st_packet, brmdata, len_brmd); 
+
+    if (fp->frame_count==1) // first frame
+        fp->brm_changed = 1; 
+    else
+        fp->brm_changed = (brmdp->encoder_state != fp->brmdp->encoder_state);
+
+    if (!fp->brm_changed)
+        fp->brm_run_length++;   // will be set to 1 in init_frame if brm_changed == 1
+
+    fp->brmdp = brmdp; 
+    return; 
+} // update_brm
+
+
 // initializes session stats
 void init_session_stats (struct s_session *p) {
     p->pcp = &(p->pc); init_metric_stats (p->pcp);
@@ -3200,6 +3365,9 @@ void init_session_stats (struct s_session *p) {
     p->v2tp = &(p->v2t); init_metric_stats (p->v2tp);
     p->c2rp = &(p->c2r); init_metric_stats (p->c2rp);
     p->best_t2rp = &(p->best_t2r); init_metric_stats (p->best_t2rp);
+    p->c0_est_t2rp = &(p->c0_est_t2r); init_metric_stats (p->c0_est_t2rp);
+    p->c1_est_t2rp = &(p->c1_est_t2r); init_metric_stats (p->c1_est_t2rp);
+    p->c2_est_t2rp = &(p->c2_est_t2r); init_metric_stats (p->c2_est_t2rp);
 } // end of init_session_stats
 
 // initializes the session stat structures for the specified metrics
@@ -3235,5 +3403,4 @@ void update_metric_stats (
     p->distr[index]++;
 
     return;
-
 } // end of update stats
