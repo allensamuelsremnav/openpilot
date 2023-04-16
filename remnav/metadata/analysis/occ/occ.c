@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
+#include <time.h>
 #define MATCH 0
 #define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
 #define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
@@ -14,7 +15,7 @@
 #define TX_BUFFER_SIZE (20*60*1000)
 #define SD_BUFFER_SIZE (20*60*1000)
 #define LD_BUFFER_SIZE (20*60*1000)
-#define MAX_SPIKES 5000
+#define MAX_SPIKES 10000
 #define MAX_FILES 100
 
 struct s_files {
@@ -447,7 +448,8 @@ int read_td_line (FILE *fp, int ch, struct s_txlog *tdp) {
 } // end of read_td_line
 
 // reads and parses a latency log file. Returns 0 if end of file reached
-// ch: 0, received a latency, numCHOut:0, packetNUm: 0, latency: 28, time: 1673813692132
+// ch: 1, received a latency, numCHOut:1, packetNum: 48851, latency: 28, time: 1681255250906, sent from ch: 0
+// ch: 1, received a latency, numCHOut:0, packetNum: 4294967295, latency: 14, time: 1681255230028, sent from ch: 1
 int read_ld_line (FILE *fp, int ch, struct s_latency *ldp) {
     char ldline[MAX_LD_LINE_SIZE], *ldlinep = ldline; 
     char dummy_str[100];
@@ -459,19 +461,21 @@ int read_ld_line (FILE *fp, int ch, struct s_latency *ldp) {
 
     // parse the line
     int n; 
-    int channel;
+    int rx_channel, tx_channel;
 
     while (
         ((n = sscanf (ldlinep, 
-            "%[^:]:%d, %[^:]:%d %[^:]:%d %[^:]:%d %[^:]:%lf",
-            dummy_str, &channel,
+            "%[^:]:%d, %[^:]:%d %[^:]:%d %[^:]:%d %[^:]:%lf %[^:]:%d",
+            dummy_str, &rx_channel,
             dummy_str, &dummy_int,
             dummy_str, &ldp->packet_num, 
             dummy_str, &ldp->t2r_ms, 
-            dummy_str, &ldp->bp_epoch_ms)) !=10)
-        || channel !=ch) {
+            dummy_str, &ldp->bp_epoch_ms,
+            dummy_str, &tx_channel)) !=12)
+        || (rx_channel !=ch) 
+        || (tx_channel !=ch)) {
 
-        if (n != 10) // did not successfully parse this line
+        if (n != 12) // did not successfully parse this line
             FWARN(warn_fp, "read_ld_line: Skipping line %s\n", ldlinep)
 
         // else did not match the channel
@@ -1001,7 +1005,7 @@ struct s_service *find_closest_sdp (double epoch_ms, struct s_service *sdp, int 
 
 } // find_closest_sdp
 
-// returns pointer to the sdp equal to or closest smaller sdp to the specified epoch_ms
+// returns pointer to the ldp equal to or closest smaller ldp to the specified epoch_ms
 struct s_latency *find_ldp_by_packet_num (int packet_num, double rx_epoch_ms, struct s_latency *ldp, int len_ld) {
 
     struct  s_latency  *left, *right, *current;    // current, left and right index of the search
@@ -1033,8 +1037,8 @@ struct s_latency *find_ldp_by_packet_num (int packet_num, double rx_epoch_ms, st
 
 } // find_ldp_by_packet_num
 
-// returns pointer to the sdp equal to or closest smaller sdp to the specified epoch_ms
-struct s_latency *find_closest_ldp (double epoch_ms, struct s_latency *ldp, int len_ld) {
+// returns pointer to the lsp equal to or closest smaller lsp to the specified epoch_ms
+struct s_latency *find_closest_lsp (double epoch_ms, struct s_latency *ldp, int len_ld) {
 
     struct  s_latency  *left, *right, *current;    // current, left and right index of the search
 
@@ -1055,7 +1059,7 @@ struct s_latency *find_closest_ldp (double epoch_ms, struct s_latency *ldp, int 
     while ((current+1)->bp_epoch_ms == epoch_ms)
         current++; 
     return current; 
-} // find_closest_ldp
+} // find_closest_lsp
 
 // find_packet_in_cd returns pointer to the packet in the specified metadata array
 // returns NULL if no match was found, else the specified packet num
@@ -1085,7 +1089,7 @@ struct s_carrier* find_packet_in_cd (int packet_num, struct s_carrier *cdp, int 
 
 int main (int argc, char* argv[]) {
     int occ_threshold = 10;                 // occupancy threshold for degraded channel
-    int latency_threshold = 60;             // latency threshold for degraded cahnnel 
+    int t2r_latency_threshold = 90;         // latency threshold for degraded cahnnel 
     struct s_carrier *mdp, *pdp, *mpdp;     // pointers to metadata, probe data and combined data
     struct s_txlog *tdp;                    // pointer to tx log data 
     struct s_service *sdp;                  // pointer to service log data 
@@ -1132,6 +1136,11 @@ int main (int argc, char* argv[]) {
     struct s_files file_table[MAX_FILES];
     int len_file_table = 0;
 
+    clock_t start, end; 
+    double execution_time; 
+
+    int short_arg_count = 0; 
+
     //  read command line arguments
     while (*++argv != NULL) {
 
@@ -1152,7 +1161,7 @@ int main (int argc, char* argv[]) {
         
         // latency limit
         else if (strcmp (*argv, "-l") == MATCH) {
-            if (sscanf (*++argv, "%d", &latency_threshold) != 1) {
+            if (sscanf (*++argv, "%d", &t2r_latency_threshold) != 1) {
                 printf ("Missing specification of the latency threshold\n");
                 print_usage (); 
                 my_exit (-1); 
@@ -1215,6 +1224,7 @@ int main (int argc, char* argv[]) {
             sprintf (la_prefix, "%s_%s", "latency", *argv); 
             sprintf (sr_prefix, "%s_%s", "service", *argv); 
             tx_specified = la_specified = sr_specified = 1; 
+            short_arg_count++; 
         }
 
         else if ((strcmp (*argv, "-rx_pre") == MATCH) || (strcmp (*argv, "-srx_pre") == MATCH)) {
@@ -1225,7 +1235,15 @@ int main (int argc, char* argv[]) {
                 strcpy (rx_prefix, *argv); 
             }
             else strcpy (rx_prefix, *++argv); 
+            short_arg_count++; 
+        }
 
+        // invalid option
+        else {
+            FATAL("Invalid option %s\n", *argv)
+        }
+	
+        if (short_arg_count == 2) {  // both -srx and -stx have been read
             int i; 
             for (i=0; i<3; i++) {
 
@@ -1263,15 +1281,11 @@ int main (int argc, char* argv[]) {
              
 	            file_table[len_file_table].channel = i; 
 
+                short_arg_count = 0; 
 	            len_file_table++;
             } // initialize file table for each channel 
-        } // -rx_pre
+        } // both -srx and -stx received
 
-        // invalid option
-        else {
-            FATAL("Invalid option %s\n", *argv)
-        }
-	
     } // while there are more arguments to process
 
     // open files
@@ -1279,7 +1293,10 @@ int main (int argc, char* argv[]) {
 
 PROCESS_EACH_FILE:
 
+
     printf ("Now processing file %s\n", file_table[file_index].rx_prefix); 
+    start = clock (); 
+    len_mdfile = len_tdfile = len_prfile = len_srfile = len_ldfile = 0;                     // lines in latency file. 0 means log file does not exist
 
     sprintf (bp, "%s%s.csv", file_table[file_index].input_directory, file_table[file_index].rx_prefix); 
 	md_fp = open_file (bp, "r");
@@ -1474,11 +1491,13 @@ PROCESS_EACH_FILE:
 
     // add est_t2r and r2t and ert info from latency log to the mpdp
     for (mpdp=mpd; mpdp < mpd+len_mdfile+len_prfile; mpdp++) {
-        mpdp->lsp = find_closest_ldp (mpdp->tx_epoch_ms, ls, len_ldfile);
+        mpdp->lsp = find_closest_lsp (mpdp->tx_epoch_ms, ls, len_ldfile);
         mpdp->est_t2r_ms = 
             mpdp->lsp->t2r_ms + 
             MAX(0,(mpdp->tx_epoch_ms - mpdp->lsp->bp_epoch_ms)); // MAX if bp > tx in the beginning
 
+        // if (mpdp->probe) 
+            // printf ("got to a probe packet\n");
         if ((mpdp->ldp = find_ldp_by_packet_num (mpdp->packet_num, mpdp->rx_epoch_ms, ld, len_ldfile))
             == NULL)
             FATAL("could not find packet %d in the latency array\n", mpdp->packet_num)
@@ -1587,7 +1606,7 @@ SKIP_SERVICE_LOG:
 
         switch (lspikep->active) {
             case 0: // spike inactive
-                if (mpdp->t2r_latency_ms > latency_threshold) {
+                if (mpdp->t2r_latency_ms > t2r_latency_threshold) {
                     // start of a spike
                     lspikep->active = 1;
                     lspikep->max_occ = mpdp->socc;
@@ -1602,7 +1621,7 @@ SKIP_SERVICE_LOG:
                 break;
             case 1: // spike active
                 // check for continuation 
-                if (mpdp->t2r_latency_ms > latency_threshold) { // spike continues
+                if (mpdp->t2r_latency_ms > t2r_latency_threshold) { // spike continues
                     if (lspikep->max_occ < mpdp->socc) 
                         lspikep->max_occ = mpdp->socc;
                     if (lspikep->max_latency < mpdp->t2r_latency_ms) {
@@ -1618,7 +1637,7 @@ SKIP_SERVICE_LOG:
                     lspikep->active = 0;
                     len_lspike_table++; 
                     if (len_lspike_table == MAX_SPIKES)
-                        FATAL ("Spike table is full. Increase MAX_SPIKE constant %d\n", MAX_SPIKES)
+                        FATAL ("Latency spike table is full. Increase MAX_SPIKE constant %d\n", MAX_SPIKES)
                     lspikep++;
                 }
                 break;
@@ -1654,7 +1673,7 @@ SKIP_SERVICE_LOG:
                     ospikep->active = 0;
                     len_ospike_table++; 
                     if (len_ospike_table == MAX_SPIKES)
-                        FATAL ("Spike table is full. Increase MAX_SPIKE constant %d\n", MAX_SPIKES)
+                        FATAL ("Occupancy spike table is full. Increase MAX_SPIKE constant %d\n", MAX_SPIKES)
                     ospikep++;
                 }
                 break;
@@ -1741,6 +1760,10 @@ SKIP_FULL:
     // close files and check if there are more files to be processed
     fclose (md_fp); fclose (out_fp); fclose(aux_fp); fclose(warn_fp); 
     if (len_tdfile) fclose (td_fp); 
+
+    end = clock (); 
+    execution_time = (end - start) / CLOCKS_PER_SEC; 
+    printf("Execution time %0.1f \n", execution_time); 
 
     if (++file_index < len_file_table)
         goto PROCESS_EACH_FILE;    
