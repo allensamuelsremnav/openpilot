@@ -47,6 +47,7 @@ func watch(conn net.Conn, reader *bufio.Reader,
 			if err != nil {
 				log.Fatal(err)
 			}
+			// Clients only need TPV contents.
 			if probe.Class == "TPV" {
 				var tpv gpsd.TPV
 				err := json.Unmarshal([]byte(line), &tpv)
@@ -54,18 +55,14 @@ func watch(conn net.Conn, reader *bufio.Reader,
 					log.Fatal(err)
 				}
 
-				if tpv.Mode == gpsd.Mode2D || tpv.Mode == gpsd.Mode3D {
-					msg, err := json.Marshal(
-						map[string]interface{}{
-							"utc":   tpv.Time,
-							"speed": tpv.Speed,
-						})
-					if err != nil {
-						log.Fatal(err)
-					}
-					latest.set(string(msg))
+				// Marshall all modes so clients can tell if GPS is fixing.
+				msg, err := json.Marshal(tpv)
+				if err != nil {
+					log.Fatal(err)
 				}
+				latest.set(string(msg))
 			}
+
 		} else if err == io.EOF {
 			break
 		} else {
