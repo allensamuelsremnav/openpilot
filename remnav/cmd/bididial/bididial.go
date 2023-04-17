@@ -60,11 +60,14 @@ func main() {
 	recvChans := rnnet.BidiWR(sendMsgs, devices, *dest, *bufSize, *verbose)
 	go func() {
 		for {
-			for _, ch := range recvChans {
+			for i, ch := range recvChans {
 				select {
-				case msg := <-ch:
-					fmt.Printf("here #3 %s\n", string(msg))
-				default:
+				case msg, ok := <-ch:
+					if !ok {
+						recvChans[i] = nil
+						continue
+					}
+					fmt.Printf("bididial (recvChans[%d]) %s\n", i, string(msg))
 				}
 			}
 		}
