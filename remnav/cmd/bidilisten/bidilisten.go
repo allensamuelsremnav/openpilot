@@ -10,6 +10,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
+	"time"
 
 	rnnet "remnav.com/remnav/net"
 )
@@ -17,17 +20,33 @@ import (
 func main() {
 	port := flag.Int("port", 6001, "listen on this port for UDP, e.g. 6001")
 	bufSize := flag.Int("bufsize", 4096, "buffer size for incoming messages")
-
+	sleep := flag.Int("sleep", 1000, "sleep between packets, microseconds")
 	flag.Parse()
+
+	sleepDuration := time.Duration(*sleep) * time.Microsecond
+
 	progName := filepath.Base(os.Args[0])
 	log.Printf("%s: port %d\n", progName, *port)
 
-	var send chan []byte
+	send := make(chan []byte)
 	recvd := rnnet.BidiRW(*port, *bufSize, send)
 
-	for msg := range recvd {
-		fmt.Printf("%d bytes, %s\n", len(msg), string(msg))
-		send <- []byte("echo: " + string(msg))
-	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for msg := range recvd {
+			fmt.Printf("BidiListen (recvd) %d bytes, %s #400\n", len(msg), string(msg))
+		}
+	}()
 
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			send <- []byte("echo " + strconv.Itoa(i))
+			time.Sleep(sleepDuration)
+		}
+	}()
+	wg.Wait()
 }

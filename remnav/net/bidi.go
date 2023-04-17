@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 )
 
@@ -125,7 +126,7 @@ func BidiRW(port int, bufSize int, send <-chan []byte) <-chan []byte {
 	recvd := make(chan []byte)
 	addrs := make(chan bidiSource)
 
-	pc, err := net.ListenPacket("udp", ":"+string(port))
+	pc, err := net.ListenPacket("udp", ":" + strconv.Itoa(port))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -142,6 +143,7 @@ func BidiRW(port int, bufSize int, send <-chan []byte) <-chan []byte {
 			}
 			recvd <- buf[:n]
 			addrs <- bidiSource{logical: 0, addr: addr}
+			fmt.Printf("BidiRW %d, %s\n", n, string(buf[:n]))
 		}
 	}()
 	go func() {
@@ -159,10 +161,13 @@ func BidiRW(port int, bufSize int, send <-chan []byte) <-chan []byte {
 					sources[addr.logical] = addr
 				}
 			case msg, ok := <-send:
+				fmt.Printf("BidiRW (send) #202\n")
 				if !ok {
 					send = nil
 				} else {
+				        fmt.Printf("BidiRW %s\n", msg)
 					for _, v := range sources {
+					        fmt.Printf("BidiRW (send) %v\n", v.addr)
 						_, err := pc.WriteTo(msg, v.addr)
 						if err != nil {
 							log.Printf("BidiWR: write %v, %v", v, err)
