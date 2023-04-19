@@ -231,6 +231,7 @@ struct s_carrier {
     double vx_epoch_ms; 
     double tx_epoch_ms; 
     double rx_epoch_ms;
+    double previous_tx_epoch_ms;        // tx time stamp of previous packet
     double ert_epoch_ms;                // expected time to retire from the in-transit queue
     int retx;                           // retransmission index
     float t2r_ms;                       // tx-rx latency of the packet
@@ -382,7 +383,8 @@ void carrier_metadata_clients (int print_header, struct s_session *ssp, struct f
 void print_usage (void);
 
 // tracks length in packets reasoably faset (occ<=10) of service of a resuming channel
-void run_length_state_machine (struct s_carrier *cp, struct s_service *sd, int len_sd);
+void run_length_state_machine (struct s_carrier *cp, struct s_service *sd, int len_sd, 
+    struct frame *fp, int dedup_used_this_channel);
 
 // returns the next channel state
 int channel_state_machine (int channels_in_service, struct s_carrier *cp);
@@ -2404,7 +2406,8 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
 } // emit_frame_stats_for_per_packet_file
 
 // tracks length in packets before a resuming channel goes out of service again
-void run_length_state_machine (struct s_carrier *cp, struct s_service *sd, int len_sd) {
+void run_length_state_machine (struct s_carrier *cp, struct s_service *sd, int len_sd, struct frame *fp,
+    int dedup_used_this_channel) {
 
     struct s_service *closest_state_transition = find_closest_sdp (cp->tx_epoch_ms, sd, len_sd);
     double closest_state_transition_TS =  closest_state_transition->state_transition_epoch_ms; 
@@ -2415,10 +2418,17 @@ void run_length_state_machine (struct s_carrier *cp, struct s_service *sd, int l
         cp->last_fast_run_length = 0; 
         cp->end_of_run_flag = 0; 
     }
+    // reset the indicator if set
+    if (cp->indicator) 
+        cp->indicator = 0; 
 
+    // run length state machine
     if (cp->run_length) { // a run is in progress
         if (cp->tx) { // previous run continuing or finished and a new one started
-            if (closest_state_transition_TS == cp->last_state_transition_TS) {
+            if ((closest_state_transition_TS == cp->last_state_transition_TS) /* ||
+                // if previous packet was very close by then ignore state machine 
+                // going out of service for a short period of time
+                ((cp->tx_epoch_ms - cp->previous_tx_epoch_ms) < (FRAME_PERIOD_MS)) */ ) {
                 // current run is continuing
                 cp->run_length++;
                 if (cp->fast_run_length) { // fast run is in progress
@@ -2446,7 +2456,8 @@ void run_length_state_machine (struct s_carrier *cp, struct s_service *sd, int l
                 cp->fast_run_length = 0; 
                 cp->end_of_run_flag = 1; 
         } // previous run finshed and a new run did not start
-    } else { // no run is in progress
+    } // a run is in progress
+    else { // no run is in progress
         // check for start of a run
         if (cp->tx) {
             cp->run_length = 1; 
@@ -2455,71 +2466,37 @@ void run_length_state_machine (struct s_carrier *cp, struct s_service *sd, int l
         } // a new run started
     } // no run in progress
 
+    // outputs based on the state machine
+    if (cp->run_length == 1) { // channel going in service
+        // when the run starts cxp is the first packet that the channel is going to transmit
+        // so find the closest packet whose camera_epoch_ms is less than the tx_epoch_ms of this packet
+        struct s_metadata *txlastp = find_closest_mdp (cp->tx_epoch_ms, md, len_md);
+        cp->pending_packet_count = txlastp->packet_num - cp->packet_num + 1; 
+        cp->tgap = (int) (cp->tx_epoch_ms - fp->camera_epoch_ms); 
+    } // channel going in service
+
+    cp->critical = 
+        (cp->run_length <= cp->pending_packet_count) && dedup_used_this_channel? 
+        cp->run_length : 0; 
+    
+    if (cp->enable_indicator) {
+        if (cp->critical) { // channel supplied a critical packet from the pending packets
+            cp->indicator = 1; 
+            cp->enable_indicator = 0; 
+        }
+        if (cp->run_length > cp->pending_packet_count) { // none of the pending packets were used
+            cp->indicator = 2; 
+            cp->enable_indicator = 0; 
+        }
+    }  // if enable_indicator still armed
+
     if (cp->tx)
         cp->last_state_transition_TS = closest_state_transition_TS; 
 
     return; 
 } // run_length_state_machine
 
-/*
-void run_length_state_machine (struct s_carrier *cp) {
-
-    // if a run finished with the previous packet, reset run state
-    if (cp->end_of_run_flag) {
-        cp->run_length = 0; 
-        cp->end_of_run_flag = 0; 
-        cp->enable_indicator = 0; 
-    }
-    
-    // now wait for the channel to go out of service 
-    if (cp->waiting_to_go_out_of_service)
-        cp->waiting_to_go_out_of_service = cp->tx; 
-    // else check for start or contnuation of a run
-    else if (cp->run_length == 0) { // a run is not active
-        if (cp->tx) // start of a run
-            cp->run_length = 1; 
-            cp->enable_indicator = 1; 
-    } // start of a run
-    else { // active run
-        if (cp->tx && (cp->socc <= 10)) // run continues
-            cp->run_length++;
-        else { // previous run finished
-            cp->end_of_run_flag = 1;
-            cp->waiting_to_go_out_of_service = cp->tx; 
-        }
-    } // active run
-
-    // if start of a run then compute how many packets are pending in the encoder queue
-
-
-    return;
-} // run_length_state_machine
-*/
-
-/*
-// returns the next channel state
-int channel_state_machine (int channels_in_service, struct s_carrier *cp) {
-
-    switch (cp->state) {
-        case IN_SERVICE: 
-            if ((channels_in_service > 1) && // go out of service only if more than 1 channel in service
-                ((cp->socc > 10) || (cp->bp_t2r_ms > 80)))
-                cp->state = OUT_OF_SERVICE; 
-            // else remain IN_SERVICE
-            break; 
-        case OUT_OF_SERVICE: 
-            if ((cp->socc < 5) && (cp->bp_t2r_ms < 40))
-                cp->state = IN_SERVICE;
-            // else remain OUT_OF_SERVICE
-            break;
-    } // switch cp->state
-
-    return cp->state; 
-
-} // channel_state_machine
-*/
-
-// assumes called at the end of a frame after frame and session stats have been updated
+// assumes called at the end of a frame after frame and session stats have been updated.
 // emits packet stats and analytics output followed by frame stats and analytics
 void carrier_metadata_clients (
     int print_header, struct s_session *ssp, struct frame *fp,
@@ -2543,44 +2520,41 @@ void carrier_metadata_clients (
         initialize_cp_from_cd (mdp, c1p, 0); 
         initialize_cp_from_cd (mdp, c2p, 1); // 1 for t-mobile
 
-        // channel state
-        /*
-        int channels_in_service = 
-            (c0p->state == IN_SERVICE) + (c1p->state == IN_SERVICE) + (c2p->state == IN_SERVICE); 
-        channel_state_machine (channels_in_service, c0p); 
-        channel_state_machine (channels_in_service, c1p); 
-        channel_state_machine (channels_in_service, c2p); 
-        */
-
         // run length state machine 
-        run_length_state_machine (c0p, sd0, len_sd0); 
-        run_length_state_machine (c1p, sd1, len_sd1); 
-        run_length_state_machine (c2p, sd2, len_sd2); 
+        run_length_state_machine (c0p, sd0, len_sd0, fp, mdp->ch==0);
+        run_length_state_machine (c1p, sd1, len_sd1, fp, mdp->ch==1);
+        run_length_state_machine (c2p, sd2, len_sd2, fp, mdp->ch==2);
 
         // if start of the run then find how many packets are in the channel's transmit queue
-        // when the run starts cxp is the first packet that the channel is going to transmit
-        // so find the closest packet whose camera_epoch_ms is less than the tx_epoch_ms of this packet
+        /*
         int j; 
         for (j=0; j<3; j++) {
-            struct s_carrier *tmp_cp = j==0? c0p : j==1? c1p : c2p; 
-            // struct s_cmetadata *tmp_cd = j==0? cd0 : j==1? cd1 : cd2; 
-            // int len_cd = j==0? len_cd0 : j==1? len_cd1 : len_cd2; 
-            if (tmp_cp->run_length == 1) { // channel going in service
-                struct s_metadata *txlastp = find_closest_mdp (tmp_cp->tx_epoch_ms, md, len_md);
-                tmp_cp->pending_packet_count = txlastp->packet_num - tmp_cp->packet_num + 1; 
-                tmp_cp->tgap = (int) (tmp_cp->tx_epoch_ms - fp->camera_epoch_ms); 
+            struct s_carrier *cp = j==0? c0p : j==1? c1p : c2p; 
+            if (cp->run_length == 1) { // channel going in service
+                struct s_metadata *txlastp = find_closest_mdp (cp->tx_epoch_ms, md, len_md);
+                cp->pending_packet_count = txlastp->packet_num - cp->packet_num + 1; 
+                cp->tgap = (int) (cp->tx_epoch_ms - fp->camera_epoch_ms); 
             } // channel going in service
 
-            tmp_cp->critical = 
-                (tmp_cp->run_length <= tmp_cp->pending_packet_count) && (mdp->ch == j)? 
-                tmp_cp->run_length : 0; 
+            if (cp->indicator) // reset the indicator if set
+                cp->indicator = 0; 
+
+            cp->critical = 
+                (cp->run_length <= cp->pending_packet_count) && (mdp->ch == j)? 
+                cp->run_length : 0; 
             
-            if (tmp_cp->enable_indicator && tmp_cp->critical) {
-                tmp_cp->indicator = 1; 
-                tmp_cp->enable_indicator = 0; 
-            } else if (tmp_cp->indicator) // reset the indicator if set
-                tmp_cp->indicator = 0; 
+            if (cp->enable_indicator) {
+                if (cp->critical) { // channel supplied a critical packet from the pending packets
+                    cp->indicator = 1; 
+                    cp->enable_indicator = 0; 
+                }
+                if (cp->run_length > cp->pending_packet_count) { // none of the pending packets were used
+                    cp->indicator = 2; 
+                    cp->enable_indicator = 0; 
+                }
+            }  // if enable_indicator still armed
         } // for each channel
+        */
 
         // per carrier packet stats
         struct s_brmdata *brmdp;
@@ -2974,6 +2948,7 @@ void initialize_cp_from_cd ( struct s_metadata *mdp, struct s_carrier *cp, int t
         if (cp->len_ld = cdp->len_ld) {cp->ldp = cdp->ldp, cp->lsp = cdp->lsp;}
         if (len_brmd) cp->brmdp = cdp->brmdp;
 
+        cp->previous_tx_epoch_ms = mdp->packet_num==0? 0 : cp->tx_epoch_ms; 
         cp->packet_num = cdp->packet_num; 
         cp->vx_epoch_ms = cdp->vx_epoch_ms; 
         cp->tx_epoch_ms = cdp->tx_epoch_ms; 
@@ -3022,7 +2997,7 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
         if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000);          // MMbps
         else fprintf (ps_fp, ",");                                                              
         fprintf (ps_fp, "%d,", cp->retx);                                                       // retx
-        if ((cp->run_length == 1) || (cp->indicator == 1)) { // channel entering service
+        if ((cp->run_length == 1) || cp->indicator) { // channel entering service
             fprintf (ps_fp, "%d,", cp->tgap);                                                   // tgap
             fprintf(ps_fp, "%d,", cp->pending_packet_count);                                    // pptks
         }
