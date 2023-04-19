@@ -57,19 +57,12 @@ func main() {
 	sendMsgs := make(chan []byte)
 	defer close(sendMsgs)
 
-	recvChans := rnnet.BidiWR(sendMsgs, devices, *dest, *bufSize, *verbose)
+	var recvChan <-chan []byte = rnnet.BidiWR(sendMsgs, devices, *dest, *bufSize, *verbose)
+	fmt.Printf("bididial recv %v\n", recvChan)
+
 	go func() {
-		for {
-			for i, ch := range recvChans {
-				select {
-				case msg, ok := <-ch:
-					if !ok {
-						recvChans[i] = nil
-						continue
-					}
-					fmt.Printf("bididial (recvChans[%d]) %s\n", i, string(msg))
-				}
-			}
+		for msg := range recvChan {
+			fmt.Printf("bidi: recvChan %s\n", string(msg))
 		}
 	}()
 
@@ -78,5 +71,9 @@ func main() {
 	} else {
 		files(flag.Args(), sleepDuration, sendMsgs)
 	}
-	fmt.Print("here #5")
+
+	for msg := range recvChan {
+		fmt.Printf("bididial %s\n", string(msg))
+	}
+
 }

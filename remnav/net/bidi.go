@@ -14,7 +14,7 @@ import (
 // Reports sendWaitGroup.Done() when it detects send-message channel is closed.
 // Reads until the send-message channel is closed.
 // Read messages are forwarded to the returned channel, which is never closed.
-func BidiWRDev(send <-chan []byte, device string, dest string, bufSize int, sendWG *sync.WaitGroup, verbose bool) chan []byte {
+func BidiWRDev(send <-chan []byte, device string, dest string, bufSize int, sendWG *sync.WaitGroup, recvChan chan<- []byte, verbose bool) {
 	// Initialize the dialer for an explicit device.
 	ibn, err := net.InterfaceByName(device)
 	if err != nil {
@@ -53,6 +53,8 @@ func BidiWRDev(send <-chan []byte, device string, dest string, bufSize int, send
 			_, err := pc.Write(msg)
 			if err != nil {
 				log.Printf("BidiWRDev: %v", err)
+			} else {
+				log.Printf("BidiWRDev: write %d bytes, '%s'\n", len(msg), msg)
 			}
 			if verbose {
 				log.Printf("device %s, msg '%s'\n", device, msg)
@@ -61,26 +63,25 @@ func BidiWRDev(send <-chan []byte, device string, dest string, bufSize int, send
 	}()
 
 	// Read and forward.
-	received := make(chan []byte)
 	go func() {
-		defer close(received)
+		fmt.Printf("BidiWRDev recv %v\n", recvChan)
 		for {
+			fmt.Printf("BidiWRDev/ReadFrom for\n")
 			buf := make([]byte, bufSize)
 			n, _, err := pc.ReadFrom(buf)
 			if err != nil {
-				log.Printf("ReadFrom %v", err)
+				log.Printf("BidiWRDev/ReadFrom %v", err)
 				break
 			}
-			fmt.Printf("ReadFrom %d bytes %s\n", n, string(buf[:n]))
-			received <- buf[:n]
+			fmt.Printf("BidiWRDev/ReadFrom %d bytes, %s\n", n, string(buf[:n]))
+			recvChan <- buf[:n]
+			fmt.Printf("BidiWRDev/ReadFrom channel accepted\n")
 		}
 	}()
-
-	return received
 }
 
 // BidiSendDev sends duplicated messages over named devices to dest.
-func BidiWR(sendMsgs <-chan []byte, devices []string, dest string, bufSize int, verbose bool) []chan []byte {
+func BidiWR(sendMsgs <-chan []byte, devices []string, dest string, bufSize int, verbose bool) <-chan []byte {
 	// Make a parallel array of channels and goroutines.
 	// This WaitGroup to be sure the senders are ready to receive.
 
@@ -88,13 +89,12 @@ func BidiWR(sendMsgs <-chan []byte, devices []string, dest string, bufSize int, 
 	var sendWG sync.WaitGroup
 
 	var sendChans []chan []byte
-	var rcvChans []chan []byte
+	var recvChan chan []byte = make(chan []byte)
 
 	for _, d := range devices {
 		ch := make(chan []byte)
 		sendChans = append(sendChans, ch)
-		rch := BidiWRDev(ch, d, dest, bufSize, &sendWG, verbose)
-		rcvChans = append(rcvChans, rch)
+		BidiWRDev(ch, d, dest, bufSize, &sendWG, recvChan, verbose)
 	}
 
 	// Send to all devices.
@@ -114,7 +114,7 @@ func BidiWR(sendMsgs <-chan []byte, devices []string, dest string, bufSize int, 
 		}
 		sendWG.Wait()
 	}()
-	return rcvChans
+	return recvChan
 }
 
 type bidiSource struct {
@@ -126,7 +126,7 @@ func BidiRW(port int, bufSize int, send <-chan []byte) <-chan []byte {
 	recvd := make(chan []byte)
 	addrs := make(chan bidiSource)
 
-	pc, err := net.ListenPacket("udp", ":" + strconv.Itoa(port))
+	pc, err := net.ListenPacket("udp", ":"+strconv.Itoa(port))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -146,40 +146,49 @@ func BidiRW(port int, bufSize int, send <-chan []byte) <-chan []byte {
 			fmt.Printf("BidiRW %d, %s\n", n, string(buf[:n]))
 		}
 	}()
+
+	// Each logical source has a bidiSource.
+
+	sources := make(map[string]bidiSource)
+	var sendWrite = func() {
+		for msg := range send {
+			fmt.Printf("BidiRW %s\n", msg)
+			for k, v := range sources {
+				fmt.Printf("BidiRW (send) %s %v\n", k, v.addr)
+				_, err := pc.WriteTo(msg, v.addr)
+				if err != nil {
+					log.Printf("BidiWR: write %v, %v", v, err)
+				}
+			}
+		}
+	}
+
 	go func() {
-		// Shadow so we can assign nil
 		var addrs = addrs
-		var send = send
-		// Each logical source has a bidiSource.
-		sources := make(map[uint8]bidiSource)
+		var startSend sync.Once
 		for {
 			select {
 			case addr, ok := <-addrs:
 				if !ok {
+					fmt.Printf("BidiRW: addrs = nil\n")
 					addrs = nil
 				} else {
-					sources[addr.logical] = addr
-				}
-			case msg, ok := <-send:
-				fmt.Printf("BidiRW (send) #202\n")
-				if !ok {
-					send = nil
-				} else {
-				        fmt.Printf("BidiRW %s\n", msg)
-					for _, v := range sources {
-					        fmt.Printf("BidiRW (send) %v\n", v.addr)
-						_, err := pc.WriteTo(msg, v.addr)
-						if err != nil {
-							log.Printf("BidiWR: write %v, %v", v, err)
-						}
+					k := addr.addr.String()
+					fmt.Printf("BidiRW: addr %v (%s)\n", addr, k)
+					v, ok := sources[k]
+					if !ok {
+						sources[k] = addr
+						fmt.Printf("BidiRW: added %s\n", k)
+					} else if k != v.addr.String() {
+						sources[k] = addr
+						fmt.Printf("BidiRW: replaced sources[%s] with %v\n", k, addr)
 					}
+					startSend.Do(sendWrite)
 				}
-			}
-			if addrs == nil && send == nil {
-				break
 			}
 		}
 	}()
+
 	return recvd
 
 }
