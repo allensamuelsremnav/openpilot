@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	rnnet "remnav.com/remnav/net"
@@ -27,7 +28,7 @@ func counter(n int, sleep time.Duration, msgs chan<- []byte) {
 	log.Printf("bididial: prefix %s\n", prefix)
 
 	for i := 0; i < n; i++ {
-		msgs <- []byte(prefix + strconv.Itoa(i))
+		msgs <- []byte(prefix + "_" + strconv.Itoa(i))
 		time.Sleep(sleep)
 	}
 }
@@ -69,11 +70,12 @@ func main() {
 	defer close(sendMsgs)
 
 	var recvChan <-chan []byte = rnnet.BidiWR(sendMsgs, devices, *dest, *bufSize, *verbose)
-	fmt.Printf("bididial recv %v\n", recvChan)
-
+	var recvWG sync.WaitGroup
+	recvWG.Add(1)
 	go func() {
+		defer recvWG.Done()
 		for msg := range recvChan {
-			fmt.Printf("bididial: (recvChan) %s\n", string(msg))
+			fmt.Printf("bididial: (recvchan) '%s'\n", string(msg))
 		}
 	}()
 
@@ -83,8 +85,5 @@ func main() {
 		files(flag.Args(), sleepDuration, sendMsgs)
 	}
 
-	for msg := range recvChan {
-		fmt.Printf("bididial %s\n", string(msg))
-	}
-
+	recvWG.Wait()
 }

@@ -22,6 +22,9 @@ func main() {
 	port := flag.Int("port", 6001, "listen on this port for UDP, e.g. 6001")
 	bufSize := flag.Int("bufsize", 4096, "buffer size for incoming messages")
 	sleep := flag.Int("sleep", 1000, "sleep between packets, microseconds")
+	packets := flag.Int("packets", 0, "number of test packets")
+	echo := flag.Bool("echo", false, "echo on")
+	verbose := flag.Bool("verbose", false, "verbosity on")
 	flag.Parse()
 
 	sleepDuration := time.Duration(*sleep) * time.Microsecond
@@ -30,15 +33,17 @@ func main() {
 	log.Printf("%s: port %d\n", progName, *port)
 
 	send := make(chan []byte)
-	recvd := rnnet.BidiRW(*port, *bufSize, send)
+	recvd := rnnet.BidiRW(*port, *bufSize, send, *verbose)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		fmt.Printf("bidilisten: (recvd) %v\n", recvd)
 		defer wg.Done()
 		for msg := range recvd {
-			fmt.Printf("bidilisten (recvd) %d bytes, %s #400\n", len(msg), string(msg))
+			fmt.Printf("bidilisten: (recvd) %d bytes, '%s'\n", len(msg), string(msg))
+			if *echo {
+				send <- []byte("bidilisten: (echo) " + string(msg))
+			}
 		}
 	}()
 
@@ -55,8 +60,8 @@ func main() {
 		prefix := string(b)
 		log.Printf("bidilisten: prefix %s\n", prefix)
 
-		for i := 0; i < 100; i++ {
-			send <- []byte("bidilisten: " + prefix + strconv.Itoa(i))
+		for i := 0; i < *packets; i++ {
+			send <- []byte("bidilisten: (send) " + prefix + "_" + strconv.Itoa(i))
 			time.Sleep(sleepDuration)
 		}
 	}()

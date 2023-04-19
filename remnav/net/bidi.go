@@ -53,29 +53,24 @@ func BidiWRDev(send <-chan []byte, device string, dest string, bufSize int, send
 			_, err := pc.Write(msg)
 			if err != nil {
 				log.Printf("BidiWRDev: %v", err)
-			} else {
-				log.Printf("BidiWRDev: write %d bytes, '%s'\n", len(msg), msg)
+				continue
 			}
 			if verbose {
-				log.Printf("device %s, msg '%s'\n", device, msg)
+				log.Printf("BidiWRDev: ->%s, %d bytes, '%s'\n", device, len(msg), msg)
 			}
 		}
 	}()
 
 	// Read and forward.
 	go func() {
-		fmt.Printf("BidiWRDev recv %v\n", recvChan)
 		for {
-			fmt.Printf("BidiWRDev/ReadFrom for\n")
 			buf := make([]byte, bufSize)
 			n, _, err := pc.ReadFrom(buf)
 			if err != nil {
 				log.Printf("BidiWRDev/ReadFrom %v", err)
-				break
+				continue
 			}
-			fmt.Printf("BidiWRDev/ReadFrom %d bytes, %s\n", n, string(buf[:n]))
 			recvChan <- buf[:n]
-			fmt.Printf("BidiWRDev/ReadFrom channel accepted\n")
 		}
 	}()
 }
@@ -122,7 +117,7 @@ type bidiSource struct {
 	addr    net.Addr
 }
 
-func BidiRW(port int, bufSize int, send <-chan []byte) <-chan []byte {
+func BidiRW(port int, bufSize int, send <-chan []byte, verbose bool) <-chan []byte {
 	recvd := make(chan []byte)
 	addrs := make(chan bidiSource)
 
@@ -140,29 +135,30 @@ func BidiRW(port int, bufSize int, send <-chan []byte) <-chan []byte {
 			n, addr, err := pc.ReadFrom(buf)
 			if err != nil {
 				log.Println(err)
-				break
+				continue
 			}
-			fmt.Printf("BidiRW (ReadFrom chan sends)\n")
 			recvd <- buf[:n]
-			fmt.Printf("BidiRW (ReadFrom recvd ok)\n")
 			addrs <- bidiSource{logical: 0, addr: addr}
-			fmt.Printf("BidiRW (ReadFrom addrs ok)\n")
-			fmt.Printf("BidiRW (ReadFrom) %d, %s\n", n, string(buf[:n]))
+			if verbose {
+				fmt.Printf("BidiRW (ReadFrom) %d, %s\n", n, string(buf[:n]))
+			}
 		}
 	}()
 
 	// Each logical source has a bidiSource.
-
 	sources := make(map[string]bidiSource)
+
 	var sendWrite = func() {
 		go func() {
 			for msg := range send {
-				fmt.Printf("BidiRW (for) '%s'\n", msg)
 				for k, v := range sources {
-					fmt.Printf("BidiRW (send) %s %v\n", k, v.addr)
+					if verbose {
+						log.Printf("BidiRW (send) %s %v\n", k, v.addr)
+					}
 					_, err := pc.WriteTo(msg, v.addr)
 					if err != nil {
 						log.Printf("BidiWR: write %v, %v", v, err)
+						continue
 					}
 				}
 			}
@@ -171,9 +167,10 @@ func BidiRW(port int, bufSize int, send <-chan []byte) <-chan []byte {
 
 	go func() {
 		var addrs = addrs
+		// Start sending only after we've received a packet
+		// and have a return address.
 		var startSend sync.Once
 		for {
-			fmt.Printf("BidiRW: addrs #0 %v\n", addrs)
 			select {
 			case addr, ok := <-addrs:
 				if !ok {
@@ -181,23 +178,20 @@ func BidiRW(port int, bufSize int, send <-chan []byte) <-chan []byte {
 					addrs = nil
 				} else {
 					k := addr.addr.String()
-					fmt.Printf("BidiRW: addr %v (%s)\n", addr, k)
 					v, ok := sources[k]
 					if !ok {
 						sources[k] = addr
-						fmt.Printf("BidiRW: added %s\n", k)
+						log.Printf("BidiRW: added %s\n", k)
 					} else if k != v.addr.String() {
 						sources[k] = addr
-						fmt.Printf("BidiRW: replaced sources[%s] with %v\n", k, addr)
+						log.Printf("BidiRW: replaced sources[%s] with %v\n", k, addr)
 					}
 					startSend.Do(sendWrite)
 				}
 			}
-			fmt.Printf("BidiRW: addrs #1 %v\n", addrs)
 		}
 	}()
 
-	fmt.Printf("BidiRW: (recvd) %v\n", recvd)
 	return recvd
 
 }
