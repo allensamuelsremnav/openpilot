@@ -1,8 +1,5 @@
-// Application to debug UDP applications by listening on a port.
+// Application to debug bidirectional dialer-->listener communication: listener.
 package main
-
-// ncat apparently doesn't do well if there are two programs sending
-// to the port, either simultaneously or sequentially.
 
 import (
 	"flag"

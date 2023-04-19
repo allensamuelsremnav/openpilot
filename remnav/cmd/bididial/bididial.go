@@ -1,4 +1,4 @@
-// Application to debug UDP applications by writing to a port.
+// Application to debug bidirectional dialer-->listener communication: dialer.
 package main
 
 import (
@@ -16,6 +16,7 @@ import (
 	rnnet "remnav.com/remnav/net"
 )
 
+// Send numbered messages.
 func counter(n int, sleep time.Duration, msgs chan<- []byte) {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
@@ -33,6 +34,7 @@ func counter(n int, sleep time.Duration, msgs chan<- []byte) {
 	}
 }
 
+// Send file contents.
 func files(filenames []string, sleep time.Duration, msgs chan<- []byte) {
 	for _, fn := range filenames {
 		f, err := os.Open(fn)
@@ -69,6 +71,7 @@ func main() {
 	sendMsgs := make(chan []byte)
 	defer close(sendMsgs)
 
+	// Read the messages received on the back channel.
 	var recvChan <-chan []byte = rnnet.BidiWR(sendMsgs, devices, *dest, *bufSize, *verbose)
 	var recvWG sync.WaitGroup
 	recvWG.Add(1)
@@ -79,6 +82,7 @@ func main() {
 		}
 	}()
 
+	// Send dialer-->listener messages.
 	if len(flag.Args()) == 0 {
 		counter(*packets, sleepDuration, sendMsgs)
 	} else {
