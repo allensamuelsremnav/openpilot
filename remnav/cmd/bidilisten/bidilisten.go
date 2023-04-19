@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -34,17 +35,28 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
+		fmt.Printf("bidilisten: (recvd) %v\n", recvd)
 		defer wg.Done()
 		for msg := range recvd {
-			fmt.Printf("BidiListen (recvd) %d bytes, %s #400\n", len(msg), string(msg))
+			fmt.Printf("bidilisten (recvd) %d bytes, %s #400\n", len(msg), string(msg))
 		}
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+
+		r := rand.New(rand.NewSource(time.Now().UnixNano()))
+		var runes = []rune("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+		b := make([]rune, 3)
+		for i := range b {
+			b[i] = runes[r.Intn(len(runes))]
+		}
+		prefix := string(b)
+		log.Printf("bidilisten: prefix %s\n", prefix)
+
 		for i := 0; i < 100; i++ {
-			send <- []byte("echo " + strconv.Itoa(i))
+			send <- []byte("bidilisten: " + prefix + strconv.Itoa(i))
 			time.Sleep(sleepDuration)
 		}
 	}()

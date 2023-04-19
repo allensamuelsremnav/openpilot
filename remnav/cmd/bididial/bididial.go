@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -15,8 +16,18 @@ import (
 )
 
 func counter(n int, sleep time.Duration, msgs chan<- []byte) {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	var runes = []rune("abcdefghijklmnopqrstuvwxyz")
+	b := make([]rune, 3)
+	for i := range b {
+		b[i] = runes[r.Intn(len(runes))]
+	}
+	prefix := string(b)
+	log.Printf("bididial: prefix %s\n", prefix)
+
 	for i := 0; i < n; i++ {
-		msgs <- []byte(strconv.Itoa(i))
+		msgs <- []byte(prefix + strconv.Itoa(i))
 		time.Sleep(sleep)
 	}
 }
@@ -62,7 +73,7 @@ func main() {
 
 	go func() {
 		for msg := range recvChan {
-			fmt.Printf("bidi: recvChan %s\n", string(msg))
+			fmt.Printf("bididial: (recvChan) %s\n", string(msg))
 		}
 	}()
 
