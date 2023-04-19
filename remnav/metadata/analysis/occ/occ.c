@@ -17,6 +17,18 @@
 #define LD_BUFFER_SIZE (20*60*1000)
 #define MAX_SPIKES 10000
 #define MAX_FILES 100
+#define NUMBER_OF_BINS 20
+#define MAX_EST_T2R_LATENCY 500
+#define MIN_EST_T2R_LATENCY 10
+
+struct stats {
+    unsigned    count;
+    double      mean; 
+    double      var;
+    double      min;
+    double      max;
+    double      distr[NUMBER_OF_BINS];
+};
 
 struct s_files {
     char input_directory[500];
@@ -151,6 +163,139 @@ int my_exit (int n) {
     if (ls != NULL) free (ls); 
     exit (n);
 } // my_exit
+
+// initializes the session stat structures for the specified metrics
+void init_metric_stats (struct stats *p) {
+    int i; 
+    p->count = p->mean = p->var = p->min = p->max = 0;
+    for (i=0; i<NUMBER_OF_BINS; i++)
+        p->distr[i] = 0; 
+} // end of init_metric_stats
+
+// Collects data for calculating mean/variance/distribution for the specified metric
+void update_metric_stats (
+    struct stats *p,                        // metric being updated
+    unsigned count,                         // number of frames this metric occurred in the session
+    double value,                            // value of the metric in the frame
+    double range_max,                        // max value this mnetric can take in a frame
+    double range_min) {                      // min value this metric can take in a frame
+
+    int index; 
+    double bin_size = (range_max - range_min)/NUMBER_OF_BINS;
+
+    if (bin_size < 0) {
+        printf("Invalid bin size: max=%.2f min=%.2f", range_max, range_min);
+        my_exit (-1); 
+    }
+    p->count += count;
+    p->mean += value;                       // storing sum (X) till the end
+    p->var += value * value;                // storing sum (X^2) till the end
+    p->max = MAX(p->max, value);
+    p->min = p->min==0?                     // first time, so can't do min
+        value : MIN(p->min, value); 
+    index = MIN(MAX(trunc((value-range_min) / bin_size), 0), NUMBER_OF_BINS-1);
+    p->distr[index]++;
+
+    return;
+} // end of update stats
+
+// Computes the mean/variance of the specified metric. 
+void compute_metric_stats (struct stats *p, unsigned count) {
+    p->mean /= count;              // compute EX
+    p->var /= count;               // compute E[X^2]
+    p->var -= p->mean * p->mean;         // E[X^2] - EX^2
+} // compute stats
+
+// emits the stats for the specified metric
+void emit_metric_stats (
+    char            *file_namep,
+    char            *p1,            // name of the metric 
+    char            *p2,            // name of the metric
+    struct stats    *s,             // pointer to where the stats are stored
+    int             print_count,    // count not printed if print_count = 0
+    double          range_max,      // min and max range this metric can take in a frame
+    double          range_min, 
+    FILE            *ss_fp,         // output file pointer
+    FILE            *est_fp) {       // output file pointer
+
+    int         index; 
+    double      bin_size = (range_max - range_min)/ NUMBER_OF_BINS;
+
+    fprintf (ss_fp, "%s\n", p1);
+    if (print_count) fprintf (ss_fp, "Total, %u\n", s->count);
+    fprintf (ss_fp, "Mean, %.1f\n", s->mean);
+    fprintf (ss_fp, "std. dev., %.1f\n", sqrt(s->var));
+    fprintf (ss_fp, "Min, %.1f\n", s->min);
+    fprintf (ss_fp, "Max, %.1f\n", s->max);
+
+    // first line of the latency histogram; blank first cell, then bin names
+    fprintf (ss_fp, " "); 
+    for (index=0; index < NUMBER_OF_BINS; index++)
+        fprintf (ss_fp, ", %.1f-%.1f", range_min + index*bin_size, range_min + (index+1)*bin_size);
+    fprintf (ss_fp, "\n"); 
+    // second lline of the latency histogram; 
+    fprintf (ss_fp, "%s distribution", p2);
+    for (index=0; index < NUMBER_OF_BINS; index++)
+        fprintf (ss_fp, ", %.1f", s->distr[index]);
+    fprintf (ss_fp, "\n");
+    // percentile
+    fprintf (ss_fp, "%s percentile,", p2); 
+    double cur_count = 0; 
+    int eighty_percentrile_bin = -1; // -1 means not found yet
+    int ninety_percentile_bin = -1; // -1 means not found yet
+    int ninety_five_percentile_bin = -1; // -1 means not found yet
+    for (index=0; index < NUMBER_OF_BINS; index++) {
+        cur_count += s->distr[index]; 
+        double percentile = (cur_count/s->count)*100;
+        if ((eighty_percentrile_bin == -1) && (percentile >= 80))
+            eighty_percentrile_bin = index;
+        if ((ninety_percentile_bin == -1) && (percentile >= 90))
+            ninety_percentile_bin = index;
+        if ((ninety_five_percentile_bin == -1) && (percentile >= 95))
+            ninety_five_percentile_bin = index;
+        fprintf (ss_fp, "%.1f,", percentile); 
+    }
+    fprintf (ss_fp, "\n");
+
+    fprintf (est_fp, "%s,", file_namep); 
+    fprintf (est_fp, "%.1f-%.1f,,", 
+        range_min + eighty_percentrile_bin*bin_size, 
+        range_min + (eighty_percentrile_bin+1)*bin_size);
+    fprintf (est_fp, "%.1f-%.1f,,", 
+        range_min + ninety_percentile_bin*bin_size, 
+        range_min + (ninety_percentile_bin+1)*bin_size);
+    fprintf (est_fp, "%.1f-%.1f,,", 
+        range_min + ninety_five_percentile_bin*bin_size, 
+        range_min + (ninety_five_percentile_bin+1)*bin_size);
+
+    fprintf (est_fp, "%.1f,", range_min + eighty_percentrile_bin*bin_size);
+    fprintf (est_fp, "%.1f,,", range_min + (eighty_percentrile_bin+1)*bin_size);
+    fprintf (est_fp, "%.1f,", range_min + ninety_percentile_bin*bin_size); 
+    fprintf (est_fp, "%.1f,,", range_min + (ninety_percentile_bin+1)*bin_size);
+    fprintf (est_fp, "%.1f,", range_min + ninety_five_percentile_bin*bin_size);
+    fprintf (est_fp, "%.1f,,", range_min + (ninety_five_percentile_bin+1)*bin_size);
+    fprintf (est_fp, "\n");
+
+    return; 
+} // end of emit_metric_stats
+
+void emit_metric_stats_header (FILE *est_fp) {
+    fprintf (est_fp, ","); 
+
+    fprintf (est_fp, "%s,,", "80%");
+    fprintf (est_fp, "%s,,", "90%");
+    fprintf (est_fp, "%s,,", "95%");
+
+    fprintf (est_fp, "%s,", "%80U");
+    fprintf (est_fp, "%s,,", "%80L");
+    fprintf (est_fp, "%s,", "%90L");
+    fprintf (est_fp, "%s,,", "%90L");
+    fprintf (est_fp, "%s,", "%95L");
+    fprintf (est_fp, "%s,,", "%95UL");
+
+    fprintf (est_fp, "\n");
+    return;
+} // end of emit_metric_stats_header
 
 // extracts tx_epoch_ms from the vx_epoch_ms embedded format
 void decode_sendtime (int format, double *vx_epoch_ms, double *tx_epoch_ms, int *socc) {
@@ -1097,6 +1242,7 @@ int main (int argc, char* argv[]) {
     struct s_latency *lsp;                  // pointer to latency log data sorted by bp_epoch_ms
     FILE *md_fp = NULL;                     // meta data file
     FILE *out_fp = NULL;                    // output file 
+    FILE *est_t2r_out_fp = NULL;            // output file 
     FILE *aux_fp = NULL;                    // auxiliary output with decoded occ etc. 
     FILE *lspike_fp = NULL;                 // latency spike output
     FILE *full_fp = NULL;                   // full probe + data tx file
@@ -1119,6 +1265,8 @@ int main (int argc, char* argv[]) {
     int lat_bins_by_occ_table[31][10];
     struct s_occ_by_lat_bins occ_by_lat_bins_table[20];
 
+    struct stats est_t2r_stats, *est_t2r_statsp = &est_t2r_stats; 
+
     char buffer[1000], *bp=buffer; 
     char ipath[500], *ipathp = ipath; 
     char opath[500], *opathp = opath; 
@@ -1135,11 +1283,10 @@ int main (int argc, char* argv[]) {
 
     struct s_files file_table[MAX_FILES];
     int len_file_table = 0;
+    int short_arg_count = 0; 
 
     clock_t start, end; 
     double execution_time; 
-
-    int short_arg_count = 0; 
 
     //  read command line arguments
     while (*++argv != NULL) {
@@ -1290,9 +1437,13 @@ int main (int argc, char* argv[]) {
 
     // open files
     int file_index = 0; 
+    
+    // est_t2r stat is accumulative - so common for all files
+    sprintf (bp, "%s%s_t2r_occ.csv", opath, rx_prefix); 
+	est_t2r_out_fp = open_file (bp, "w");
+    emit_metric_stats_header (est_t2r_out_fp); 
 
 PROCESS_EACH_FILE:
-
 
     printf ("Now processing file %s\n", file_table[file_index].rx_prefix); 
     start = clock (); 
@@ -1313,13 +1464,12 @@ PROCESS_EACH_FILE:
     sprintf (bp, "%s%s_warnings_occ.txt", opath, file_table[file_index].rx_prefix); 
    	warn_fp = open_file (bp, "w");
 
-    if ((md_fp == NULL) || (out_fp == NULL) || (aux_fp == NULL) || (warn_fp == NULL)) {
+    if ((md_fp == NULL) || (out_fp == NULL) || (est_t2r_out_fp==NULL) || (aux_fp == NULL) || (warn_fp == NULL)) {
         printf ("Missing or could not open input or output file\n"); 
         print_usage (); 
         my_exit (-1); 
     }
 
-    // initialization
     int i; 
 
     // if tx log file exists then read and process it
@@ -1556,6 +1706,11 @@ SKIP_SERVICE_LOG:
     // analytics
     //
     // initialize structuresx
+    // 
+
+    // est_t2r stats
+    init_metric_stats (est_t2r_statsp); 
+
     // average latency by occupancy table
     for (i=0; i <31; i++) {
         avg_lat_by_occ_table[i].latency = 0;
@@ -1590,6 +1745,9 @@ SKIP_SERVICE_LOG:
     // process all tx data
     for (i=0, mpdp=mpd; i < len_mdfile + len_prfile; i++, mpdp++) {
         
+        // est_t2r stats
+        update_metric_stats (est_t2r_statsp, 1, mpdp->est_t2r_ms, MAX_EST_T2R_LATENCY, MIN_EST_T2R_LATENCY); 
+
         // average latency by occupancy table
         avg_lat_by_occ_table[mpdp->socc].latency += mpdp->t2r_latency_ms;
         avg_lat_by_occ_table[mpdp->socc].count++; 
@@ -1711,6 +1869,11 @@ SKIP_SERVICE_LOG:
 
     // summary analytics report
     printf ("Emitting analytics output\n"); 
+    
+    compute_metric_stats (est_t2r_statsp, est_t2r_statsp->count);
+    emit_metric_stats (file_table[file_index].rx_prefix, "est_t2r", "est_t2r", 
+        est_t2r_statsp, 1, MAX_EST_T2R_LATENCY, MIN_EST_T2R_LATENCY, out_fp, est_t2r_out_fp); 
+    
     sort_lspike (lspike_table, len_lspike_table);
     sort_ospike (ospike_table, len_ospike_table);
     emit_stats (1, 0, file_table[file_index].rx_prefix, &avg_lat_by_occ_table[0], 0, &lspike_table[0], 0, &ospike_table[0], 
@@ -1769,5 +1932,6 @@ SKIP_FULL:
         goto PROCESS_EACH_FILE;    
 
     // else exit
+    fclose (est_t2r_out_fp); 
     my_exit (0); 
 } // end of main
