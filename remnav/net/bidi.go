@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"strconv"
 	"sync"
 )
@@ -39,18 +38,17 @@ func BidiWRDev(send <-chan []byte, device string, deviceId uint8, dest string, b
 		log.Fatal(err)
 	}
 	if len(iaddrs) == 0 {
-		log.Fatalf("%s had no interface addresses (%d)", device, len(iaddrs))
+		log.Fatalf("BidiWRDev: %s had no interface addresses (%d)", device, len(iaddrs))
 	}
 	localAddr := &net.UDPAddr{
 		IP: iaddrs[0].(*net.IPNet).IP,
 	}
 	remoteAddr, err := net.ResolveUDPAddr("udp", dest)
 	if err != nil {
-		println("ResolveUDPAddr failed:", err.Error())
-		os.Exit(1)
+		log.Fatalf("BidiWRDev: %s ResolveUDPAddr failed: %v", dest, err)
 	}
-	log.Printf("%s localAddr: %v\n", device, localAddr)
-	log.Printf("remoteAddr: %v\n", remoteAddr)
+	log.Printf("BidiWRDev: %s localAddr: %v\n", device, localAddr)
+	log.Printf("BidiWRDev: remoteAddr: %v\n", remoteAddr)
 
 	var pc *net.UDPConn
 	pc, err = net.DialUDP("udp", localAddr, remoteAddr)
@@ -82,7 +80,7 @@ func BidiWRDev(send <-chan []byte, device string, deviceId uint8, dest string, b
 			buf := make([]byte, bufSize)
 			n, _, err := pc.ReadFrom(buf)
 			if err != nil {
-				log.Printf("BidiWRDev/ReadFrom %v", err)
+				log.Printf("BidiWRDev/ReadFrom: %v", err)
 				continue
 			}
 			recvChan <- buf[:n]
@@ -116,7 +114,7 @@ func BidiWR(sendMsgs <-chan []byte, devices []string, dest string, bufSize int, 
 				select {
 				case sendChans[j] <- msg:
 				default:
-					log.Printf("%s channel not ready, packet dropped",
+					log.Printf("BidiWR: %s channel not ready, packet dropped",
 						devices[j])
 				}
 			}
