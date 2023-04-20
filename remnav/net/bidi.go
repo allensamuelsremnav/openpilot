@@ -146,10 +146,9 @@ func BidiRW(port int, bufSize int, send <-chan []byte, verbose bool) <-chan []by
 		log.Fatal(err)
 	}
 
+	// Forward messages from port
 	go func() {
 		defer pc.Close()
-		defer close(recvd)
-		defer close(addrs)
 		for {
 			buf := make([]byte, bufSize)
 			n, addr, err := pc.ReadFrom(buf)
@@ -162,20 +161,42 @@ func BidiRW(port int, bufSize int, send <-chan []byte, verbose bool) <-chan []by
 			msg := buf[1:n]
 			deviceId := uint8(buf[0])
 			recvd <- msg
-			addrs <- bidiSource{logical: deviceId, addr: addr}
+			// Timely update of addresses is less important than prompt forwarding.
+			select {
+			case addrs <- bidiSource{logical: deviceId, addr: addr}:
+			default:
+			}
 			if verbose {
 				fmt.Printf("BidiRW (ReadFrom), device %d, %d bytes, %s\n", deviceId, n, string(msg))
 			}
 		}
 	}()
 
-	// Each logical source has a bidiSource.
-	sources := make(map[uint8]bidiSource)
-
-	// Forward send messages to the connection.
-	var sendWrite = func() {
-		go func() {
-			for msg := range send {
+	// Forward messages from send channel; maintain dictionary of ReadFrom addresses.
+	go func() {
+		sources := make(map[uint8]bidiSource)
+		var send = send
+		for {
+			select {
+			case addr := <-addrs:
+				k := addr.logical
+				v, ok := sources[k]
+				if !ok {
+					sources[k] = addr
+					log.Printf("BidiRW: added sources[%d] with %v\n", k, addr.addr.String())
+				} else if k != v.logical {
+					sources[k] = addr
+					log.Printf("BidiRW: replaced sources[%d] with %v\n", k, addr.addr.String())
+				}
+			case msg, ok := <-send:
+				if !ok {
+					send = nil
+					break
+				}
+				if len(sources) == 0 {
+					// Don't send until we have an ReadFrom addres.
+					break
+				}
 				for k, v := range sources {
 					if verbose {
 						log.Printf("BidiRW (send) device %d, %v\n", k, v.addr)
@@ -185,34 +206,6 @@ func BidiRW(port int, bufSize int, send <-chan []byte, verbose bool) <-chan []by
 						log.Printf("BidiWR: (send) device %d, %v, %v", k, v, err)
 						continue
 					}
-				}
-			}
-		}()
-	}
-
-	// Maintain the dictionary of device ids --> address
-	go func() {
-		var addrs = addrs
-		// Start sending only after we've received a packet
-		// and have a return address.
-		var startSend sync.Once
-		for {
-			select {
-			case addr, ok := <-addrs:
-				if !ok {
-					fmt.Printf("BidiRW: addrs = nil\n")
-					addrs = nil
-				} else {
-					k := addr.logical
-					v, ok := sources[k]
-					if !ok {
-						sources[k] = addr
-						log.Printf("BidiRW: added sources[%d] with %v\n", k, addr.addr.String())
-					} else if k != v.logical {
-						sources[k] = addr
-						log.Printf("BidiRW: replaced sources[%d] with %v\n", k, addr.addr.String())
-					}
-					startSend.Do(sendWrite)
 				}
 			}
 		}
