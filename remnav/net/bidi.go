@@ -60,7 +60,6 @@ func BidiWRDev(send <-chan []byte, device string, deviceId uint8, dest string, b
 	sendWG.Add(1)
 	go func() {
 		defer sendWG.Done()
-		defer pc.Close()
 		for msg := range send {
 			// dialer->listener msgs are prefixed with a byte containing the logical device id.
 			_, err := pc.Write(append([]byte{deviceId}, msg...))

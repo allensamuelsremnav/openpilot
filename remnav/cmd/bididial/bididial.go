@@ -17,7 +17,7 @@ import (
 )
 
 // Send numbered messages.
-func counter(n int, sleep time.Duration, msgs chan<- []byte) {
+func counter(n int, sleep time.Duration) <-chan []byte {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	var runes = []rune("abcdefghijklmnopqrstuvwxyz")
@@ -28,30 +28,40 @@ func counter(n int, sleep time.Duration, msgs chan<- []byte) {
 	prefix := string(b)
 	log.Printf("bididial: prefix %s\n", prefix)
 
-	for i := 0; i < n; i++ {
-		msgs <- []byte(prefix + "_" + strconv.Itoa(i))
-		time.Sleep(sleep)
-	}
+	msgs := make(chan []byte)
+
+	go func() {
+		for i := 0; i < n; i++ {
+			msgs <- []byte(prefix + "_" + strconv.Itoa(i))
+			time.Sleep(sleep)
+		}
+		close(msgs)
+	}()
+	return msgs
 }
 
 // Send file contents.
-func files(filenames []string, sleep time.Duration, msgs chan<- []byte) {
-	for _, fn := range filenames {
-		f, err := os.Open(fn)
-		if err != nil {
-			log.Fatal(err)
+func files(filenames []string, sleep time.Duration) <-chan []byte {
+	msgs := make(chan []byte)
+	go func() {
+		for _, fn := range filenames {
+			f, err := os.Open(fn)
+			if err != nil {
+				log.Fatal(err)
+			}
+			s := bufio.NewScanner(f)
+			for s.Scan() {
+				msgs <- []byte(s.Text())
+				time.Sleep(sleep)
+			}
+			if err := s.Err(); err != nil {
+				log.Fatal(err)
+			}
+			f.Close()
 		}
-		defer f.Close()
-		s := bufio.NewScanner(f)
-		for s.Scan() {
-			msgs <- []byte(s.Text())
-			time.Sleep(sleep)
-		}
-		if err := s.Err(); err != nil {
-			log.Fatal(err)
-		}
-	}
-
+		close(msgs)
+	}()
+	return msgs
 }
 
 func main() {
@@ -68,10 +78,15 @@ func main() {
 	log.Printf("%s, devices %v", os.Args[0], devices)
 	log.Printf("%s, sleep %v ", os.Args[0], sleepDuration)
 
-	sendMsgs := make(chan []byte)
-	defer close(sendMsgs)
+	// dialer-->listener messages.
+	var sendMsgs <-chan []byte
+	if len(flag.Args()) == 0 {
+		sendMsgs = counter(*packets, sleepDuration)
+	} else {
+		sendMsgs = files(flag.Args(), sleepDuration)
+	}
 
-	// Read the messages received on the back channel.
+	// dialer<--listener messages
 	var recvChan <-chan []byte = rnnet.BidiWR(sendMsgs, devices, *dest, *bufSize, *verbose)
 	var recvWG sync.WaitGroup
 	recvWG.Add(1)
@@ -81,13 +96,6 @@ func main() {
 			fmt.Printf("bididial: (recvchan) '%s'\n", string(msg))
 		}
 	}()
-
-	// Send dialer-->listener messages.
-	if len(flag.Args()) == 0 {
-		counter(*packets, sleepDuration, sendMsgs)
-	} else {
-		files(flag.Args(), sleepDuration, sendMsgs)
-	}
 
 	recvWG.Wait()
 }
