@@ -165,7 +165,6 @@ func BidiRW(port int, bufSize int, send <-chan []byte, verbose bool) <-chan []by
 
 	// Forward messages from port
 	go func() {
-		defer pc.Close()
 		for {
 			buf := make([]byte, bufSize)
 			n, addr, err := pc.ReadFrom(buf)
@@ -187,6 +186,7 @@ func BidiRW(port int, bufSize int, send <-chan []byte, verbose bool) <-chan []by
 				fmt.Printf("BidiRW (ReadFrom), device %d, %d bytes, %s\n", deviceId, n, string(msg))
 			}
 		}
+		close(recvd)
 	}()
 
 	// Forward messages from send channel; maintain dictionary of ReadFrom addresses.

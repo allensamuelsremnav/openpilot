@@ -61,6 +61,7 @@ func main() {
 			send <- []byte("bidilisten: (send) " + prefix + "_" + strconv.Itoa(i))
 			time.Sleep(sleepDuration)
 		}
+		close(send)
 	}()
 	wg.Wait()
 }
