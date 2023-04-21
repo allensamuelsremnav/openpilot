@@ -24,7 +24,7 @@ import (
 // sendWG.Done() when the send-message channel is closed.  Back
 // communications are forwarded to the returned chan<-[]byte, which is
 // never closed, without deduping.
-func BidiWRDev(send <-chan []byte, device string, deviceId uint8, dest string, bufSize int, sendWG *sync.WaitGroup, recvChan chan<- []byte, verbose bool) {
+func BidiWRDev(send <-chan []byte, device string, deviceId uint8, dest string, bufSize int, sendWG *sync.WaitGroup, verbose bool) <-chan []byte {
 	// bufSize should be big enough for back communication.
 	log.Printf("BidiWRDev: device %s, deviceId %d\n", device, deviceId)
 
@@ -74,6 +74,7 @@ func BidiWRDev(send <-chan []byte, device string, deviceId uint8, dest string, b
 		}
 	}()
 
+	recvChan := make(chan []byte)
 	// Read and forward.
 	go func() {
 		for {
@@ -86,6 +87,7 @@ func BidiWRDev(send <-chan []byte, device string, deviceId uint8, dest string, b
 			recvChan <- buf[:n]
 		}
 	}()
+	return recvChan
 }
 
 // BidiWR implements a virtual connection using multiple devices,
@@ -99,12 +101,13 @@ func BidiWR(sendMsgs <-chan []byte, devices []string, dest string, bufSize int, 
 	var sendWG sync.WaitGroup
 
 	var sendChans []chan []byte
-	var recvChan chan []byte = make(chan []byte)
 
+	var recvChs []<-chan []byte
 	for i, d := range devices {
-		ch := make(chan []byte)
-		sendChans = append(sendChans, ch)
-		BidiWRDev(ch, d, uint8(i), dest, bufSize, &sendWG, recvChan, verbose)
+		sCh := make(chan []byte)
+		sendChans = append(sendChans, sCh)
+		rCh := BidiWRDev(sCh, d, uint8(i), dest, bufSize, &sendWG, verbose)
+		recvChs = append(recvChs, rCh)
 	}
 
 	// Send to all devices.
@@ -123,6 +126,23 @@ func BidiWR(sendMsgs <-chan []byte, devices []string, dest string, bufSize int, 
 			close(ch)
 		}
 		sendWG.Wait()
+	}()
+
+	// Merge recvChs to a single channel.
+	recvChan := make(chan []byte)
+	var recvWG sync.WaitGroup
+	for _, ch := range recvChs {
+		recvWG.Add(1)
+		go func(c <-chan []byte) {
+			for msg := range c {
+				recvChan <- msg
+			}
+			recvWG.Done()
+		}(ch)
+	}
+	go func() {
+		recvWG.Wait()
+		close(recvChan)
 	}()
 	return recvChan
 }
