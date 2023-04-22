@@ -177,16 +177,11 @@ func BidiRW(port int, bufSize int, send <-chan []byte, verbose bool) <-chan []by
 			msg := buf[1:n]
 			deviceId := uint8(buf[0])
 			recvd <- msg
-			// Timely update of addresses is less important than prompt forwarding.
-			select {
-			case addrs <- bidiSource{logical: deviceId, addr: addr}:
-			default:
-			}
+			addrs <- bidiSource{logical: deviceId, addr: addr}
 			if verbose {
 				fmt.Printf("BidiRW (ReadFrom), device %d, %d bytes, %s\n", deviceId, n, string(msg))
 			}
 		}
-		close(recvd)
 	}()
 
 	// Forward messages from send channel; maintain dictionary of ReadFrom addresses.
@@ -197,14 +192,10 @@ func BidiRW(port int, bufSize int, send <-chan []byte, verbose bool) <-chan []by
 			select {
 			case addr := <-addrs:
 				k := addr.logical
-				v, ok := sources[k]
-				if !ok {
-					sources[k] = addr
-					log.Printf("BidiRW: added sources[%d] with %v\n", k, addr.addr.String())
-				} else if k != v.logical {
-					sources[k] = addr
-					log.Printf("BidiRW: replaced sources[%d] with %v\n", k, addr.addr.String())
+				if _, ok := sources[k]; !ok {
+					log.Printf("BidiRW: added sources[%d] with %v\n", k, addr.addr)
 				}
+				sources[k] = addr
 			case msg, ok := <-send:
 				if !ok {
 					send = nil

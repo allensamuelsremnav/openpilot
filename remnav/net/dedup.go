@@ -12,8 +12,6 @@ func Chan(pc net.PacketConn, bufSize int) (<-chan []byte, chan net.Addr) {
 	msgs := make(chan []byte)
 	addrs := make(chan net.Addr)
 	go func() {
-		// Reduce output by reporting only when the addr has changed.
-		var prev net.Addr
 		for {
 			buf := make([]byte, bufSize)
 			n, addr, err := pc.ReadFrom(buf)
@@ -21,10 +19,7 @@ func Chan(pc net.PacketConn, bufSize int) (<-chan []byte, chan net.Addr) {
 				log.Fatal(err)
 			}
 			msgs <- buf[:n]
-			if prev == nil || addr != prev {
-				prev = addr
-				addrs <- addr
-			}
+			addrs <- addr
 		}
 		close(msgs)
 		close(addrs)
