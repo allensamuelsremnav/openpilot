@@ -2,120 +2,77 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"flag"
-	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
-	"sync"
-	"time"
+	"strings"
 
 	gpsd "remnav.com/remnav/metadata/gpsd"
+	rnnet "remnav.com/remnav/net"
 )
 
-type latestStr struct {
-	mu     sync.RWMutex
-	latest string
-}
-
-func (l *latestStr) set(s string) {
-	l.mu.Lock()
-	l.latest = s
-	l.mu.Unlock()
-}
-
-func (l *latestStr) get() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.latest
-}
-
-func watch(conn net.Conn, reader *bufio.Reader,
-	latest *latestStr) {
+func watch(gpsdAddr string) chan []byte {
 	// Watch the gpsd at conn and remember latest TPV.
+	conn, reader := gpsd.Conn(gpsdAddr)
+
 	gpsd.PokeWatch(conn)
 
-	// Gather all of the input
-	for {
-		line, err := reader.ReadString('\n')
-		if err == nil {
+	msgs := make(chan []byte)
+	go func() {
+		deviceCheck := true
+		defer close(msgs)
+		// Gather all of the input
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				log.Fatal(err)
+			}
 			var probe gpsd.Class
-			err := json.Unmarshal([]byte(line), &probe)
+			err = json.Unmarshal([]byte(line), &probe)
 			if err != nil {
 				log.Fatal(err)
 			}
 			// Clients only need TPV contents.
 			if probe.Class == "TPV" {
-				var tpv gpsd.TPV
-				err := json.Unmarshal([]byte(line), &tpv)
-				if err != nil {
-					log.Fatal(err)
-				}
-
-				// Marshall all modes so clients can tell if GPS is fixing.
-				msg, err := json.Marshal(tpv)
-				if err != nil {
-					log.Fatal(err)
-				}
-				latest.set(string(msg))
+				msgs <- []byte(line)
+			} else if deviceCheck && probe.Class == "DEVICES" {
+				gpsd.DeviceCheck(gpsdAddr, line)
+				deviceCheck = false
 			}
-
-		} else if err == io.EOF {
-			break
-		} else {
-			log.Fatal(err)
 		}
-	}
+	}()
+	return msgs
 }
 
 func main() {
-	gpsdAddress := flag.String("gpsd_addr", "", "host:port for gpsd, e.g. localhost:2947")
-	serviceAddress := flag.String("service_addr", "", "address for service")
+	gpsdAddress := flag.String("gpsd_addr", "10.0.0.11:2947", "gpsd server host:port, e.g. 10.0.0.11:2947")
+	dest := flag.String("dest", "96.64.247.70:6001", "destination host:port")
+
+	devs := flag.String("devices", "eth0,eth0", "comma-separated list of network devices, e.g. eth0,wlan0")
+	verbose := flag.Bool("verbose", false, "verbosity on")
+
 	flag.Parse()
 
 	if len(*gpsdAddress) == 0 {
 		log.Fatalf("%s: --gpsd_addr required", os.Args[0])
 	}
 
-	// Make connection for service
-	var writer io.Writer = os.Stdout
-	if len(*serviceAddress) > 0 {
-		serviceConn, err := net.Dial("tcp4", *serviceAddress)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer serviceConn.Close()
-		writer = serviceConn
-	}
-
-	// Make connection and reader for gpsd
-	gpsdConn, err := net.Dial("tcp4", *gpsdAddress)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer gpsdConn.Close()
-
-	reader := bufio.NewReader(gpsdConn)
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Println(line)
-
-	// The latest TPV data.
-	var latest latestStr
-
-	go watch(gpsdConn, reader, &latest)
-
-	for {
-		if len(latest.get()) == 0 {
+	var devices []string
+	for _, t := range strings.Split(*devs, ",") {
+		if len(t) == 0 {
 			continue
 		}
-		log.Print(latest.get())
-		fmt.Fprint(writer, latest.get())
-		time.Sleep(time.Second)
+		devices = append(devices, t)
 	}
+
+	// Get message stream from gpsd server.
+	msgs := watch(*gpsdAddress)
+
+	// Send via device to destination.
+	rnnet.UDPDup(msgs, devices, *dest, *verbose)
 }

@@ -80,7 +80,7 @@ def main():
             print("\n// %s\n//" % (tag,), file=f)
             for a in assignments:
                 print("// %s" % (a.comment,), file=f)
-                print("const int32_t f%s = %d;" % (a.name, a.number), file=f)
+                print("const int32_t %s = %d;" % (a.name, a.number), file=f)
                 print("", file=f)
         print("#endif  // REMNAV_NET_PORTS_H_", file=f)
 

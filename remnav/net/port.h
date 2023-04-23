@@ -7,25 +7,25 @@
 // operator station, external
 //
 // Listen on this port for GPSD messages from vehicle
-const int32_t fOperatorGPSDListener = 6001;
+const int32_t OperatorGPSDListener = 6001;
 
 // Trajectory listener end of bidirectional dialer --> listener
-const int32_t fOperatorTrajectoryListener = 6002;
+const int32_t OperatorTrajectoryListener = 6002;
 
 
 // operator station, localhost
 //
 // Send GPSD messages from the GPSD listener to display
-const int32_t fOperatorGPSDDisplay = 7000;
+const int32_t OperatorGPSDDisplay = 7000;
 
 // Send GPSD messages from the GPSD listener to trajectory planner
-const int32_t fOperatorGPSDTrajectory = 7001;
+const int32_t OperatorGPSDTrajectory = 7001;
 
 // Send trajectory messages from trajectory planner to trajectory listener
-const int32_t fOperatorTrajectoryRequest = 7002;
+const int32_t OperatorTrajectoryRequest = 7002;
 
 // Send trajectory-application reports from trajectory listener to display
-const int32_t fOperatorTrajectoryApplication = 7003;
+const int32_t OperatorTrajectoryApplication = 7003;
 
 
 // vehicle, external
@@ -34,9 +34,9 @@ const int32_t fOperatorTrajectoryApplication = 7003;
 // vehicle, localhost
 //
 // Send trajectory requests from trajectory dialer to trajectory execution
-const int32_t fVehicleTrajectoryRequest = 7000;
+const int32_t VehicleTrajectoryRequest = 7000;
 
 // Send trajectory-applied messages from trajectory execution to trajectory dialer for forwarding.
-const int32_t fVehicleTrajectoryApplication = 7001;
+const int32_t VehicleTrajectoryApplication = 7001;
 
 #endif  // REMNAV_NET_PORTS_H_
