@@ -5,8 +5,8 @@ package net
 //
 // operator station, external
 //
-// GPSD messages from vehicle gpsdrt to the operator.
-const OperatorGPSDListener = 6001
+// Gpsd messages from vehicle gpsdrt to the operator.
+const OperatorGpsdListener = 6001
 
 // Trajectory-applied messages from trajectory execution to operator.
 const OperatorTrajectoryListener = 6002
@@ -14,11 +14,11 @@ const OperatorTrajectoryListener = 6002
 //
 // operator station, localhost
 //
-// GPSD messages from the GPSD listener to display.
-const OperatorGPSDDisplay = 7000
+// Gpsd messages from the gpsd listener to display.
+const OperatorGpsdDisplay = 7000
 
-// GPSD messages from the GPSD listener to trajectory planner.
-const OperatorGPSDTrajectory = 7001
+// Gpsd messages from the gpsd listener to trajectory planner.
+const OperatorGpsdTrajectory = 7001
 
 // Trajectory messages from trajectory planner to trajectory listener for forwarding.
 const OperatorTrajectoryRequest = 7002

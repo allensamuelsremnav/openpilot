@@ -5,7 +5,7 @@
 
 // operator station, external
 //
-// GPSD messages from vehicle gpsdrt to the operator.
+// Gpsd messages from vehicle gpsdrt to the operator.
 const int32_t OPERATOR_GPSD_LISTENER = 6001;
 
 // Trajectory-applied messages from trajectory execution to operator.
@@ -14,10 +14,10 @@ const int32_t OPERATOR_TRAJECTORY_LISTENER = 6002;
 
 // operator station, localhost
 //
-// GPSD messages from the GPSD listener to display.
+// Gpsd messages from the gpsd listener to display.
 const int32_t OPERATOR_GPSD_DISPLAY = 7000;
 
-// GPSD messages from the GPSD listener to trajectory planner.
+// Gpsd messages from the gpsd listener to trajectory planner.
 const int32_t OPERATOR_GPSD_TRAJECTORY = 7001;
 
 // Trajectory messages from trajectory planner to trajectory listener for forwarding.

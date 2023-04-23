@@ -15,8 +15,8 @@ Assignment = collections.namedtuple('PortAssignment',
 all_assignments = [
 ("operator station, external",
  [Assignment(
-     "Operator_GPSD_Listener", 6001,
-     "GPSD messages from vehicle gpsdrt to the operator."),
+     "Operator_Gpsd_Listener", 6001,
+     "Gpsd messages from vehicle gpsdrt to the operator."),
   Assignment(
       "Operator_Trajectory_Listener", 6002,
       "Trajectory-applied messages from trajectory execution to operator."),
@@ -24,11 +24,11 @@ all_assignments = [
 
 ("operator station, localhost",
  [Assignment(
-     "Operator_GPSD_Display", 7000,
-     "GPSD messages from the GPSD listener to display."),
+     "Operator_Gpsd_Display", 7000,
+     "Gpsd messages from the gpsd listener to display."),
   Assignment(
-      "Operator_GPSD_Trajectory", 7001,
-      "GPSD messages from the GPSD listener to trajectory planner."),
+      "Operator_Gpsd_Trajectory", 7001,
+      "Gpsd messages from the gpsd listener to trajectory planner."),
   Assignment(
       "Operator_Trajectory_Request", 7002,
       "Trajectory messages from trajectory planner to trajectory listener for forwarding."),
