@@ -3,26 +3,26 @@
 
 # operator station, external
 #
-# Listen on this port for GPSD messages from vehicle
-OperatorGPSDListener = 6001
+# GPSD messages from vehicle gpsdrt to the operator.
+OPERATOR_GPSD_LISTENER = 6001
 
-# Trajectory listener end of bidirectional dialer --> listener
-OperatorTrajectoryListener = 6002
+# Trajectory-applied messages from trajectory execution to operator.
+OPERATOR_TRAJECTORY_LISTENER = 6002
 
 
 # operator station, localhost
 #
-# Send GPSD messages from the GPSD listener to display
-OperatorGPSDDisplay = 7000
+# GPSD messages from the GPSD listener to display.
+OPERATOR_GPSD_DISPLAY = 7000
 
-# Send GPSD messages from the GPSD listener to trajectory planner
-OperatorGPSDTrajectory = 7001
+# GPSD messages from the GPSD listener to trajectory planner.
+OPERATOR_GPSD_TRAJECTORY = 7001
 
-# Send trajectory messages from trajectory planner to trajectory listener
-OperatorTrajectoryRequest = 7002
+# Trajectory messages from trajectory planner to trajectory listener for forwarding.
+OPERATOR_TRAJECTORY_REQUEST = 7002
 
-# Send trajectory-application reports from trajectory listener to display
-OperatorTrajectoryApplication = 7003
+# Trajectory-applied messages from trajectory listener to display.
+OPERATOR_TRAJECTORY_APPLICATION = 7003
 
 
 # vehicle, external
@@ -30,9 +30,9 @@ OperatorTrajectoryApplication = 7003
 
 # vehicle, localhost
 #
-# Send trajectory requests from trajectory dialer to trajectory execution
-VehicleTrajectoryRequest = 7000
+# Trajectory requests from trajectory dialer to trajectory execution
+VEHICLE_TRAJECTORY_REQUEST = 7000
 
-# Send trajectory-applied messages from trajectory execution to trajectory dialer for forwarding.
-VehicleTrajectoryApplication = 7001
+# trajectory-applied messages from trajectory execution to trajectory dialer for forwarding.
+VEHICLE_TRAJECTORY_APPLICATION = 7001
 

@@ -5,25 +5,25 @@ package net
 //
 // operator station, external
 //
-// Listen on this port for GPSD messages from vehicle
+// GPSD messages from vehicle gpsdrt to the operator.
 const OperatorGPSDListener = 6001
 
-// Trajectory listener end of bidirectional dialer --> listener
+// Trajectory-applied messages from trajectory execution to operator.
 const OperatorTrajectoryListener = 6002
 
 //
 // operator station, localhost
 //
-// Send GPSD messages from the GPSD listener to display
+// GPSD messages from the GPSD listener to display.
 const OperatorGPSDDisplay = 7000
 
-// Send GPSD messages from the GPSD listener to trajectory planner
+// GPSD messages from the GPSD listener to trajectory planner.
 const OperatorGPSDTrajectory = 7001
 
-// Send trajectory messages from trajectory planner to trajectory listener
+// Trajectory messages from trajectory planner to trajectory listener for forwarding.
 const OperatorTrajectoryRequest = 7002
 
-// Send trajectory-application reports from trajectory listener to display
+// Trajectory-applied messages from trajectory listener to display.
 const OperatorTrajectoryApplication = 7003
 
 //
@@ -32,9 +32,9 @@ const OperatorTrajectoryApplication = 7003
 //
 // vehicle, localhost
 //
-// Send trajectory requests from trajectory dialer to trajectory execution
+// Trajectory requests from trajectory dialer to trajectory execution
 const VehicleTrajectoryRequest = 7000
 
-// Send trajectory-applied messages from trajectory execution to trajectory dialer for forwarding.
+// trajectory-applied messages from trajectory execution to trajectory dialer for forwarding.
 const VehicleTrajectoryApplication = 7001
 
