@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	udp "remnav.com/remnav/net"
+	rnnet "remnav.com/remnav/net"
 )
 
 func counter(n int, sleep time.Duration, msgs chan<- []byte) {
@@ -55,7 +55,7 @@ func main() {
 	msgs := make(chan []byte)
 	defer close(msgs)
 
-	go udp.UDPDupDev(msgs, devices, *dest, *verbose)
+	go rnnet.UDPDup(msgs, devices, *dest, *verbose)
 
 	if len(flag.Args()) == 0 {
 		counter(*packets, sleepDuration, msgs)

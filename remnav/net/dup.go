@@ -7,50 +7,31 @@ import (
 	"sync"
 )
 
-// UDPSendDev sends msgs over a named device to dest.
-func UDPSendDev(msgs <-chan []byte, device string, dest string, startedWG *sync.WaitGroup, completedWG *sync.WaitGroup, verbose bool) {
+// udpDev sends msgs over a named device to dest.
+func udpDev(msgs <-chan []byte, device string, dest string, startedWG *sync.WaitGroup, completedWG *sync.WaitGroup, verbose bool) {
 	defer completedWG.Done()
-	// Initialize the dialer for an explicit device.
-	ibn, err := net.InterfaceByName(device)
-	if err != nil {
-		log.Fatal(err)
-	}
-	iaddrs, err := ibn.Addrs()
-	if err != nil {
-		log.Fatal(err)
-	}
-	if len(iaddrs) == 0 {
-		log.Fatalf("%s had no interface addresses (%d)", device, len(iaddrs))
-	}
-	udpAddr := &net.UDPAddr{
-		IP: iaddrs[0].(*net.IPNet).IP,
-	}
-	log.Printf("%s udpAddr: %v\n", device, udpAddr)
-	dialer := net.Dialer{LocalAddr: udpAddr}
-
-	conn, err := dialer.Dial("udp", dest)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer conn.Close()
+	conn := DialUDP(device, dest, "UDPSendDev")
 
 	startedWG.Done()
+
 	for msg := range msgs {
 		_, err := conn.Write([]byte(msg))
 		if err != nil {
 			log.Printf("UDPSendDev: %v", err)
 		}
 		if verbose {
-			log.Printf("device %s, msg '%s'\n", device, msg)
+			log.Printf("UDPSendDev: device %s, msg '%s'\n", device, msg)
 		}
 	}
 }
 
-// UDPDupDev sends duplicated messages over named devices to dest.
-func UDPDupDev(msgs <-chan []byte, devices []string, dest string, verbose bool) {
+// UDPDup sends duplicated messages over named devices to dest.
+
+func UDPDup(msgs <-chan []byte, devices []string, dest string, verbose bool) {
 	// Make a parallel array of channels and goroutines.
 	// This WaitGroup to be sure the senders are ready to receive.
 	var startedWG sync.WaitGroup
+
 	// This WaitGroup for all senders to complete.
 	var completedWG sync.WaitGroup
 
@@ -61,7 +42,7 @@ func UDPDupDev(msgs <-chan []byte, devices []string, dest string, verbose bool) 
 	for _, d := range devices {
 		ch := make(chan []byte)
 		chs = append(chs, ch)
-		go UDPSendDev(ch, d, dest, &startedWG, &completedWG, verbose)
+		go udpDev(ch, d, dest, &startedWG, &completedWG, verbose)
 	}
 	startedWG.Wait()
 
@@ -104,9 +85,4 @@ func dup(network string, msgs <-chan []byte, dests []string, verbose bool) {
 			}
 		}
 	}
-}
-
-// UDPDup sends duplicated messages over network to destinations
-func UDPDup(msgs <-chan []byte, dests []string, verbose bool) {
-	dup("udp", msgs, dests, verbose)
 }

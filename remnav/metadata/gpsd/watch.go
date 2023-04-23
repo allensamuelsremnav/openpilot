@@ -45,6 +45,20 @@ func PokeWatch(conn net.Conn) {
 
 }
 
+func DeviceCheck(gpsdAddress, line string) {
+	// Misconfiguration could point to a gpsd server with no devices.
+	var devices Devices
+	err := json.Unmarshal([]byte(line), &devices)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("%s: %s: ", os.Args[0], devices)
+	if len(devices.Devices) == 0 {
+		log.Fatalf("no devices found for gpsd at %s.  Is a GPS attached?",
+			gpsdAddress)
+	}
+}
+
 var watchTimestampFmt = "20060102T1504Z"
 
 func logfilename(gnssDir, binTimestamp string) string {
@@ -75,18 +89,8 @@ func WatchBinned(gpsdAddress string, reader *bufio.Reader, gnssDir string) {
 				log.Fatal(err)
 			}
 			if deviceCheck {
-				// Misconfiguration could point to a gpsd server with no devices.
 				if probe.Class == "DEVICES" {
-					var devices Devices
-					err := json.Unmarshal([]byte(line), &devices)
-					if err != nil {
-						log.Fatal(err)
-					}
-					log.Printf("%s: %s: ", os.Args[0], devices)
-					if len(devices.Devices) == 0 {
-						log.Fatalf("no devices found for gpsd at %s.  Is a GPS attached?",
-							gpsdAddress)
-					}
+					DeviceCheck(gpsdAddress, line)
 					deviceCheck = false
 				}
 			}

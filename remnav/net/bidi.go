@@ -28,33 +28,7 @@ func BidiWRDev(send <-chan []byte, device string, deviceId uint8, dest string, b
 	// bufSize should be big enough for back communication.
 	log.Printf("BidiWRDev: device %s, deviceId %d\n", device, deviceId)
 
-	// Initialize the dialer for an explicit device.
-	ibn, err := net.InterfaceByName(device)
-	if err != nil {
-		log.Fatal(err)
-	}
-	iaddrs, err := ibn.Addrs()
-	if err != nil {
-		log.Fatal(err)
-	}
-	if len(iaddrs) == 0 {
-		log.Fatalf("BidiWRDev: %s had no interface addresses (%d)", device, len(iaddrs))
-	}
-	localAddr := &net.UDPAddr{
-		IP: iaddrs[0].(*net.IPNet).IP,
-	}
-	remoteAddr, err := net.ResolveUDPAddr("udp", dest)
-	if err != nil {
-		log.Fatalf("BidiWRDev: %s ResolveUDPAddr failed: %v", dest, err)
-	}
-	log.Printf("BidiWRDev: %s localAddr: %v\n", device, localAddr)
-	log.Printf("BidiWRDev: remoteAddr: %v\n", remoteAddr)
-
-	var pc *net.UDPConn
-	pc, err = net.DialUDP("udp", localAddr, remoteAddr)
-	if err != nil {
-		log.Fatal(err)
-	}
+	pc := DialUDP(device, dest, "BidiWRDev")
 
 	// Send msgs to connnection.
 	sendWG.Add(1)
