@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	gpsd "remnav.com/remnav/metadata/gpsd"
@@ -56,7 +57,9 @@ func watch(gpsdAddr string, verbose bool) chan []byte {
 
 func main() {
 	gpsdAddress := flag.String("gpsd_addr", "10.0.0.11:2947", "gpsd server host:port, e.g. 10.1.10.225:2947")
-	dest := flag.String("dest", "10.0.0.210:6001", "destination host:port, e.g. 96.64.247.70:6001")
+	dest := flag.String("dest",
+		"10.0.0.210:"+strconv.Itoa(rnnet.OperatorGpsdListener),
+		"destination host:port, e.g. 96.64.247.70:"+strconv.Itoa(rnnet.OperatorGpsdListener))
 	devs := flag.String("devices", "eth0,eth0",
 		"comma-separated list of network devices, e.g. wlan0_1,wlan1_1,wlan2_1")
 	verbose := flag.Bool("verbose", false, "verbosity on")
