@@ -79,5 +79,5 @@ func main() {
 	msgs := watch(*gpsdAddress, *verbose)
 
 	// Send via device to destination.
-	rnnet.UDPDup(msgs, devices, *dest, false)
+	rnnet.UDPDial(msgs, devices, *dest, false)
 }

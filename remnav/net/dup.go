@@ -25,9 +25,8 @@ func udpDev(msgs <-chan []byte, device string, dest string, startedWG *sync.Wait
 	}
 }
 
-// UDPDup sends duplicated messages over named devices to dest.
-
-func UDPDup(msgs <-chan []byte, devices []string, dest string, verbose bool) {
+// UDPDial sends duplicated messages over named devices to dest.
+func UDPDial(msgs <-chan []byte, devices []string, dest string, verbose bool) {
 	// Make a parallel array of channels and goroutines.
 	// This WaitGroup to be sure the senders are ready to receive.
 	var startedWG sync.WaitGroup
