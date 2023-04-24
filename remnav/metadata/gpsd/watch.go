@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 )
 
-func Conn(GPSDAddr string) (net.Conn, *bufio.Reader) {
+func Conn(gpsdAddress string) (net.Conn, *bufio.Reader) {
 	// Make connection and reader.
-	log.Printf("%s: connecting to %s", os.Args[0], GPSDAddr)
-	conn, err := net.Dial("tcp4", GPSDAddr)
+	log.Printf("%s: connecting to gpsd at %s", os.Args[0], gpsdAddress)
+	conn, err := net.Dial("tcp4", gpsdAddress)
 	if err != nil {
 		log.Fatal(err)
 	}

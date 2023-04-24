@@ -20,7 +20,7 @@ func udpDev(msgs <-chan []byte, device string, dest string, startedWG *sync.Wait
 			log.Printf("UDPSendDev: %v", err)
 		}
 		if verbose {
-			log.Printf("UDPSendDev: device %s, msg '%s'\n", device, msg)
+			log.Printf("UDPSendDev: device %s, msg %s\n", device, string(msg))
 		}
 	}
 }

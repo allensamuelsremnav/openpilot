@@ -65,7 +65,7 @@ func files(filenames []string, sleep time.Duration) <-chan []byte {
 }
 
 func main() {
-	dest := flag.String("dest", "10.0.0.11:6001", "destination address")
+	dest := flag.String("dest", "10.0.0.210:6001", "destination address")
 	bufSize := flag.Int("bufsize", 4096, "buffer size for reading")
 	verbose := flag.Bool("verbose", false, "verbosity on")
 	packets := flag.Int("packets", 100, "number of test packets")

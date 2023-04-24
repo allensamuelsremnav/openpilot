@@ -13,7 +13,7 @@ import (
 	rnnet "remnav.com/remnav/net"
 )
 
-func watch(gpsdAddr string) chan []byte {
+func watch(gpsdAddr string, verbose bool) chan []byte {
 	// Watch the gpsd at conn and remember latest TPV.
 	conn, reader := gpsd.Conn(gpsdAddr)
 
@@ -40,6 +40,11 @@ func watch(gpsdAddr string) chan []byte {
 			// Clients only need TPV contents.
 			if probe.Class == "TPV" {
 				msgs <- []byte(line)
+				if verbose {
+					// trim to interesting prefix of TVP messages.
+					trim := 95
+					log.Printf("gpsdrt: %s", string(line)[:trim])
+				}
 			} else if deviceCheck && probe.Class == "DEVICES" {
 				gpsd.DeviceCheck(gpsdAddr, line)
 				deviceCheck = false
@@ -50,10 +55,10 @@ func watch(gpsdAddr string) chan []byte {
 }
 
 func main() {
-	gpsdAddress := flag.String("gpsd_addr", "10.0.0.11:2947", "gpsd server host:port, e.g. 10.0.0.11:2947")
-	dest := flag.String("dest", "96.64.247.70:6001", "destination host:port")
-
-	devs := flag.String("devices", "eth0,eth0", "comma-separated list of network devices, e.g. eth0,wlan0")
+	gpsdAddress := flag.String("gpsd_addr", "10.0.0.11:2947", "gpsd server host:port, e.g. 10.1.10.225:2947")
+	dest := flag.String("dest", "10.0.0.210:6001", "destination host:port, e.g. 96.64.247.70:6001")
+	devs := flag.String("devices", "eth0,eth0",
+		"comma-separated list of network devices, e.g. wlan0_1,wlan1_1,wlan2_1")
 	verbose := flag.Bool("verbose", false, "verbosity on")
 
 	flag.Parse()
@@ -71,8 +76,8 @@ func main() {
 	}
 
 	// Get message stream from gpsd server.
-	msgs := watch(*gpsdAddress)
+	msgs := watch(*gpsdAddress, *verbose)
 
 	// Send via device to destination.
-	rnnet.UDPDup(msgs, devices, *dest, *verbose)
+	rnnet.UDPDup(msgs, devices, *dest, false)
 }
