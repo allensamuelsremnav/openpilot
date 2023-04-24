@@ -35,4 +35,3 @@ VEHICLE_TRAJECTORY_REQUEST = 7000
 
 # trajectory-applied messages from trajectory execution to trajectory dialer for forwarding.
 VEHICLE_TRAJECTORY_APPLICATION = 7001
-

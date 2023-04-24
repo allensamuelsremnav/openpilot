@@ -13,47 +13,48 @@ Assignment = collections.namedtuple('PortAssignment',
 # 3. Initialisms such as UDP or TCP should be in all caps.
 
 all_assignments = [
-("operator station, external",
- [Assignment(
-     "Operator_Gpsd_Listener", 6001,
-     "Gpsd messages from vehicle gpsdrt to the operator."),
-  Assignment(
+    ("operator station, external",
+     [Assignment(
+         "Operator_Gpsd_Listener", 6001,
+         "Gpsd messages from vehicle gpsdrt to the operator."),
+         Assignment(
       "Operator_Trajectory_Listener", 6002,
       "Trajectory-applied messages from trajectory execution to operator."),
-  ]),
+      ]),
 
-("operator station, localhost",
- [Assignment(
-     "Operator_Gpsd_Display", 7000,
-     "Gpsd messages from the gpsd listener to display."),
-  Assignment(
+    ("operator station, localhost",
+     [Assignment(
+         "Operator_Gpsd_Display", 7000,
+         "Gpsd messages from the gpsd listener to display."),
+         Assignment(
       "Operator_Gpsd_Trajectory", 7001,
       "Gpsd messages from the gpsd listener to trajectory planner."),
-  Assignment(
+         Assignment(
       "Operator_Trajectory_Request", 7002,
       "Trajectory messages from trajectory planner to trajectory listener for forwarding."),
-  Assignment(
+         Assignment(
       "Operator_Trajectory_Application", 7003,
       "Trajectory-applied messages from trajectory listener to display."),
-  ]),
+      ]),
 
-    
-("vehicle, external",
- [
- ]),
 
-("vehicle, localhost",
- [Assignment(
-     "Vehicle_Trajectory_Request", 7000,
-     "Trajectory requests from trajectory dialer to "
-     "trajectory execution"),
-  
-  Assignment(
+    ("vehicle, external",
+     [
+     ]),
+
+    ("vehicle, localhost",
+     [Assignment(
+         "Vehicle_Trajectory_Request", 7000,
+         "Trajectory requests from trajectory dialer to "
+         "trajectory execution"),
+
+         Assignment(
       "Vehicle_Trajectory_Application", 7001,
       "trajectory-applied messages from trajectory execution "
       "to trajectory dialer for forwarding."),
-  ]),
+      ]),
 ]
+
 
 def main():
     with open("port.go", "w") as f:
@@ -64,7 +65,7 @@ def main():
             print("//\n// %s\n//" % (tag,), file=f)
             for a in assignments:
                 print("// %s" % (a.comment,), file=f)
-                
+
                 print("const %s = %d" % (a.name.replace("_", ""),
                                          a.number), file=f)
                 print("", file=f)
@@ -93,6 +94,6 @@ def main():
                 print("", file=f)
         print("#endif  // REMNAV_NET_PORTS_H_", file=f)
 
+
 if __name__ == "__main__":
     main()
-    
