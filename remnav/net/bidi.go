@@ -175,10 +175,6 @@ func BidiRW(port int, bufSize int, send <-chan []byte, verbose bool) <-chan []by
 					send = nil
 					break
 				}
-				if len(sources) == 0 {
-					// Don't send until we have an ReadFrom addres.
-					break
-				}
 				for k, v := range sources {
 					if verbose {
 						log.Printf("BidiRW (send) device %d, %v\n", k, v.addr)
