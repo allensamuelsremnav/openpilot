@@ -42,9 +42,12 @@ func watch(gpsdAddr string, verbose bool) chan []byte {
 			if probe.Class == "TPV" {
 				msgs <- []byte(line)
 				if verbose {
-					// trim to interesting prefix of TVP messages.
-					trim := 95
-					log.Printf("gpsdrt: %s", string(line)[:trim])
+					var tpv gpsd.TPV
+					err = json.Unmarshal([]byte(line), &tpv)
+					// Trim to part of TVP message.
+					log.Printf("gpsdrt: Device %v, Mode %v, Time %s, Lat %.9f°, Lon %.9f°, Speed %.3f m/s",
+						tpv.Device, tpv.Mode, tpv.Time.Format(gpsd.RFC339MilliNatural),
+						tpv.Lat, tpv.Lon, tpv.Speed)
 				}
 			} else if deviceCheck && probe.Class == "DEVICES" {
 				gpsd.DeviceCheck(gpsdAddr, line)
