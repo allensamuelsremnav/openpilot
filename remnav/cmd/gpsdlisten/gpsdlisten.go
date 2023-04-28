@@ -61,8 +61,8 @@ func forward(msgs chan []byte, port int) {
 
 func main() {
 	listenHelp := fmt.Sprintf("listen on this port for UDP, e.g. %d",
-		rnnet.OperatorGpsdListener)
-	listenPort := flag.Int("listen", rnnet.OperatorGpsdListener, listenHelp)
+		rnnet.OperatorGpsdListen)
+	listenPort := flag.Int("listen", rnnet.OperatorGpsdListen, listenHelp)
 	forwardHelp := fmt.Sprintf(
 		"forward gpsd messages to this comma-separated list of ports, e.g. '%d,%d'",
 		rnnet.OperatorGpsdDisplay,
