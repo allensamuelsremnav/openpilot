@@ -11,8 +11,8 @@ const int32_t OPERATOR_GPSD_LISTEN = 6001;
 // Trajectory-applied messages from vehicle trajectory execution to operator.
 const int32_t OPERATOR_TRAJECTORY_LISTEN = 6002;
 
-// Gpsd messages from the gpsd listener to display.
-const int32_t OPERATOR_GPSD_DISPLAY = 7000;
+// Unused, available.
+const int32_t OPERATOR_UNUSED_AVAILABLE = 7000;
 
 // Gpsd messages from the gpsd listener to trajectory planner.
 const int32_t OPERATOR_GPSD_TRAJECTORY = 7001;
@@ -23,7 +23,7 @@ const int32_t OPERATOR_TRAJECTORY_REQUEST = 7002;
 // Trajectory-applied messages from trajectory listener to display.
 const int32_t OPERATOR_TRAJECTORY_APPLICATION = 7003;
 
-// Overlay messages from decoder to operator (display).
+// Overlay messages from decoder and gpsd listener to operator (display).
 const int32_t OPERATOR_OVERLAY_LISTEN = 7777;
 
 // Decoded video messages from decoder to operator (display).

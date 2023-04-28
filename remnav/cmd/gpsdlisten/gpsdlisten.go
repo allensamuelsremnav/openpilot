@@ -65,7 +65,7 @@ func main() {
 	listenPort := flag.Int("listen", rnnet.OperatorGpsdListen, listenHelp)
 	forwardHelp := fmt.Sprintf(
 		"forward gpsd messages to this comma-separated list of ports, e.g. '%d,%d'",
-		rnnet.OperatorGpsdDisplay,
+		rnnet.OperatorOverlayListen,
 		rnnet.OperatorGpsdTrajectory)
 
 	forwardPorts := flag.String("forward", "", forwardHelp)

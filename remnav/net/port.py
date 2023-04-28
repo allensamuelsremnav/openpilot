@@ -9,8 +9,8 @@ OPERATOR_GPSD_LISTEN = 6001
 # Trajectory-applied messages from vehicle trajectory execution to operator.
 OPERATOR_TRAJECTORY_LISTEN = 6002
 
-# Gpsd messages from the gpsd listener to display.
-OPERATOR_GPSD_DISPLAY = 7000
+# Unused, available.
+OPERATOR_UNUSED_AVAILABLE = 7000
 
 # Gpsd messages from the gpsd listener to trajectory planner.
 OPERATOR_GPSD_TRAJECTORY = 7001
@@ -21,7 +21,7 @@ OPERATOR_TRAJECTORY_REQUEST = 7002
 # Trajectory-applied messages from trajectory listener to display.
 OPERATOR_TRAJECTORY_APPLICATION = 7003
 
-# Overlay messages from decoder to operator (display).
+# Overlay messages from decoder and gpsd listener to operator (display).
 OPERATOR_OVERLAY_LISTEN = 7777
 
 # Decoded video messages from decoder to operator (display).

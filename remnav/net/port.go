@@ -11,8 +11,8 @@ const OperatorGpsdListen = 6001
 // Trajectory-applied messages from vehicle trajectory execution to operator.
 const OperatorTrajectoryListen = 6002
 
-// Gpsd messages from the gpsd listener to display.
-const OperatorGpsdDisplay = 7000
+// Unused, available.
+const OperatorUnusedAvailable = 7000
 
 // Gpsd messages from the gpsd listener to trajectory planner.
 const OperatorGpsdTrajectory = 7001
@@ -23,7 +23,7 @@ const OperatorTrajectoryRequest = 7002
 // Trajectory-applied messages from trajectory listener to display.
 const OperatorTrajectoryApplication = 7003
 
-// Overlay messages from decoder to operator (display).
+// Overlay messages from decoder and gpsd listener to operator (display).
 const OperatorOverlayListen = 7777
 
 // Decoded video messages from decoder to operator (display).

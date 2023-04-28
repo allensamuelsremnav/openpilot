@@ -21,8 +21,8 @@ all_assignments = [
             "Operator_Trajectory_Listen", 6002,
             "Trajectory-applied messages from vehicle trajectory execution to operator."),
          Assignment(
-            "Operator_Gpsd_Display", 7000,
-            "Gpsd messages from the gpsd listener to display."),
+            "Operator_Unused_Available", 7000,
+            "Unused, available."),
          Assignment(
             "Operator_Gpsd_Trajectory", 7001,
             "Gpsd messages from the gpsd listener to trajectory planner."),
@@ -34,7 +34,7 @@ all_assignments = [
             "Trajectory-applied messages from trajectory listener to display."),
          Assignment(
             "Operator_Overlay_Listen", 7777,
-            "Overlay messages from decoder to operator (display)."),
+            "Overlay messages from decoder and gpsd listener to operator (display)."),
          Assignment(
             "Operator_Video_Listen", 8888,
             "Decoded video messages from decoder to operator (display)."),
