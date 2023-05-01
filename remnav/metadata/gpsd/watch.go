@@ -66,7 +66,7 @@ func logfilename(gnssDir, binTimestamp string) string {
 	return filepath.Join(gnssDir, binTimestamp+"_"+fmtId+".json")
 }
 
-func WatchBinned(gpsdAddress string, reader *bufio.Reader, gnssDir string) {
+func WatchBinned(gpsdAddress string, reader chan string, gnssDir string) {
 	// Gather all of the input from the watch reader; send to a succession of files.
 	//
 	// Binning rules:
@@ -81,7 +81,8 @@ func WatchBinned(gpsdAddress string, reader *bufio.Reader, gnssDir string) {
 	var otimestamp string
 	var ofile *os.File
 	for {
-		line, err := reader.ReadString('\n')
+		var err error
+		line := <-reader
 		if err == nil {
 			var probe Class
 			err := json.Unmarshal([]byte(line), &probe)

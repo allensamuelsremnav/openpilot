@@ -113,5 +113,17 @@ func main() {
 
 	gpsd.PokeWatch(conn)
 
-	gpsd.WatchBinned(*gpsdAddressFlag, reader, gnssPath)
+	msgs := make(chan string)
+	go func() {
+		for {
+			line, ok := reader.ReadString('\n')
+			if ok == nil {
+				msgs <- line
+			} else {
+				log.Fatal(err)
+			}
+		}
+	}()
+
+	gpsd.WatchBinned(*gpsdAddressFlag, msgs, gnssPath)
 }

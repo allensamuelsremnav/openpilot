@@ -45,6 +45,7 @@ func UDPDial(msgs <-chan []byte, devices []string, dest string, verbose bool) {
 	}
 	startedWG.Wait()
 
+	// Send the msgs to the parallel channels.
 	for msg := range msgs {
 		for j := 0; j < len(devices); j++ {
 			select {
