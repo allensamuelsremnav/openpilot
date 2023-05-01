@@ -63,12 +63,13 @@ func main() {
 	listenHelp := fmt.Sprintf("listen on this port for UDP, e.g. %d",
 		rnnet.OperatorGpsdListen)
 	listenPort := flag.Int("listen", rnnet.OperatorGpsdListen, listenHelp)
+	forwardDefault := fmt.Sprintf("%d,%d",
+		rnnet.OperatorGpsdTrajectory, rnnet.OperatorOverlayListen)
 	forwardHelp := fmt.Sprintf(
-		"forward gpsd messages to this comma-separated list of ports, e.g. '%d,%d'",
-		rnnet.OperatorOverlayListen,
-		rnnet.OperatorGpsdTrajectory)
+		"forward gpsd messages to this comma-separated list of ports, e.g. '%s'",
+		forwardDefault)
 
-	forwardPorts := flag.String("forward", "", forwardHelp)
+	forwardPorts := flag.String("forward", forwardDefault, forwardHelp)
 	bufSize := flag.Int("bufsize", 4096, "buffer size for incoming messages")
 	verbose := flag.Bool("verbose", false, "verbosity on")
 	flag.Parse()
