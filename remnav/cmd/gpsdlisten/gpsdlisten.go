@@ -60,16 +60,12 @@ func forward(msgs chan []byte, port int) {
 }
 
 func main() {
-	listenHelp := fmt.Sprintf("listen on this port for UDP, e.g. %d",
-		rnnet.OperatorGpsdListen)
-	listenPort := flag.Int("listen", rnnet.OperatorGpsdListen, listenHelp)
+
+	listenPort := flag.Int("listen", rnnet.OperatorGpsdListen, "listen on this port for UDP")
 	forwardDefault := fmt.Sprintf("%d,%d",
 		rnnet.OperatorGpsdTrajectory, rnnet.OperatorOverlayListen)
-	forwardHelp := fmt.Sprintf(
-		"forward gpsd messages to this comma-separated list of ports, e.g. '%s'",
-		forwardDefault)
-
-	forwardPorts := flag.String("forward", forwardDefault, forwardHelp)
+	forwardPorts := flag.String("forward", forwardDefault, "forward gpsd messages to this comma-separated list of ports")
+	logRoot := flag.String("log_root", "D:/remnav_log", "root for log storage")
 	bufSize := flag.Int("bufsize", 4096, "buffer size for incoming messages")
 	verbose := flag.Bool("verbose", false, "verbosity on")
 	flag.Parse()
@@ -98,6 +94,9 @@ func main() {
 		go forward(ch, port)
 		forwardChannels = append(forwardChannels, ch)
 	}
+	logCh := make(chan string)
+	gnssDir := gpsd.LogDir("gpsdrt", *logRoot, "", "")
+	go gpsd.WatchBinned("port", logCh, gnssDir)
 
 	// listen to incoming udp packets
 	pc, err := net.ListenPacket("udp", ":"+strconv.Itoa(*listenPort))
@@ -111,8 +110,13 @@ func main() {
 			select {
 			case forwardChannels[j] <- msg:
 			default:
-				log.Printf("%d channel not ready, packet dropped", forwards[j])
+				log.Printf("%d channel not ready, packet dropped\n", forwards[j])
 			}
+		}
+		select {
+		case logCh <- string(msg):
+		default:
+			log.Printf("log channel not ready, packet dropped\n")
 		}
 		if *verbose {
 			fmt.Printf("gpsdlisten: %s", string(msg))

@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	gpsd "remnav.com/remnav/metadata/gpsd"
 	rnnet "remnav.com/remnav/net"
@@ -65,6 +66,15 @@ func main() {
 		"destination host:port, e.g. 96.64.247.70:"+strconv.Itoa(rnnet.OperatorGpsdListen))
 	devs := flag.String("devices", "eth0,eth0",
 		"comma-separated list of network devices, e.g. wlan0_1,wlan1_1,wlan2_1")
+	vehicleRoot := flag.String("vehicle_root",
+		"/home/greg/gpsdrt_log",
+		"vehicle storage directory, e.g. '/home/user/6TB/vehicle/remconnect'")
+	archiveServer := flag.String("archive_server",
+		"96.64.247.70",
+		"IP address of archive server (e.g. rn3)")
+	archiveRoot := flag.String("archive_root",
+		"/home/user/6TB/remconnect/archive",
+		"archive storage directory (e.g. on rn3)")
 	verbose := flag.Bool("verbose", false, "verbosity on")
 
 	flag.Parse()
@@ -81,9 +91,25 @@ func main() {
 		devices = append(devices, t)
 	}
 
+	gnssDir := gpsd.LogDir("gpsdrt", *vehicleRoot, *archiveServer, *archiveRoot)
 	// Get message stream from gpsd server.
 	msgs := watch(*gpsdAddress, *verbose)
 
-	// Send via device to destination.
-	rnnet.UDPDial(msgs, devices, *dest, false)
+	// Send msgs to log and via devices to destination.
+	var wg sync.WaitGroup
+	wg.Add(2)
+	logCh := make(chan string)
+	udpCh := make(chan []byte)
+	go func() {
+		for msg := range msgs {
+			udpCh <- msg
+			logCh <- string(msg)
+		}
+		close(udpCh)
+		close(logCh)
+		wg.Done()
+	}()
+	go gpsd.WatchBinned(*gpsdAddress, logCh, gnssDir)
+	go rnnet.UDPDial(udpCh, devices, *dest, false)
+	wg.Wait()
 }
