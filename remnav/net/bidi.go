@@ -160,11 +160,16 @@ func BidiRW(port int, bufSize int, send <-chan []byte, verbose bool) <-chan []by
 
 	// Forward messages from send channel; maintain dictionary of ReadFrom addresses.
 	go func() {
+		var addrs = addrs
 		sources := make(map[uint8]bidiSource)
 		var send = send
 		for {
 			select {
-			case addr := <-addrs:
+			case addr, ok := <-addrs:
+				if !ok {
+					addrs = nil
+					break
+				}
 				k := addr.logical
 				if _, ok := sources[k]; !ok {
 					log.Printf("BidiRW: added sources[%d] with %v\n", k, addr.addr)

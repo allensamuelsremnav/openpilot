@@ -9,7 +9,7 @@ func DialUDP(device, dest, tag string) *net.UDPConn {
 	// Initialize the dialer for an explicit device.
 	ibn, err := net.InterfaceByName(device)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("%v '%s'", err, device)
 	}
 	iaddrs, err := ibn.Addrs()
 	if err != nil {
