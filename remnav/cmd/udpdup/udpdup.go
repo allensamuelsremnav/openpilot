@@ -55,7 +55,7 @@ func main() {
 	msgs := make(chan []byte)
 	defer close(msgs)
 
-	go rnnet.UDPDial(msgs, devices, *dest, *verbose)
+	go rnnet.UDPDup(msgs, devices, *dest, *verbose)
 
 	if len(flag.Args()) == 0 {
 		counter(*packets, sleepDuration, msgs)

@@ -110,6 +110,6 @@ func main() {
 		wg.Done()
 	}()
 	go gpsd.WatchBinned(*gpsdAddress, logCh, gnssDir)
-	go rnnet.UDPDial(udpCh, devices, *dest, false)
+	go rnnet.UDPDup(udpCh, devices, *dest, false)
 	wg.Wait()
 }
