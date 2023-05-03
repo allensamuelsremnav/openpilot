@@ -8,11 +8,18 @@ import (
 )
 
 func DialUDP(device, dest, tag string) (*net.UDPConn, error) {
+	remoteAddr, err := net.ResolveUDPAddr("udp", dest)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("%s: remoteAddr: %v\n", tag, remoteAddr)
+
 	// Initialize the dialer for an explicit device.
 	ibn, err := net.InterfaceByName(device)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("%s: %v '%s'", tag, err, device))
+		log.Fatalf("%s: %v '%s'", tag, err, device)
 	}
+
 	iaddrs, err := ibn.Addrs()
 	if err != nil {
 		return nil, err
@@ -23,12 +30,7 @@ func DialUDP(device, dest, tag string) (*net.UDPConn, error) {
 	localAddr := &net.UDPAddr{
 		IP: iaddrs[0].(*net.IPNet).IP,
 	}
-	remoteAddr, err := net.ResolveUDPAddr("udp", dest)
-	if err != nil {
-		return nil, errors.New(fmt.Sprintf("%s: %s ResolveUDPAddr failed: %v", tag, dest, err))
-	}
 	log.Printf("%s: %s localAddr: %v\n", tag, device, localAddr)
-	log.Printf("%s: remoteAddr: %v\n", tag, remoteAddr)
 
 	var pc *net.UDPConn
 	pc, err = net.DialUDP("udp", localAddr, remoteAddr)

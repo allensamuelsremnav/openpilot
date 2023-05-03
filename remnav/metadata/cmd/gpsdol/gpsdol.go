@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sync"
 
 	gpsd "remnav.com/remnav/metadata/gpsd"
 )
@@ -59,5 +60,8 @@ func main() {
 		close(msgs)
 	}()
 
-	gpsd.WatchBinned(*gpsdAddressFlag, msgs, gnssPath)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	gpsd.WatchBinned(*gpsdAddressFlag, msgs, gnssPath, &wg)
+	wg.Wait()
 }

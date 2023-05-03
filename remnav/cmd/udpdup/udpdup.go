@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	rnnet "remnav.com/remnav/net"
@@ -55,11 +56,14 @@ func main() {
 	msgs := make(chan []byte)
 	defer close(msgs)
 
-	go rnnet.UDPDup(msgs, devices, *dest, *verbose)
+	var wg sync.WaitGroup
+	wg.Add(len(devices))
+	rnnet.UDPDup(msgs, devices, *dest, &wg, *verbose)
 
 	if len(flag.Args()) == 0 {
 		counter(*packets, sleepDuration, msgs)
 	} else {
 		files(flag.Args(), sleepDuration, msgs)
 	}
+	wg.Wait()
 }

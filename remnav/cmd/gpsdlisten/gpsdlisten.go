@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	gpsd "remnav.com/remnav/metadata/gpsd"
 	rnnet "remnav.com/remnav/net"
@@ -96,7 +97,9 @@ func main() {
 	}
 	logCh := make(chan string)
 	gnssDir := gpsd.LogDir("gpsdrt", *logRoot, "", "")
-	go gpsd.WatchBinned("port", logCh, gnssDir)
+	var watchWG sync.WaitGroup
+	watchWG.Add(1)
+	go gpsd.WatchBinned("port", logCh, gnssDir, &watchWG)
 
 	// listen to incoming udp packets
 	pc, err := net.ListenPacket("udp", ":"+strconv.Itoa(*listenPort))
@@ -123,4 +126,5 @@ func main() {
 		}
 
 	}
+	watchWG.Wait()
 }

@@ -24,14 +24,9 @@ import (
 // sendWG.Done() when the send-message channel is closed.  Back
 // communications are forwarded to the returned chan<-[]byte, which is
 // never closed, without deduping.
-func BidiWRDev(send <-chan []byte, device string, deviceId uint8, dest string, bufSize int, sendWG *sync.WaitGroup, verbose bool) <-chan []byte {
+func BidiWRDev(send <-chan []byte, device string, deviceId uint8, pc *net.UDPConn, bufSize int, sendWG *sync.WaitGroup, verbose bool) <-chan []byte {
 	// bufSize should be big enough for back communication.
 	log.Printf("BidiWRDev: device %s, deviceId %d\n", device, deviceId)
-
-	pc, err := DialUDP(device, dest, "BidiWRDev")
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	// Send msgs to connnection.
 	sendWG.Add(1)
@@ -79,22 +74,29 @@ func BidiWR(sendMsgs <-chan []byte, devices []string, dest string, bufSize int, 
 	var sendChans []chan []byte
 
 	var recvChs []<-chan []byte
+	var activeDevices []string
 	for i, d := range devices {
+		pc, err := DialUDP(d, dest, "BidiWRDev")
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		activeDevices = append(activeDevices, d)
 		sCh := make(chan []byte)
 		sendChans = append(sendChans, sCh)
-		rCh := BidiWRDev(sCh, d, uint8(i), dest, bufSize, &sendWG, verbose)
+		rCh := BidiWRDev(sCh, d, uint8(i), pc, bufSize, &sendWG, verbose)
 		recvChs = append(recvChs, rCh)
 	}
 
 	// Send to all devices.
 	go func() {
 		for msg := range sendMsgs {
-			for j := 0; j < len(devices); j++ {
+			for j := 0; j < len(sendChans); j++ {
 				select {
 				case sendChans[j] <- msg:
 				default:
 					log.Printf("BidiWR: %s channel not ready, packet dropped",
-						devices[j])
+						activeDevices[j])
 				}
 			}
 		}

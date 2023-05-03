@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 func Conn(gpsdAddress string) (net.Conn, *bufio.Reader) {
@@ -66,7 +67,7 @@ func logfilename(gnssDir, binTimestamp string) string {
 	return filepath.Join(gnssDir, binTimestamp+"_"+fmtId+".json")
 }
 
-func WatchBinned(gpsdAddress string, reader chan string, gnssDir string) {
+func WatchBinned(gpsdAddress string, reader chan string, gnssDir string, wg *sync.WaitGroup) {
 	// Gather GPSD messages from the reader; send to a succession of files
 	// in gnssDir. Run as a goroutine.
 	//
@@ -75,6 +76,7 @@ func WatchBinned(gpsdAddress string, reader chan string, gnssDir string) {
 	// * Log files are named by the bin that they contain.
 	// * Lexicogrphic ordering of log-file names implies temporal ordering
 	// of TPV messages.
+	defer wg.Done()
 
 	deviceCheck := true
 	lineCount := 0

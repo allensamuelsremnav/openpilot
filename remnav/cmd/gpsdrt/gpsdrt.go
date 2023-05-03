@@ -96,8 +96,6 @@ func main() {
 	msgs := watch(*gpsdAddress, *verbose)
 
 	// Send msgs to log and via devices to destination.
-	var wg sync.WaitGroup
-	wg.Add(2)
 	logCh := make(chan string)
 	udpCh := make(chan []byte)
 	go func() {
@@ -107,9 +105,13 @@ func main() {
 		}
 		close(udpCh)
 		close(logCh)
-		wg.Done()
 	}()
-	go gpsd.WatchBinned(*gpsdAddress, logCh, gnssDir)
-	go rnnet.UDPDup(udpCh, devices, *dest, false)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go gpsd.WatchBinned(*gpsdAddress, logCh, gnssDir, &wg)
+	wg.Add(len(devices))
+	rnnet.UDPDup(udpCh, devices, *dest, &wg, false)
 	wg.Wait()
+
 }

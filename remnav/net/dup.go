@@ -7,66 +7,73 @@ import (
 	"sync"
 )
 
-// udpDev sends msgs over a named device to dest.
-func udpDev(msgs <-chan []byte, device string, dest string, startedWG *sync.WaitGroup, completedWG *sync.WaitGroup, verbose bool) error {
+// udpDev sends msgs over a PacketConn
+func udpDev(msgs <-chan []byte, device string, conn *net.UDPConn, startedWG *sync.WaitGroup, completedWG *sync.WaitGroup, verbose bool) {
 	defer completedWG.Done()
-	conn, err := DialUDP(device, dest, "UDPSendDev")
-	if err != nil {
-		log.Fatal(err)
-	}
+	startedWG.Done()
 
-	go func() {
-		startedWG.Done()
-
-		for msg := range msgs {
-			_, err := conn.Write([]byte(msg))
-			if err != nil {
-				log.Printf("UDPSendDev: %v", err)
-			}
-			if verbose {
-				log.Printf("UDPSendDev: device %s, msg %s\n", device, string(msg))
-			}
+	for msg := range msgs {
+		_, err := conn.Write([]byte(msg))
+		if err != nil {
+			log.Printf("UDPSendDev: %v", err)
 		}
-	}()
-	return nil
+		if verbose {
+			log.Printf("UDPSendDev: device %s, msg %s\n", device, string(msg))
+		}
+	}
 }
 
 // UDPDup sends duplicated messages over named devices to dest.
-func UDPDup(msgs <-chan []byte, devices []string, dest string, verbose bool) {
+func UDPDup(msgs <-chan []byte, devices []string, dest string, completedWG *sync.WaitGroup, verbose bool) {
+	tag := "UDPDup"
 	// Make a parallel array of channels and goroutines.
-	// This WaitGroup to be sure the senders are ready to receive.
+
+	// Use this WaitGroup to be sure the senders are ready to receive
+	// since later on we will use non-blocking writes to the input
+	// channels, and we want to distinguish channel-not-ready from
+	// goroutine "not started" and "busy handling previous message"
 	var startedWG sync.WaitGroup
 
-	// This WaitGroup for all senders to complete.
-	var completedWG sync.WaitGroup
-
 	var chs []chan []byte
-	startedWG.Add(len(devices))
-	completedWG.Add(len(devices))
-
+	// We might not use some of the devices.
+	var activeDevices []string
 	for _, d := range devices {
+		conn, err := DialUDP(d, dest, "UDPSendDev")
+		if err != nil {
+			log.Println(err)
+			completedWG.Done()
+			continue
+		}
 		ch := make(chan []byte)
+		startedWG.Add(1)
+		go udpDev(ch, d, conn, &startedWG, completedWG, verbose)
 		chs = append(chs, ch)
-		udpDev(ch, d, dest, &startedWG, &completedWG, verbose)
+		activeDevices = append(activeDevices, d)
 	}
 	startedWG.Wait()
 
+	if len(chs) == 0 {
+		return
+	}
+	log.Printf("%s: active devices %v", tag, activeDevices)
+
 	// Send the msgs to the parallel channels.
-	for msg := range msgs {
-		for j := 0; j < len(devices); j++ {
-			select {
-			case chs[j] <- msg:
-			default:
-				log.Printf("%s channel not ready, packet dropped",
-					devices[j])
+	go func() {
+		for msg := range msgs {
+			for j := 0; j < len(chs); j++ {
+				select {
+				case chs[j] <- msg:
+				default:
+					log.Printf("%s channel not ready, packet dropped",
+						activeDevices[j])
+				}
 			}
 		}
-	}
 
-	for _, ch := range chs {
-		close(ch)
-	}
-	completedWG.Wait()
+		for _, ch := range chs {
+			close(ch)
+		}
+	}()
 }
 
 // dup sends duplicated messages over network to destinations
