@@ -68,7 +68,7 @@ func logfilename(gnssDir, binTimestamp string) string {
 
 func WatchBinned(gpsdAddress string, reader chan string, gnssDir string) {
 	// Gather GPSD messages from the reader; send to a succession of files
-	// in gnssDir.
+	// in gnssDir. Run as a goroutine.
 	//
 	// Binning rules:
 	// * Every TPV message is assigned to a one-minute bin by its time.

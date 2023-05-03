@@ -8,21 +8,27 @@ import (
 )
 
 // udpDev sends msgs over a named device to dest.
-func udpDev(msgs <-chan []byte, device string, dest string, startedWG *sync.WaitGroup, completedWG *sync.WaitGroup, verbose bool) {
+func udpDev(msgs <-chan []byte, device string, dest string, startedWG *sync.WaitGroup, completedWG *sync.WaitGroup, verbose bool) error {
 	defer completedWG.Done()
-	conn := DialUDP(device, dest, "UDPSendDev")
-
-	startedWG.Done()
-
-	for msg := range msgs {
-		_, err := conn.Write([]byte(msg))
-		if err != nil {
-			log.Printf("UDPSendDev: %v", err)
-		}
-		if verbose {
-			log.Printf("UDPSendDev: device %s, msg %s\n", device, string(msg))
-		}
+	conn, err := DialUDP(device, dest, "UDPSendDev")
+	if err != nil {
+		log.Fatal(err)
 	}
+
+	go func() {
+		startedWG.Done()
+
+		for msg := range msgs {
+			_, err := conn.Write([]byte(msg))
+			if err != nil {
+				log.Printf("UDPSendDev: %v", err)
+			}
+			if verbose {
+				log.Printf("UDPSendDev: device %s, msg %s\n", device, string(msg))
+			}
+		}
+	}()
+	return nil
 }
 
 // UDPDup sends duplicated messages over named devices to dest.
@@ -41,7 +47,7 @@ func UDPDup(msgs <-chan []byte, devices []string, dest string, verbose bool) {
 	for _, d := range devices {
 		ch := make(chan []byte)
 		chs = append(chs, ch)
-		go udpDev(ch, d, dest, &startedWG, &completedWG, verbose)
+		udpDev(ch, d, dest, &startedWG, &completedWG, verbose)
 	}
 	startedWG.Wait()
 

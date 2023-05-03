@@ -28,7 +28,10 @@ func BidiWRDev(send <-chan []byte, device string, deviceId uint8, dest string, b
 	// bufSize should be big enough for back communication.
 	log.Printf("BidiWRDev: device %s, deviceId %d\n", device, deviceId)
 
-	pc := DialUDP(device, dest, "BidiWRDev")
+	pc, err := DialUDP(device, dest, "BidiWRDev")
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Send msgs to connnection.
 	sendWG.Add(1)
