@@ -2,30 +2,9 @@ package net
 
 import (
 	"log"
-	"net"
 
 	"golang.org/x/exp/constraints"
 )
-
-// Make a chan for the packets and readfrom addr on a PacketConn
-func Chan(pc net.PacketConn, bufSize int) (<-chan []byte, chan net.Addr) {
-	msgs := make(chan []byte)
-	addrs := make(chan net.Addr)
-	go func() {
-		for {
-			buf := make([]byte, bufSize)
-			n, addr, err := pc.ReadFrom(buf)
-			if err != nil {
-				log.Fatal(err)
-			}
-			msgs <- buf[:n]
-			addrs <- addr
-		}
-		close(msgs)
-		close(addrs)
-	}()
-	return msgs, addrs
-}
 
 type Key[T constraints.Ordered] struct {
 	Type      string

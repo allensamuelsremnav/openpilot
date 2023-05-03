@@ -18,7 +18,7 @@ import (
 )
 
 func channels(pc net.PacketConn, bufSize int) {
-	msgs, addrs := rnnet.Chan(pc, bufSize)
+	msgs, addrs := rnnet.ReadFrom(pc, bufSize)
 
 	var wg sync.WaitGroup
 	wg.Add(1)

@@ -37,3 +37,24 @@ func DialUDP(device, dest, tag string) (*net.UDPConn, error) {
 	}
 	return pc, nil
 }
+
+// Make channels for the packets and addrs from a PacketConn.ReadFrom.
+func ReadFrom(pc net.PacketConn, bufSize int) (<-chan []byte, chan net.Addr) {
+	msgs := make(chan []byte)
+	addrs := make(chan net.Addr)
+	go func() {
+		for {
+			buf := make([]byte, bufSize)
+			n, addr, err := pc.ReadFrom(buf)
+			if err != nil {
+				log.Print(err)
+				break
+			}
+			msgs <- buf[:n]
+			addrs <- addr
+		}
+		close(msgs)
+		close(addrs)
+	}()
+	return msgs, addrs
+}
