@@ -8,19 +8,19 @@ package net
 // Gpsd messages from vehicle gpsdrt to the operator.
 const OperatorGpsdListen = 6001
 
-// Trajectory-applied messages from vehicle trajectory execution to operator.
+// Bidi listener for trajectories and trajectory-applied messages.
 const OperatorTrajectoryListen = 6002
 
 // Unused, available.
 const OperatorUnusedAvailable = 7000
 
-// Gpsd messages from the gpsd listener to trajectory planner.
+// Gpsd messages from the gpsd listener to trajectory planner. localhost
 const OperatorGpsdTrajectory = 7001
 
-// Trajectory messages from trajectory planner to trajectory listener for forwarding.
+// Trajectory messages from trajectory planner to trajectory listener for forwarding. localhost
 const OperatorTrajectoryRequest = 7002
 
-// Trajectory-applied messages from trajectory listener to display.
+// Trajectory-applied messages from trajectory listener to display. localhost
 const OperatorTrajectoryApplication = 7003
 
 // Overlay messages from decoder and gpsd listener to operator (display).
@@ -32,9 +32,6 @@ const OperatorVideoListen = 8888
 //
 // vehicle
 //
-// Trajectory requests from trajectory dialer to trajectory execution
-const VehicleTrajectoryRequest = 7000
-
-// trajectory-applied messages from trajectory execution to trajectory dialer for forwarding.
-const VehicleTrajectoryApplication = 7001
+// Trajectory requests from trajectory dialer to trajectory execution; trajectory-applied messages from trajectory execution to trajectory dialer for forwarding. localhost
+const VehicleTrajectoryRequestApplication = 7000
 

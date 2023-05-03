@@ -19,19 +19,19 @@ all_assignments = [
             "Gpsd messages from vehicle gpsdrt to the operator."),
          Assignment(
             "Operator_Trajectory_Listen", 6002,
-            "Trajectory-applied messages from vehicle trajectory execution to operator."),
+            "Bidi listener for trajectories and trajectory-applied messages."),
          Assignment(
             "Operator_Unused_Available", 7000,
             "Unused, available."),
          Assignment(
             "Operator_Gpsd_Trajectory", 7001,
-            "Gpsd messages from the gpsd listener to trajectory planner."),
+            "Gpsd messages from the gpsd listener to trajectory planner. localhost"),
          Assignment(
             "Operator_Trajectory_Request", 7002,
-            "Trajectory messages from trajectory planner to trajectory listener for forwarding."),
+            "Trajectory messages from trajectory planner to trajectory listener for forwarding. localhost"),
          Assignment(
             "Operator_Trajectory_Application", 7003,
-            "Trajectory-applied messages from trajectory listener to display."),
+            "Trajectory-applied messages from trajectory listener to display. localhost"),
          Assignment(
             "Operator_Overlay_Listen", 7777,
             "Overlay messages from decoder and gpsd listener to operator (display)."),
@@ -42,13 +42,10 @@ all_assignments = [
 
     ("vehicle",
         [Assignment(
-            "Vehicle_Trajectory_Request", 7000,
+            "Vehicle_Trajectory_Request_Application", 7000,
             "Trajectory requests from trajectory dialer to "
-            "trajectory execution"),
-         Assignment(
-            "Vehicle_Trajectory_Application", 7001,
-            "trajectory-applied messages from trajectory execution "
-            "to trajectory dialer for forwarding."),
+            "trajectory execution; trajectory-applied messages from trajectory execution "
+            "to trajectory dialer for forwarding. localhost"),
          ]),
 ]
 

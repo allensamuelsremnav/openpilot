@@ -6,19 +6,19 @@
 # Gpsd messages from vehicle gpsdrt to the operator.
 OPERATOR_GPSD_LISTEN = 6001
 
-# Trajectory-applied messages from vehicle trajectory execution to operator.
+# Bidi listener for trajectories and trajectory-applied messages.
 OPERATOR_TRAJECTORY_LISTEN = 6002
 
 # Unused, available.
 OPERATOR_UNUSED_AVAILABLE = 7000
 
-# Gpsd messages from the gpsd listener to trajectory planner.
+# Gpsd messages from the gpsd listener to trajectory planner. localhost
 OPERATOR_GPSD_TRAJECTORY = 7001
 
-# Trajectory messages from trajectory planner to trajectory listener for forwarding.
+# Trajectory messages from trajectory planner to trajectory listener for forwarding. localhost
 OPERATOR_TRAJECTORY_REQUEST = 7002
 
-# Trajectory-applied messages from trajectory listener to display.
+# Trajectory-applied messages from trajectory listener to display. localhost
 OPERATOR_TRAJECTORY_APPLICATION = 7003
 
 # Overlay messages from decoder and gpsd listener to operator (display).
@@ -30,9 +30,6 @@ OPERATOR_VIDEO_LISTEN = 8888
 
 # vehicle
 #
-# Trajectory requests from trajectory dialer to trajectory execution
-VEHICLE_TRAJECTORY_REQUEST = 7000
-
-# trajectory-applied messages from trajectory execution to trajectory dialer for forwarding.
-VEHICLE_TRAJECTORY_APPLICATION = 7001
+# Trajectory requests from trajectory dialer to trajectory execution; trajectory-applied messages from trajectory execution to trajectory dialer for forwarding. localhost
+VEHICLE_TRAJECTORY_REQUEST_APPLICATION = 7000
 
