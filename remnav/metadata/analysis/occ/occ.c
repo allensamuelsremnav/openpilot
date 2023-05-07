@@ -363,11 +363,13 @@ void find_occ_from_tdfile (
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
-        if (tx_epoch_ms > current->epoch_ms)
+        if (tx_epoch_ms > current->epoch_ms) {
             left = current;
-        else
+            current = right - (right-left)/2;
+        } else {
             right = current; 
-        current = left + (right - left)/2; 
+            current = left + (right - left)/2; 
+        }
     } // while there are more than 2 elements left to search
 
     // on exiting the while, the left is smaller or equal (if current = left edge) than tx_epoch_ms, 
@@ -1135,19 +1137,20 @@ struct s_service *find_closest_sdp (double epoch_ms, struct s_service *sdp, int 
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
-        if (epoch_ms > current->state_transition_epoch_ms)
+        if (epoch_ms > current->state_transition_epoch_ms) {
             left = current;
-        else
+            current = right - (right-left)/2;
+        } else {
             right = current; 
-        current = left + (right - left)/2; 
+            current = left + (right - left)/2; 
+        }
     } // while there are more than 2 elements left to search
     
     // when the while exits, the current is equal to (if current = left edge) or less than epoch_ms
-    if ((current+1)->state_transition_epoch_ms == epoch_ms)
-        return current+1; 
-    else 
-        return current; 
+    if (right->state_transition_epoch_ms == epoch_ms)
+        current = right; 
 
+    return current; 
 } // find_closest_sdp
 
 // returns pointer to the ldp equal to or closest smaller ldp to the specified epoch_ms
@@ -1159,22 +1162,22 @@ struct s_latency *find_ldp_by_packet_num (int packet_num, double rx_epoch_ms, st
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
-        if (packet_num > current->packet_num)
+        if (packet_num > current->packet_num) {
             left = current;
-        else
+            current = right - (right-left)/2;
+        } else {
             right = current; 
-        current = left + (right - left)/2; 
+            current = left + (right - left)/2; 
+        }
     } // while there are more than 2 elements left to search
     
-    // when the while exits, the current is equal to (if current = left edge) or less than specified packet_num
-    if (current->packet_num == packet_num)
-        left = current; 
-    else if ((current+1)->packet_num == packet_num)
-        left = current + 1;
-    else // no match, the back propagated packet got lost, so use the nearest smaller packet
-        left = current ; // correct thing to do will be to find closest bigger bp_epoch_ms packet
-    
-    // now search to the right and see which element is closest is the specified rx_epoch_ms
+    // when the while exits, the current (and left) is equal to (if current = left edge) or less than specified packet_num
+    if (right->packet_num == packet_num) 
+        left = right; 
+    // else no match the back propagated packet got lost, so use the nearest smaller packet
+
+    // a packet may be back propagated multiple times due to retx or the network. 
+    // so search to the right and see which element is closest is the specified rx_epoch_ms
     // assumes that same numbered packets are in ascending bp_epoch_ms
     while ((left->bp_epoch_ms < rx_epoch_ms) && (left < (ldp+len_ld-1)))
         left++;
@@ -1191,46 +1194,22 @@ struct s_latency *find_closest_lsp (double epoch_ms, struct s_latency *ldp, int 
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
-        if (epoch_ms > current->bp_epoch_ms)
+        if (epoch_ms > current->bp_epoch_ms) {
             left = current;
-        else
+            current = right - (right-left)/2;
+        } else {
             right = current; 
-        current = left + (right - left)/2; 
+            current = left + (right - left)/2; 
+        }
     } // while there are more than 2 elements left to search
     
     // when the while exits, the current is equal to (if current = left edge) or less than epoch_ms
     // if there is string of entries that match the epoch_ms, move to the right most edge as it is the most
     // recently arrived information
-    while ((current+1)->bp_epoch_ms == epoch_ms)
+    while ((current < ldp + len_ld - 1) && ((current+1)->bp_epoch_ms == epoch_ms))
         current++; 
     return current; 
 } // find_closest_lsp
-
-// find_packet_in_cd returns pointer to the packet in the specified metadata array
-// returns NULL if no match was found, else the specified packet num
-struct s_carrier* find_packet_in_cd (int packet_num, struct s_carrier *cdp, int len_cd) {
-
-    struct  s_carrier *left, *right, *current;    // current, left and right index of the search
-
-    left = cdp; right = cdp + len_cd - 1; 
-
-    current = left + (right - left)/2; 
-    while (current != left) { // there are more than 2 elements to search
-        if (packet_num > current->packet_num)
-            left = current;
-        else
-            right = current; 
-        current = left + (right - left)/2; 
-
-        // if current is a probe meta data then find the smaller data packet
-        while (current > left && current->probe) 
-            current--;     
-    } // while there are more than 2 elements left to search
-    
-    // when the while exits, the current is equal to (if current = left edge) or less than packet_num
-
-    return current;
-} // find_packet_in_cd
 
 int main (int argc, char* argv[]) {
     int occ_threshold = 10;                 // occupancy threshold for degraded channel
