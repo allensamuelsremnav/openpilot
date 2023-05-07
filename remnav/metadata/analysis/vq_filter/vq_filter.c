@@ -48,7 +48,8 @@
 #define MAX_EST_T2R_LATENCY 500
 #define MIN_EST_T2R_LATENCY 10
 // #define FRAME_PERIOD_MS 33.34 33.34049421
-#define FRAME_PERIOD_MS 33.36490893
+// #define FRAME_PERIOD_MS 33.36490893
+#define FRAME_PERIOD_MS 33.34136441
 #define MAX_GPS			25000				// maximum entries in the gps file. fatal if there are more.
 #define TX_BUFFER_SIZE (20*60*1000)
 #define CD_BUFFER_SIZE (20*60*1000)
@@ -72,6 +73,7 @@ struct s_service {
     int bp_packet_num;          // packet number whose t2r was back propagated
     int est_t2r;                // estimated t2r at state_transition_epoch_ms
     int socc;                   // sampled occupancy at state_transition_epoch_ms
+    int zeroUplinkQueue;       // 1 if occupancy monitor is working
 };
 
 struct s_latency {
@@ -99,6 +101,29 @@ struct s_avgqdata {
     int queue_size;
     double tx_epoch_ms;
     int packet_num;
+}; 
+
+struct s_txlog {
+    int channel;                    // channel number 0, 1 or 2
+    double epoch_ms;                // time modem occ was sampled
+    int occ;                        // occupancy 0-30
+    int time_since_last_update;     // of occupancy for the same channel
+    int actual_rate;
+};
+
+struct s_cmetadata {
+    int packet_num;                 // packet number read from this line of the carrier s_metadata finle 
+    double vx_epoch_ms; 
+    double tx_epoch_ms; 
+    double rx_epoch_ms;
+    int socc; 
+    int retx; 
+    struct s_avgqdata *avgqdp;
+    int len_avgqd; 
+    struct s_latency *ldp;          // latency data for this packet
+    struct s_latency *lsp;          // latency data for the packet whose bp_TS is closest to tx_TS of this packet
+    int len_ld; 
+    struct s_brmdata *brmdp;
 }; 
 
 struct s_metadata {      // dedup meta data
@@ -173,29 +198,6 @@ struct stats {
     double      distr[NUMBER_OF_BINS];
 };
 
-struct s_txlog {
-// uplink_queue. ch: 2, timestamp: 1672344732193, queue_size: 23, elapsed_time_since_last_queue_update: 29, actual_rate: 1545, stop_sending_flag: 0, zeroUplinkQueue_flag: 0, lateFlag: 1
-    int channel;                    // channel number 0, 1 or 2
-    double epoch_ms;                // time modem occ was sampled
-    int occ;                        // occupancy 0-30
-    int time_since_last_update;     // of occupancy for the same channel
-    int actual_rate;
-};
-
-struct s_cmetadata {
-    int packet_num;                     // packet number read from this line of the carrier s_metadata finle 
-    double vx_epoch_ms; 
-    double tx_epoch_ms; 
-    double rx_epoch_ms;
-    int socc; 
-    int retx; 
-    struct s_avgqdata *avgqdp;
-    int len_avgqd; 
-    struct s_latency *ldp, *lsp;       // ldp sorted by packet_num, lsp sorted by bp_epoch_ms
-    int len_ld; 
-    struct s_brmdata *brmdp;
-}; 
-                    
 struct s_session {
 //  unsigned        frame_count;            // total fames in the session
     struct stats    pc, *pcp;               // packet count stats: count=total packets in the session, rest per frame
@@ -231,7 +233,6 @@ struct s_carrier {
     double vx_epoch_ms; 
     double tx_epoch_ms; 
     double rx_epoch_ms;
-    double previous_tx_epoch_ms;        // tx time stamp of previous packet
     double ert_epoch_ms;                // expected time to retire from the in-transit queue
     int retx;                           // retransmission index
     float t2r_ms;                       // tx-rx latency of the packet
@@ -248,11 +249,9 @@ struct s_carrier {
     int cr_value_ms;                    // how far ahead was this carrier against second best
     struct s_cmetadata *bp_csp;         // pointer to the carrier metadata that provided the bp info
 
-    int waiting_to_go_out_of_service;   // 1 if run finished but channel is still in service
-    double last_state_transition_TS;    // closest state transition of the last packet txed
     int last_run_length;                // run length of the last in_serivice state
     int run_length;                     // run length of the current in_service state
-    int end_of_run_flag;                // previous run length finished with last packet
+    int start_of_run_flag;                // previous run length finished with last packet
     int fast_run_length;                // # of packets with socc < 10 in a run
     int last_fast_run_length;           // # of packets in the last fast run
     int pending_packet_count;           // number of packets pending to be txed when channel goes in service
@@ -260,6 +259,23 @@ struct s_carrier {
     int critical;                       // 1 if this pending packet used by dedup
     int enable_indicator; 
     int indicator;                      // indicator function to mark start of critical pkt delivery
+    double state_xp_TS;                 // TS of closest state transition of this packet 
+    double prev_state_xp_TS;            // TS of state transition closest to state_xp
+    double out_of_service_duration;     // duration of the last out service. valid ONLY at the start of a run
+    int socc_when_going_oos;             // occupancy when channel was going out of service
+    int unused_pkts_at_start_of_run;    // number of packets not used by dedup at the start of a run
+    int continuing_channel;             // 1 if ths channel retired the resuming packet - 1
+
+    double prev_pkt_tx_epoch_ms;        // tx time stamp of previous packet
+    double prev_pkt_state_xp_TS;        // TS of closest state transition of previous packet
+    int prev_pkt_num;                // packet num of previous transmitted packet
+
+    int resume_from_beginning;          // 0=not start of run 1 = start from beginning of the queue 2 = do not
+    int channel_x_in_good_shape;        // 1 if channel x is in good shape
+    int channel_y_in_good_shape;        // 1 if channel y is in good shape
+    int reason_debug; 
+    int bp_TS_gap;                      // gap between bp_TS of this and other channesl for current packet - 1 (last retired packet)
+    int skip_pkts;                      // number of packets to skip at the start of the run
 
     // structures associated with current packet
     struct s_avgqdata *avgqdp; 
@@ -383,8 +399,9 @@ void carrier_metadata_clients (int print_header, struct s_session *ssp, struct f
 void print_usage (void);
 
 // tracks length in packets reasoably faset (occ<=10) of service of a resuming channel
-void run_length_state_machine (struct s_carrier *cp, struct s_service *sd, int len_sd, 
-    struct frame *fp, int dedup_used_this_channel);
+void run_length_state_machine (int channel, struct s_carrier *cp, 
+    struct s_service *sd, int len_sd, struct frame *fp, double c2t, 
+    int dedup_used_this_channel);
 
 // returns the next channel state
 int channel_state_machine (int channels_in_service, struct s_carrier *cp);
@@ -406,6 +423,11 @@ int check_annotation (unsigned frame_num);
 
 // extracts tx_epoch_ms from the vx_epoch_ms embedded format
 void decode_sendtime (double *vx_epoch_ms, double *tx_epoch_ms, int *socc);
+
+// outputs resumption time of any one of the 3 channels. If multiple channels are resuming
+// at the same time then the smallest channel number is printed
+void emit_resumption_stats (struct s_carrier *c0p, struct s_carrier *c1p, struct s_carrier *c2p, 
+    double c2t);
 
 // outputs per carrier stats
 void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrier_num, struct frame *fp); 
@@ -446,8 +468,15 @@ void read_brmd (FILE *fp);
 // reads bit-rate modulation file into avgqd array sorted by timestamp
 void read_avgqd (FILE *fp);
 
+// find_closest returns pointer to the td array element at closest time smaller than the 
+// specified tx_epoch_ms 
+struct s_txlog *find_closest_tdp (double tx_epoch_ms, struct s_txlog *head, int len_td);
+    
 // returns pointer to equal to or closest smaller mdp to the specified camera_epoch_ms
-struct s_metadata *find_closest_mdp (double camera_epoch_ms, struct s_metadata *headp, int len);
+struct s_metadata *find_closest_mdp_by_camera_TS (double camera_epoch_ms, struct s_metadata *headp, int len);
+
+// returns pointer closest smaller mdp by tx_epoch to the specified TS
+struct s_metadata *find_closest_mdp_by_rx_TS (double TS_ms, struct s_metadata *headp, int len);
 
 // returns pointer to equal to or closest smaller brmdata to the specified epoch_ms
 struct s_brmdata *find_closest_brmdp (double epoch_ms, struct s_brmdata *headp, int len);
@@ -458,7 +487,9 @@ struct s_avgqdata *find_avgqdp (int packet_num, double tx_epoch_ms, struct s_avg
 // returns pointer to the sdp equal to or closest smaller sdp to the specified epoch_ms
 struct s_service *find_closest_sdp (double epoch_ms, struct s_service *sdp, int len_sd);
 
-// returns pointer to the sdp equal to or closest smaller sdp to the specified epoch_ms
+// returns pointer to the ldp equal to specified packet num with the bp_epoch closes to 
+// specified epoch. If the packet num does not match, then it returns the packet cloest
+// to the specified epoch
 struct s_latency *find_ldp_by_packet_num (int packet_num, double rx_epoch_ms, struct s_latency *ldp, int len_ld);
 
 // sorts latency data array by receipt epoch_ms
@@ -485,6 +516,7 @@ struct s_txlog *find_occ_from_td (
     int *iocc, int *socc, double *socc_epoch_ms);
 
 // globals - command line inputs
+int     debug = 1; 
 int     silent = 0;                             // if 1 then suppresses warning messages
 char    ipath[500], *ipathp = ipath;            // input files directory
 char    opath[500], *opathp = opath;            // output files directory
@@ -509,6 +541,7 @@ FILE    *sd_fp = NULL;                          // service log data file
 FILE    *brmd_fp = NULL;                        // bit-rate modulation data file pointer
 FILE    *avgqd_fp = NULL;                       // rolling average queue size data file pointer
 FILE    *warn_fp = NULL;                        // warning outputs go to this file
+FILE    *dbg_fp = NULL;                       // debug output file
 char    annotation_file_name[500];              // annotation file name
 float   minimum_acceptable_bitrate = 0.5;       // used for stats generation only
 unsigned maximum_acceptable_c2rx_latency = 110; // frames considered late if the latency exceeds this 
@@ -777,8 +810,22 @@ SKIP_FILE_LIST:
 	len_sd0=0, len_sd1=0, len_sd2=0;
 
     // open remaining input and output files
+
+    // output files
+    sprintf (bp, "%s%s_packet_vqfilter.csv",opath, rx_prep); 
+    ps_fp = open_file (bp, "w");
+
+    sprintf (bp, "%s%s_frame_vqfilter.csv", opath, rx_prep);
+    fs_fp = open_file (bp, "w");
+            
+    sprintf (bp, "%s%s_session_vqfilter.csv", opath, rx_prep);
+    ss_fp = open_file (bp, "w");
+
     sprintf (bp, "%s%s_warnings_vqfilter.txt", opath, rx_prep);
     warn_fp = open_file (bp, "w");
+    if (debug)
+        sprintf (bp, "%s%s_debug_vqfilter.txt", opath, rx_prep);
+        dbg_fp = open_file (bp, "w");
 
     // bit-rate modulation log file
     if (have_brm_log) {
@@ -836,16 +883,6 @@ SKIP_FILE_LIST:
         read_cd (bp); 
     } // per carrier meta data files
 
-    // output files
-    sprintf (bp, "%s%s_packet_vqfilter.csv",opath, rx_prep); 
-    ps_fp = open_file (bp, "w");
-
-    sprintf (bp, "%s%s_frame_vqfilter.csv", opath, rx_prep);
-    fs_fp = open_file (bp, "w");
-            
-    sprintf (bp, "%s%s_session_vqfilter.csv", opath, rx_prep);
-    ss_fp = open_file (bp, "w");
-
     // check if any missing arguments
     if (md_fp==NULL || fs_fp==NULL || ss_fp==NULL || ps_fp==NULL) {
         print_usage (); 
@@ -875,17 +912,9 @@ SKIP_FILE_LIST:
     // print_command_line (ss_fp);
 
     // while there are more lines to read from the meta data file
-//    skip_combined_md_file_header (md_fp);
-//    while (read_md (0, md_fp, cmdp) != 0) { 
     while (md_index < len_md) { 
         cmdp = md + md_index; 
 
-        /*
-        // fill out the camera_epoch_ms if empty
-        if (cmdp->camera_epoch_ms == 0)
-            cmdp->camera_epoch_ms = lmdp->camera_epoch_ms; 
-        */
-        
         if (cmdp->camera_epoch_ms == 0)
             printf ("camera_epoch=0\n");
 
@@ -1043,22 +1072,50 @@ struct s_service *find_closest_sdp (double epoch_ms, struct s_service *sdp, int 
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
-        if (epoch_ms > current->state_transition_epoch_ms)
+        if (epoch_ms > current->state_transition_epoch_ms) { // move to the right
             left = current;
-        else
+            current = right - (right - left)/2; 
+        } else {
             right = current; 
-        current = left + (right - left)/2; 
+            current = left + (right - left)/2; 
+        }
     } // while there are more than 2 elements left to search
     
     // when the while exits, the current is equal to (if current = left edge) or less than epoch_ms
-    if ((current+1)->state_transition_epoch_ms == epoch_ms)
-        return current+1; 
-    else 
-        return current; 
+    if (right->state_transition_epoch_ms == epoch_ms)
+        current = right; 
 
+    return current; 
 } // find_closest_sdp
 
-// returns pointer to the ldp equal to or closest smaller ldp to the specified epoch_ms
+// returns pointer to the sdp closest smaller sdp to the specified epoch_ms. 
+// equal if smaller does not exist
+struct s_service *find_closest_smaller_sdp (double epoch_ms, struct s_service *sdp, int len_sd) {
+
+    struct  s_service  *left, *right, *current;    // current, left and right index of the search
+
+    left = sdp; right = sdp + len_sd - 1; 
+
+    current = left + (right - left)/2; 
+    while (current != left) { // there are more than 2 elements to search
+        if (epoch_ms > current->state_transition_epoch_ms) {
+            left = current;
+            current = right - (right - left)/2; 
+        }
+        else {
+            right = current; 
+            current = left + (right - left)/2; 
+        }
+    } // while there are more than 2 elements left to search
+    
+    // when the while exits, the current is equal to (if current = left edge) or less than epoch_ms
+    return current; 
+
+} // find_closest_smaller_sdp
+
+// returns pointer to the ldp equal to specified packet num with the bp_epoch closes to 
+// specified epoch. If the packet num does not match, then it returns the packet cloest
+// to the specified epoch
 struct s_latency *find_ldp_by_packet_num (int packet_num, double rx_epoch_ms, struct s_latency *ldp, int len_ld) {
 
     struct  s_latency  *left, *right, *current;    // current, left and right index of the search
@@ -1067,52 +1124,55 @@ struct s_latency *find_ldp_by_packet_num (int packet_num, double rx_epoch_ms, st
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
-        if (packet_num > current->packet_num)
+        if (packet_num > current->packet_num) {
             left = current;
-        else
+            current = right - (right-left)/2;
+        } else {
             right = current; 
-        current = left + (right - left)/2; 
+            current = left + (right - left)/2; 
+        }
     } // while there are more than 2 elements left to search
     
-    // when the while exits, the current is equal to (if current = left edge) or less than packet_num
-    if (current->packet_num == packet_num)
-        left = current; 
-    else if ((current+1)->packet_num == packet_num)
-        left = current + 1;
-    else // no match, the back propagated packet got lost, so use the nearest smaller packet
-        left = current; 
-    
-    // now search to the right and see which element is closest is the specified rx_epoch_ms
-    // assumes that same numbered packets are in ascending order of bp_epoch_ms
+    // when the while exits, the current (and left) is equal to (if current = left edge) or less than specified packet_num
+    if (right->packet_num == packet_num) 
+        left = right; 
+    // else no match the back propagated packet got lost, so use the nearest smaller packet
+
+    // a packet may be back propagated multiple times due to retx or the network. 
+    // so search to the right and see which element is closest is the specified rx_epoch_ms
+    // assumes that same numbered packets are in ascending bp_epoch_ms
     while ((left->bp_epoch_ms < rx_epoch_ms) && (left < (ldp+len_ld-1)))
         left++;
-
     return left;
+
 } // find_ldp_by_packet_num
 
-// returns pointer to the ldp equal to or closest smaller ldp to the specified epoch_ms
-struct s_latency *find_closest_lsp_by_bp_epoch_ms (double epoch_ms, struct s_latency *ldp, int len_ld) {
+// returns pointer to the lsp equal to or closest smaller lsp to the specified epoch_ms
+struct s_latency *find_closest_lsp (double epoch_ms, struct s_latency *lsp, int len_ld) {
 
     struct  s_latency  *left, *right, *current;    // current, left and right index of the search
 
-    left = ldp; right = ldp + len_ld - 1; 
+    left = lsp; right = lsp + len_ld - 1; 
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
-        if (epoch_ms > current->bp_epoch_ms)
+        if (epoch_ms > current->bp_epoch_ms) {
             left = current;
-        else
+            current = right - (right - left)/2; 
+        } else {
             right = current; 
-        current = left + (right - left)/2; 
+            current = left + (right - left)/2; 
+        }
     } // while there are more than 2 elements left to search
     
     // when the while exits, the current is equal to (if current = left edge) or less than epoch_ms
     // if there is sring of entries that match the epoch_ms, move to the right most edge as it is the most
     // recently arrived information
-    while ((current+1)->bp_epoch_ms == epoch_ms)
+    while ((current < lsp + len_ld - 1) && ((current+1)->bp_epoch_ms == epoch_ms))
         current++; 
+
     return current; 
-} // find_closest_lsp_by_bp_epoch_ms
+} // find_closest_lsp
 
 // sorts latency data array by packet number
 void sort_ld_by_packet_num (struct s_latency *ldp, int len) {
@@ -1327,14 +1387,15 @@ int read_sd_line (FILE *fp, int ch, struct s_service *sdp) {
             dummy_str, &dummy_int,
 
             dummy_str, &sdp->socc, 
-            dummy_str, &dummy_int, 
+            dummy_str, &sdp->zeroUplinkQueue, 
             dummy_str, &dummy_int,
             dummy_str, &dummy_int,
             dummy_str, &sdp->state_transition_epoch_ms, 
             dummy_str, &sdp->bp_packet_num)) !=23)
         || channel !=ch // skip if not this channel
+        /*
         // collect only going in service timestampls
-        || (strcmp(state_str, "change to out-of-service state") == 0)) {
+        || (strcmp(state_str, "change to out-of-service state") == 0)*/) {
 
         if (n != 23) // did not successfully parse this line
             FWARN(warn_fp, "read_sd_line: Skipping line %s\n", sdlinep);
@@ -1457,6 +1518,7 @@ void my_free () {
 	if (brmd_fp) fclose (brmd_fp); 
 	if (avgqd_fp) fclose (avgqd_fp); 
 	if (warn_fp) fclose (warn_fp); 
+    if (dbg_fp) fclose (dbg_fp); 
 } // end of my_free
 
 // free up storage before exiting
@@ -1951,11 +2013,9 @@ void read_cd (char *fnamep) {
             } // have queue size log file
 
             if (cdp->len_ld = len_ld) { // latency log file exists
-                // read the average queue size for this packet
-                if ((cdp->ldp = find_ldp_by_packet_num (cdp->packet_num, cdp->rx_epoch_ms, ldp, len_ld))
-                    == NULL)
-                    FATAL("read_cd: could not find packet %d in the latency array\n", cdp->packet_num)
-                cdp->lsp = find_closest_lsp_by_bp_epoch_ms (cdp->tx_epoch_ms, lsp, len_ld);
+                // read the latency data for thi spacket
+                cdp->ldp = find_ldp_by_packet_num (cdp->packet_num, cdp->rx_epoch_ms, ldp, len_ld);
+                cdp->lsp = find_closest_lsp (cdp->tx_epoch_ms, lsp, len_ld);
             } // have latency log file
 
             if (len_brmd) // bit-rate modulation data file exists
@@ -1996,24 +2056,24 @@ struct s_cmetadata* find_packet_in_cd (int packet_num, struct s_cmetadata *cdhea
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
-        if (packet_num > current->packet_num)
+        if (packet_num > current->packet_num) {
             left = current;
-        else
+            current = right - (right - left)/2; 
+        } else {
             right = current; 
-        current = left + (right - left)/2; 
+            current = left + (right - left)/2; 
+        }
     } // while there are more than 2 elements left to search
     
     // when the while exits, the current is equal to (if current = left edge) or less than packet_num
-    if (current->packet_num == packet_num)
-        left = current; 
-    else if ((current+1)->packet_num == packet_num)
-        left = current + 1;
-    else // no match
-        return NULL;  
+    if ((left->packet_num != packet_num) && (right->packet_num != packet_num))
+        // no match
+        return NULL; 
 
     // now search to the right and see if there is smaller rx_epoch_ms
+    if (right->packet_num == packet_num)
+        left = right; 
     struct s_cmetadata *smallest = left; 
-    current = left;  // assume left is the smallest
     while ((left != (cdhead+len_cd-1)) && ((++left)->packet_num == packet_num)) {
         if (smallest->rx_epoch_ms > left->rx_epoch_ms) 
             smallest = left; 
@@ -2311,7 +2371,6 @@ void emit_packet_header (FILE *ps_fp) {
 	fprintf (ps_fp, "SzP, ");
 	fprintf (ps_fp, "SzB, ");
     fprintf (ps_fp, "EMbps,");
-	fprintf (ps_fp, "Fc2t, ");
 	fprintf (ps_fp, "Ft2r, ");
 	fprintf (ps_fp, "Fc2r, ");
 	fprintf (ps_fp, "Rpt, ");
@@ -2329,10 +2388,16 @@ void emit_packet_header (FILE *ps_fp) {
     fprintf (ps_fp, "Pt2r, ");
     fprintf (ps_fp, "est,");
     
+    // service resumption indicator
+    fprintf (ps_fp, "Res,");
+    fprintf (ps_fp, "Res_ch,");
+	fprintf (ps_fp, "c2t, ");
+
     // per carrier meta data
     int i; 
     for (i=0; i<3; i++) {
-        fprintf (ps_fp, "C%d: c2r, c2v, t2r, r2t, est_t2r, ert, socc, MMbps, retx, tgap, ppkts, cr, I, rlen, flen, I,", i); 
+        fprintf (ps_fp, "C%d: c2r, c2v, t2r, r2t, est_t2r, ert, socc, MMbps, retx,", i); 
+        fprintf (ps_fp, "tgap, ppkts, upkts, cr, I, rb, cont, Inc, bp_gap, oos_d, oos_o, x, y, rlen, flen, I,");
         fprintf (ps_fp, "tx_TS, rx_TS, r2t_TS, ert_TS, socc_TS, bp_pkt_TS, bp_pkt, bp_t2r,"); 
         fprintf (ps_fp, "Ravg, IS, qst, qsz, avg_ms, avg_pkt,");
     }
@@ -2362,11 +2427,13 @@ void init_packet_stats (
     cp->csp = csp; 
     cp->last_run_length = 0;        // not started any transmission yet
     cp->run_length = 0;             // not started any transmission yet
-    cp->end_of_run_flag = 0;        // no run finished yet
+    cp->start_of_run_flag = 0;        // no run finished yet
     cp->fast_run_length = 0;             // not started any transmission yet
     cp->last_fast_run_length = 0; 
-    cp->last_state_transition_TS = 0; 
-    cp->waiting_to_go_out_of_service = 0; // so that a run can start with the first packet
+    cp->prev_state_xp_TS = 0; 
+    cp->prev_pkt_tx_epoch_ms = 0; 
+    cp->prev_pkt_state_xp_TS = 0; 
+    cp->prev_pkt_num = -1; 
     return;
 } // init_packet_stats
 
@@ -2380,9 +2447,9 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
 	    fprintf (ps_fp, "%u, ", fp->missing);
 	    fprintf (ps_fp, "%.1f, ", fp->nm1_bit_rate);
 	    fprintf (ps_fp, "%u, ", fp->packet_count);
-	    fprintf (ps_fp, "%u, ", fp->size);
+	    fprintf (ps_fp, "%u, ", mdp->video_packet_len);
         fprintf (ps_fp, "%.1f,", (fp->size*8)/FRAME_PERIOD_MS/1000); 
-	    fprintf (ps_fp, "%.1f, ", fp->tx_epoch_ms_1st_packet - fp->camera_epoch_ms);
+	    // fprintf (ps_fp, "%.1f, ", fp->tx_epoch_ms_1st_packet - fp->camera_epoch_ms);
 	    fprintf (ps_fp, "%.1f, ", fp->rx_epoch_ms_latest_packet - fp->tx_epoch_ms_1st_packet);
 	    fprintf (ps_fp, "%.1f, ", fp->rx_epoch_ms_latest_packet - fp->camera_epoch_ms);
 	    fprintf (ps_fp, "%d, ", fp->repeat_count);
@@ -2406,30 +2473,21 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
 } // emit_frame_stats_for_per_packet_file
 
 // tracks length in packets before a resuming channel goes out of service again
-void run_length_state_machine (struct s_carrier *cp, struct s_service *sd, int len_sd, struct frame *fp,
-    int dedup_used_this_channel) {
+void run_length_state_machine (int channel, struct s_carrier *cp, 
+    struct s_service *sd, int len_sd, struct frame *fp, double c2t, int dedup_used_this_channel) {
 
-    struct s_service *closest_state_transition = find_closest_sdp (cp->tx_epoch_ms, sd, len_sd);
-    double closest_state_transition_TS =  closest_state_transition->state_transition_epoch_ms; 
-
+    // reset outputs from the previous packet (clock)
     // if a run finished with the previous packet, reset run state
-    if (cp->end_of_run_flag) {
-        cp->last_run_length = 0; 
-        cp->last_fast_run_length = 0; 
-        cp->end_of_run_flag = 0; 
-    }
-    // reset the indicator if set
-    if (cp->indicator) 
-        cp->indicator = 0; 
+    cp->start_of_run_flag = 0; 
+    cp->indicator = 0; 
 
+    /*
     // run length state machine
     if (cp->run_length) { // a run is in progress
         if (cp->tx) { // previous run continuing or finished and a new one started
-            if ((closest_state_transition_TS == cp->last_state_transition_TS) /* ||
-                // if previous packet was very close by then ignore state machine 
-                // going out of service for a short period of time
-                ((cp->tx_epoch_ms - cp->previous_tx_epoch_ms) < (FRAME_PERIOD_MS)) */ ) {
-                // current run is continuing
+            struct s_service *state_xp = find_closest_sdp (cp->tx_epoch_ms, sd, len_sd);
+            cp->state_xp_TS = state_xp->state_transition_epoch_ms; 
+            if (cp->state_xp_TS == cp->prev_pkt_state_xp_TS) { // current run is continuing
                 cp->run_length++;
                 if (cp->fast_run_length) { // fast run is in progress
                     if (cp->socc <=10) // fast run continuing
@@ -2465,36 +2523,200 @@ void run_length_state_machine (struct s_carrier *cp, struct s_service *sd, int l
             cp->enable_indicator = 1;
         } // a new run started
     } // no run in progress
+    */
 
-    // outputs based on the state machine
-    if (cp->run_length == 1) { // channel going in service
-        // when the run starts cxp is the first packet that the channel is going to transmit
-        // so find the closest packet whose camera_epoch_ms is less than the tx_epoch_ms of this packet
-        struct s_metadata *txlastp = find_closest_mdp (cp->tx_epoch_ms, md, len_md);
-        cp->pending_packet_count = txlastp->packet_num - cp->packet_num + 1; 
-        cp->tgap = (int) (cp->tx_epoch_ms - fp->camera_epoch_ms); 
-    } // channel going in service
+    // run length state machine - changes state only if the channel transferred this packet
+    if (cp->tx) {
 
-    cp->critical = 
-        (cp->run_length <= cp->pending_packet_count) && dedup_used_this_channel? 
-        cp->run_length : 0; 
+        struct s_service *state_xp = find_closest_sdp (cp->tx_epoch_ms, sd, len_sd);
+        if ((state_xp->state == 0) && (cp->tx_epoch_ms <= state_xp->state_transition_epoch_ms))
+            // tx occurred in same ms right before channel goes out of service
+            // go back one more transition
+            state_xp = find_closest_smaller_sdp (state_xp->state_transition_epoch_ms, sd, len_sd); 
+        cp->state_xp_TS = state_xp->state_transition_epoch_ms;
+        // if state transition occurred between this and previous packet,  
+        // then the previous run finished and a new run has begun with this packet
+        if (cp->state_xp_TS != cp->prev_pkt_state_xp_TS) {
+            cp->last_run_length = cp->run_length; 
+            cp->run_length = 1; 
+            cp->start_of_run_flag = 1; 
+            cp->enable_indicator = 1; 
+            // when the run starts cxp is the first packet that the channel is going to transmit
+            // so find the closest packet whose camera_epoch_ms is less than the tx_epoch_ms of this packet
+            // if (cp->tx_epoch_ms == 1682646087360)
+                // printf ("got to 1682646087360\n");
+            // double c2t = fp->tx_epoch_ms_1st_packet - fp->camera_epoch_ms; 
+            struct s_metadata *txlastp = find_closest_mdp_by_camera_TS (cp->tx_epoch_ms-c2t, md, len_md);
+            cp->pending_packet_count = txlastp->packet_num - cp->packet_num + 1; 
+            cp->tgap = (int) (cp->tx_epoch_ms - (txlastp->camera_epoch_ms + c2t)); 
+        } // state transition occurred between previous and this packet
+        else { // else current run is continuing
+            cp->run_length += cp->packet_num - cp->prev_pkt_num; 
+        } // current run is continuinging
+        
+        cp->critical = 
+            (cp->run_length <= cp->pending_packet_count) && dedup_used_this_channel? 
+            cp->run_length : 0; 
+        
+        if (cp->enable_indicator) {
+            if (cp->critical) { // channel supplied a critical packet from the pending packets
+                cp->indicator = 1; 
+                cp->enable_indicator = 0; 
+            }
+            if (cp->run_length > cp->pending_packet_count) { // none of the pending packets were used
+                cp->indicator = 2; 
+                cp->enable_indicator = 0; 
+            }
+        }  // if enable_indicator still armed
+        
+        // copy current pkt info to previous pkt in preparation for next 
+        cp->prev_pkt_tx_epoch_ms = cp->tx_epoch_ms; 
+        cp->prev_pkt_state_xp_TS = cp->state_xp_TS;
+        cp->prev_pkt_num =  cp->packet_num; 
+    } // if the channel participated in this packet
     
-    if (cp->enable_indicator) {
-        if (cp->critical) { // channel supplied a critical packet from the pending packets
-            cp->indicator = 1; 
-            cp->enable_indicator = 0; 
-        }
-        if (cp->run_length > cp->pending_packet_count) { // none of the pending packets were used
-            cp->indicator = 2; 
-            cp->enable_indicator = 0; 
-        }
-    }  // if enable_indicator still armed
-
-    if (cp->tx)
-        cp->last_state_transition_TS = closest_state_transition_TS; 
-
     return; 
 } // run_length_state_machine
+
+// returns a 1 if the channel is in good shape near the specified epoch_ms
+int channel_in_good_shape (
+    double epoch_TS,
+    char *channel, 
+    struct s_service *sd, int len_sd, 
+    struct s_latency *ls, int len_ld,
+    struct s_txlog *td, int len_td) {
+
+    struct s_service *sdp = find_closest_sdp (epoch_TS, sd, len_sd);
+    struct s_latency *lsp = find_closest_lsp (epoch_TS, ls, len_ld); 
+    struct s_txlog *tdp = find_closest_tdp (epoch_TS, td, len_td);
+    double est_t2r = lsp->t2r_ms + (epoch_TS - lsp->bp_epoch_ms);
+    
+    int in_good_shape = 
+        (sdp->state == 1)    // is in_service state
+        &&        
+        (sdp->zeroUplinkQueue || (tdp->occ <= 10)) // occupancy is in good place
+        &&
+        (est_t2r <= 80);
+
+    if (debug) {
+        fprintf (dbg_fp, 
+            "ch: %s, sd_TS: %0.lf, IS: %d, zUQ: %d, td_TS: %0.lf, occ: %d, ls_TS: %0.lf, est_t2r: %d, ", 
+            channel, sdp->state_transition_epoch_ms,  sdp->state, sdp->zeroUplinkQueue, 
+            tdp->epoch_ms, tdp->occ, lsp->bp_epoch_ms, (int) est_t2r);
+    }
+
+    return in_good_shape; 
+} // channel_in_good_shape
+
+// returns 1 if service should start from the begining of the pending packets queue, 
+// 2 otherwise. Also sets the unused_pkts_at_start_of_run field of s_carrier
+int resume_from_beginning (
+    struct s_carrier *cp, 
+    struct s_service *sd, int len_sd, 
+    struct s_txlog *td, int len_td,
+    // x and y are the two channels other than the one resuming service
+    struct s_carrier *cpx,
+    struct s_service *sdx, int len_sdx, 
+    struct s_latency *lsx, int len_ldx,
+    struct s_txlog *tdx, int len_tdx,
+    struct s_carrier *cpy,
+    struct s_service *sdy, int len_sdy, 
+    struct s_latency *lsy, int len_ldy,
+    struct s_txlog *tdy, int len_tdy) {
+    
+    struct s_service *prev_state_xp = find_closest_smaller_sdp (cp->state_xp_TS, sd, len_sd); 
+    cp->prev_state_xp_TS = prev_state_xp->state_transition_epoch_ms; 
+    if (debug) fprintf (dbg_fp, "prev_state_x_TS: %0.lf, ", cp->prev_state_xp_TS);
+
+    // oos_duration and socc_when_going_oos 
+    cp->out_of_service_duration = cp->state_xp_TS - cp->prev_state_xp_TS; 
+
+    int oos_iocc, oos_socc; double oos_socc_epoch; 
+    struct s_txlog *oos_tdp = 
+        find_occ_from_td (cp->prev_state_xp_TS, td, len_td, &oos_iocc, &oos_socc, &oos_socc_epoch); 
+    cp->socc_when_going_oos = oos_socc; 
+
+    // unused packet computation
+    struct s_metadata *mdp = find_closest_mdp_by_rx_TS (cp->rx_epoch_ms, md, len_md);
+    cp->unused_pkts_at_start_of_run = mdp->packet_num - cp->packet_num + 1; 
+
+    // algo 1 for computing resume_from_begining : did not work well
+    // resume from the beining if this channel was out of service for less than a frame time
+    // or other channels are not in good shape
+    cp->channel_x_in_good_shape = 
+        channel_in_good_shape (cp->tx_epoch_ms, "x", sdx, len_sdx, lsx, len_ldx, tdx, len_tdx);
+    cp->channel_y_in_good_shape =
+       channel_in_good_shape (cp->tx_epoch_ms, "y", sdy, len_sdy, lsy, len_ldy, tdy, len_tdy);
+
+    int from_beginning = 
+        (cp->out_of_service_duration < FRAME_PERIOD_MS)
+        ||
+        !(cp->channel_x_in_good_shape || cp->channel_y_in_good_shape);   
+    cp->reason_debug = 
+        ((cp->out_of_service_duration < FRAME_PERIOD_MS) << 2)
+        |
+        (cp->channel_x_in_good_shape << 1)
+        |
+        (cp->channel_y_in_good_shape << 0);
+
+    if (debug) {
+        fprintf (dbg_fp, "rb: %d, reason: %d, OOS_ms: %d, ch_x_good: %d, ch_y_good: %d, oos_occ,",
+            from_beginning, cp->reason_debug, (int) cp->out_of_service_duration, 
+            cp->channel_x_in_good_shape, cp->channel_y_in_good_shape,
+            cp->socc_when_going_oos); 
+    }
+
+    // algo 2 for determining resume_from_beginning (OVERIDES ALGO 1)
+    if (cp->packet_num == 0) { // first packet (trivial case) so start from beginning
+        cp->skip_pkts = 0; 
+        return 1; 
+    }
+    // if (cp->packet_num == 6714)
+        // printf ("reached 6714\n");
+    // check if this channel backpropagated the last retired packet from the encoder queue
+    struct s_cmetadata *cdp = find_packet_in_cd (cp->packet_num-1, cp->cdhead, cp->len_cd);
+    struct s_cmetadata *cdpx = find_packet_in_cd (cp->packet_num-1, cpx->cdhead, cpx->len_cd);
+    struct s_cmetadata *cdpy = find_packet_in_cd (cp->packet_num-1, cpy->cdhead, cpy->len_cd);
+
+    if (cdp == NULL)  { // channel did not participate in this packet
+        // the resuming channel will not be able to catch up for at least 60ms (r2t+t2r)
+        cp->continuing_channel = 0; 
+        return 2; 
+    } 
+    cp->continuing_channel = 1; // assume that resuming channel was the fastest
+
+    if ((cdpx != NULL) // channel-x participated in this packet
+        // && cp->channel_x_in_good_shape 
+        && (cdpx->rx_epoch_ms < cdp->rx_epoch_ms)) {
+        // channel x is running faster and was reponsible for retiring packet_num - 1
+        // so no need to resume from the beginning
+        cp->continuing_channel = 0; 
+        cp->bp_TS_gap = abs (cdpx->ldp->bp_epoch_ms - cdp->ldp->bp_epoch_ms);
+        return 2; 
+    }
+
+    if ((cdpy != NULL) // channel-y participated in this packet
+        // && cp->channel_y_in_good_shape
+        && (cdpy->rx_epoch_ms < cdp->rx_epoch_ms)) {
+        // channel x is running faster and was reponsible for retiring packet_num - 1
+        // so no need to resume from the beginning
+        cp->continuing_channel = 0; 
+        cp->bp_TS_gap = abs (cdpy->ldp->bp_epoch_ms - cdp->ldp->bp_epoch_ms);
+        return 2; 
+    }
+    
+    // else resuming channel was the fasetest. so resume from the beginning
+    return 1;
+
+} // resume_from_beginning
+
+void print_debug_part1 (int channel, struct s_carrier *cp) {
+    if (debug) {
+        fprintf (dbg_fp, "channel: %d, pkt_num: %d, tx_TS: %0.lf, state_x_TS: %0.lf, ",
+            channel, cp->packet_num, cp->tx_epoch_ms, cp->state_xp_TS);
+
+    }
+} // print_debug_part1
 
 // assumes called at the end of a frame after frame and session stats have been updated.
 // emits packet stats and analytics output followed by frame stats and analytics
@@ -2520,41 +2742,61 @@ void carrier_metadata_clients (
         initialize_cp_from_cd (mdp, c1p, 0); 
         initialize_cp_from_cd (mdp, c2p, 1); // 1 for t-mobile
 
+        // calculate c2t of this packet. since atleat one channel is always in
+        // service, assume that c2v of that channel is the correctc c2t.
+        double c2t = 999.9; // absurdly large number
+        if (c0p->tx) c2t = MIN(c2t, c0p->tx_epoch_ms - fp->camera_epoch_ms); 
+        if (c1p->tx) c2t = MIN(c2t, c1p->tx_epoch_ms - fp->camera_epoch_ms); 
+        if (c2p->tx) c2t = MIN(c2t, c2p->tx_epoch_ms - fp->camera_epoch_ms); 
+
         // run length state machine 
-        run_length_state_machine (c0p, sd0, len_sd0, fp, mdp->ch==0);
-        run_length_state_machine (c1p, sd1, len_sd1, fp, mdp->ch==1);
-        run_length_state_machine (c2p, sd2, len_sd2, fp, mdp->ch==2);
+        run_length_state_machine (0, c0p, sd0, len_sd0, fp, c2t, mdp->ch==0);
+        run_length_state_machine (1, c1p, sd1, len_sd1, fp, c2t, mdp->ch==1);
+        run_length_state_machine (2, c2p, sd2, len_sd2, fp, c2t, mdp->ch==2);
 
-        // if start of the run then find how many packets are in the channel's transmit queue
-        /*
-        int j; 
-        for (j=0; j<3; j++) {
-            struct s_carrier *cp = j==0? c0p : j==1? c1p : c2p; 
-            if (cp->run_length == 1) { // channel going in service
-                struct s_metadata *txlastp = find_closest_mdp (cp->tx_epoch_ms, md, len_md);
-                cp->pending_packet_count = txlastp->packet_num - cp->packet_num + 1; 
-                cp->tgap = (int) (cp->tx_epoch_ms - fp->camera_epoch_ms); 
-            } // channel going in service
-
-            if (cp->indicator) // reset the indicator if set
-                cp->indicator = 0; 
-
-            cp->critical = 
-                (cp->run_length <= cp->pending_packet_count) && (mdp->ch == j)? 
-                cp->run_length : 0; 
-            
-            if (cp->enable_indicator) {
-                if (cp->critical) { // channel supplied a critical packet from the pending packets
-                    cp->indicator = 1; 
-                    cp->enable_indicator = 0; 
-                }
-                if (cp->run_length > cp->pending_packet_count) { // none of the pending packets were used
-                    cp->indicator = 2; 
-                    cp->enable_indicator = 0; 
-                }
-            }  // if enable_indicator still armed
-        } // for each channel
-        */
+        // determine where should a resuming channel start service from
+        if (c0p->start_of_run_flag) {
+            if (debug) print_debug_part1 (0, c0p); 
+            if (c0p->packet_num == 546)
+                printf ("GOT TO 546\n");
+            c0p->resume_from_beginning = resume_from_beginning (
+                c0p, sd0, len_sd0, td0, len_td0, 
+                c1p, sd1, len_sd1, ls1, len_ld1, td1, len_td1, 
+                c2p, sd2, len_sd2, ls2, len_ld2, td2, len_td2);
+            if (debug) fprintf (dbg_fp, "\n"); 
+            /*
+            struct s_metadata *mdp = 
+                find_closest_mdp_by_rx_TS (c0p->rx_epoch_ms, md, len_md);
+            c0p->unused_pkts_at_start_of_run = mdp->packet_num - c0p->packet_num + 1; 
+            */
+        }
+        if (c1p->start_of_run_flag) {
+            if (debug) print_debug_part1 (1, c1p); 
+            c1p->resume_from_beginning = resume_from_beginning (
+                c1p, sd1, len_sd1, td1, len_td1,
+                c0p, sd0, len_sd0, ls0, len_ld0, td0, len_td0, 
+                c2p, sd2, len_sd2, ls2, len_ld2, td2, len_td2);
+            if (debug) fprintf (dbg_fp, "\n"); 
+            /*
+            struct s_metadata *mdp = 
+                find_closest_mdp_by_rx_TS (c1p->rx_epoch_ms, md, len_md);
+            c1p->unused_pkts_at_start_of_run = mdp->packet_num - c1p->packet_num + 1; 
+            */
+               
+        }
+        if (c2p->start_of_run_flag) {
+            if (debug) print_debug_part1 (2, c2p); 
+            c2p->resume_from_beginning = resume_from_beginning (
+                c2p, sd2, len_sd2, td2, len_td2, 
+                c0p, sd0, len_sd0, ls0, len_ld0, td0, len_td0, 
+                c1p, sd1, len_sd1, ls1, len_ld1, td1, len_td1);
+            if (debug) fprintf (dbg_fp, "\n"); 
+            /*
+            struct s_metadata *mdp = 
+                find_closest_mdp_by_rx_TS (c2p->rx_epoch_ms, md, len_md);
+            c2p->unused_pkts_at_start_of_run = mdp->packet_num - c2p->packet_num + 1;
+            */
+        }
 
         // per carrier packet stats
         struct s_brmdata *brmdp;
@@ -2563,6 +2805,7 @@ void carrier_metadata_clients (
                     mdp->ch==1? (len_td1? c1p->tdp->actual_rate : -1) : 
                     (len_td2? c2p->tdp->actual_rate : -1);
         emit_frame_stats_for_per_packet_file (fp, mdp, brmdp); 
+        emit_resumption_stats (c0p, c1p, c2p, c2t);
 	    emit_packet_stats (c0p, mdp, 0, fp);
 	    emit_packet_stats (c1p, mdp, 1, fp);
 	    emit_packet_stats (c2p, mdp, 2, fp);
@@ -2797,11 +3040,14 @@ struct s_txlog *find_occ_from_td (
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
-        if (tx_epoch_ms > current->epoch_ms)
+        if (tx_epoch_ms > current->epoch_ms) {
             left = current;
-        else
+            current = right - (right - left)/2; 
+        }
+        else {
             right = current; 
-        current = left + (right - left)/2; 
+            current = left + (right - left)/2; 
+        }
     } // while there are more than 2 elements left to search
 
     // on exiting the while the left is smaller than tx_epoch_ms, the right can be bigger or equal 
@@ -2816,6 +3062,39 @@ struct s_txlog *find_occ_from_td (
     return current;
 } // find_occ_from_td
 
+// find_closest_tdp returns pointer to the td array element at closest time smaller than the 
+// specified tx_epoch_ms 
+struct s_txlog *find_closest_tdp (double tx_epoch_ms, struct s_txlog *head, int len_td) {
+
+    struct s_txlog *left, *right, *current;    // current, left and right index of the search
+
+    left = head; right = head + len_td - 1; 
+
+    if (tx_epoch_ms < left->epoch_ms) // tx started before modem occupancy was read
+        FWARN(warn_fp, "find_occ_from_tdfile: Packet with tx_epoch_ms %0.lf is smaller than first occupancy sample time\n", tx_epoch_ms)
+
+    if (tx_epoch_ms > right->epoch_ms + 100) // tx was done significantly later than last occ sample
+        FWARN(warn_fp, "find_occ_from_tdfile: Packet with tx_epoch_ms %0.lf is over 100ms largert than last occupancy sample time\n", tx_epoch_ms)
+
+    current = left + (right - left)/2; 
+    while (current != left) { // there are more than 2 elements to search
+        if (tx_epoch_ms > current->epoch_ms) {
+            left = current;
+            current = right - (right - left)/2; 
+        } else {
+            right = current; 
+            current = left + (right - left)/2; 
+        }
+    } // while there are more than 2 elements left to search
+
+    // on exiting the while the left is smaller than tx_epoch_ms, the right can be bigger or equal 
+    // so need to check if the right should be used
+    if (tx_epoch_ms == right->epoch_ms) 
+        current = right; 
+
+    return current;
+} // find_closest_tdp
+
 // returns pointer to equal to or closest smaller brmdata to the specified epoch_ms
 struct s_brmdata *find_closest_brmdp (double epoch_ms, struct s_brmdata *headp, int len) {
 
@@ -2825,23 +3104,24 @@ struct s_brmdata *find_closest_brmdp (double epoch_ms, struct s_brmdata *headp, 
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
-        if (epoch_ms > current->epoch_ms)
+        if (epoch_ms > current->epoch_ms) {
             left = current;
-        else
+            current = right - (right - left)/2; 
+        } else {
             right = current; 
-        current = left + (right - left)/2; 
+            current = left + (right - left)/2; 
+        }
     } // while there are more than 2 elements left to search
     
     // when the while exits, the current is equal to (if current = left edge) or less than epoch_ms
-    if ((current+1)->epoch_ms == epoch_ms)
-        return current+1; 
-    else 
-        return current; 
+    if (right->epoch_ms == epoch_ms)
+        current = right; 
 
+    return current; 
 } // find_closest_brmdp
 
 // returns pointer to equal to or closest smaller mdp to the specified camera_epoch_ms
-struct s_metadata *find_closest_mdp (double camera_epoch_ms, struct s_metadata *headp, int len) {
+struct s_metadata *find_closest_mdp_by_camera_TS (double camera_epoch_ms, struct s_metadata *headp, int len) {
 
     struct  s_metadata  *left, *right, *current;    // current, left and right index of the search
 
@@ -2849,20 +3129,46 @@ struct s_metadata *find_closest_mdp (double camera_epoch_ms, struct s_metadata *
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
-        if (camera_epoch_ms > current->camera_epoch_ms)
+        if (camera_epoch_ms > current->camera_epoch_ms) {
             left = current;
-        else
+            current = right - (right - left)/2; 
+        } else {
             right = current; 
-        current = left + (right - left)/2; 
+            current = left + (right - left)/2; 
+        }
     } // while there are more than 2 elements left to search
     
     // when the while exits, the current is equal to (if current = left edge) or less than camera_epoch_ms
-    if ((current+1)->camera_epoch_ms == camera_epoch_ms)
-        return current+1; 
-    else 
-        return current; 
+    if (right->camera_epoch_ms == camera_epoch_ms) {
+        // move to the right most (latest) packet
+        current = right; 
+        while ((current+1 < headp+len-1) && ((current+1)->camera_epoch_ms==camera_epoch_ms))
+            current++;
+    }
 
-} // find_closest_mdp
+    return current; 
+} // find_closest_mdp_by_camera_TS
+
+// returns pointer closest smaller mdp by tx_epoch to the specified TS
+struct s_metadata *find_closest_mdp_by_rx_TS (double TS_ms, struct s_metadata *headp, int len) {
+
+    struct  s_metadata  *left, *right, *current;    // current, left and right index of the search
+
+    left = headp; right = headp + len - 1; 
+
+    current = left + (right - left)/2; 
+    while (current != left) { // there are more than 2 elements to search
+        if (TS_ms > current->rx_epoch_ms) {
+            left = current;
+            current = right - (right - left)/2; 
+        } else {
+            right = current; 
+            current = left + (right - left)/2; 
+        }
+    } // while there are more than 2 elements left to search
+    
+    return current; 
+} // find_closest_mdp_by_rx_TS
 
 // returns pointer to equal to or avgqdata closest to the specified packet number with closest tx_epoc
 struct s_avgqdata *find_avgqdp (int packet_num, double tx_epoch_ms, struct s_avgqdata *avgqdatap, int len_avgqd) {
@@ -2873,26 +3179,26 @@ struct s_avgqdata *find_avgqdp (int packet_num, double tx_epoch_ms, struct s_avg
 
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
-        if (packet_num > current->packet_num)
+        if (packet_num > current->packet_num) {
             left = current;
-        else
+            current = right - (right-left)/2;
+        }
+        else {
             right = current; 
-        current = left + (right - left)/2; 
+            current = left + (right - left)/2; 
+        }
     } // while there are more than 2 elements left to search
     
     // when the while exits, the current is equal to (if current = left edge) or less than epoch_ms
-    if (current->packet_num == packet_num)
-        left = current; 
-    else if ((current+1)->packet_num == packet_num)
-        left = current + 1;
-    else {  // no match. should not really happen
+    if ((right->packet_num !=packet_num) && (left->packet_num != packet_num))
+        // no match. should not really happen
         FWARN(warn_fp, "find_avgqdp: could not find packet number %d in avgq array\n", packet_num)
-        left = current;  
-    }
+
+    if (right->packet_num == packet_num)
+        left = right; 
     
     // now search to the right and see which element is closest is the specified tx_epoch_ms
     struct s_avgqdata *smallest = left; 
-    current = left;  // assume left is the smallest
     while ((left != (avgqdatap+len_avgqd-1)) && ((++left)->packet_num == packet_num)) {
         if ((smallest->tx_epoch_ms - tx_epoch_ms) > (left->tx_epoch_ms - tx_epoch_ms)) 
             smallest = left; 
@@ -2942,13 +3248,12 @@ void initialize_cp_from_cd ( struct s_metadata *mdp, struct s_carrier *cp, int t
     struct s_cmetadata *cdp; 
 
     // if this carrier transmitted this meta data line, then print the carrier stats
-	if (cdp = find_packet_in_cd (mdp->packet_num, cp->cdhead, cp->len_cd)) { // fill out the cp structure
-
+	if (cdp = find_packet_in_cd (mdp->packet_num, cp->cdhead, cp->len_cd)) { 
+        // this channel participated in this packet
         if (cp->len_avgqd = cdp->len_avgqd) cp->avgqdp = cdp->avgqdp;
         if (cp->len_ld = cdp->len_ld) {cp->ldp = cdp->ldp, cp->lsp = cdp->lsp;}
         if (len_brmd) cp->brmdp = cdp->brmdp;
 
-        cp->previous_tx_epoch_ms = mdp->packet_num==0? 0 : cp->tx_epoch_ms; 
         cp->packet_num = cdp->packet_num; 
         cp->vx_epoch_ms = cdp->vx_epoch_ms; 
         cp->tx_epoch_ms = cdp->tx_epoch_ms; 
@@ -2956,7 +3261,7 @@ void initialize_cp_from_cd ( struct s_metadata *mdp, struct s_carrier *cp, int t
         if (cp->len_td) cp->tdp = find_occ_from_td (cp->tx_epoch_ms, cp->tdhead, cp->len_td, 
             &(cp->iocc), &(cp->socc), &(cp->socc_epoch_ms));
         cp->rx_epoch_ms = cdp->rx_epoch_ms;
-        cp->retx = cdp->retx; 
+        cp->retx = cdp->retx;
         cp->t2r_ms = cp->rx_epoch_ms - cp->tx_epoch_ms;
         if (cp->len_ld) cp->r2t_ms = cp->ldp->bp_epoch_ms - cp->rx_epoch_ms;
         if (cp->len_ld) cp->est_t2r_ms = cp->lsp->t2r_ms + MAX(0, (cp->tx_epoch_ms - cp->lsp->bp_epoch_ms)); // max if bp_epoch > tx_epoch
@@ -2982,6 +3287,32 @@ void initialize_cp_from_cd ( struct s_metadata *mdp, struct s_carrier *cp, int t
     return;
 } // initialize_cp_from_cd
 
+// outputs resumption time of any one of the 3 channels. If multiple channels are resuming
+// at the same time then the smallest channel number is printed
+void emit_resumption_stats (
+    struct s_carrier *c0p, struct s_carrier *c1p, struct s_carrier *c2p, double c2t) {
+
+        // service resumption inidcator
+        // somewhat incorrect if multiple channels are resuming at the same time
+        // which does not happen very often
+        if (c0p->tx && c0p->start_of_run_flag)  { // res
+	        fprintf (ps_fp, "%0.1f,", c0p->tx_epoch_ms); 
+            fprintf (ps_fp, "0,");
+        }
+        else if (c1p->tx && c1p->start_of_run_flag)  { // res
+	        fprintf (ps_fp, "%0.1f,", c1p->tx_epoch_ms); 
+            fprintf (ps_fp, "1,");
+        }
+        else if (c2p->tx && c2p->start_of_run_flag)  {// res
+	        fprintf (ps_fp, "%0.1f,", c2p->tx_epoch_ms); 
+            fprintf (ps_fp, "2,");
+        }
+        else fprintf (ps_fp, ",,");                                                              
+
+        // c2t
+        fprintf (ps_fp, "%d,", (int) c2t);
+} // emit_resumption_stats
+
 // outputs per carrier stats and fills out some of the fields of s_carrier structure from cd array
 void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrier_num, struct frame *fp) {
 
@@ -2997,26 +3328,50 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
         if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000);          // MMbps
         else fprintf (ps_fp, ",");                                                              
         fprintf (ps_fp, "%d,", cp->retx);                                                       // retx
-        if ((cp->run_length == 1) || cp->indicator) { // channel entering service
+        if ((cp->start_of_run_flag) || cp->indicator) { // channel entering service
             fprintf (ps_fp, "%d,", cp->tgap);                                                   // tgap
             fprintf(ps_fp, "%d,", cp->pending_packet_count);                                    // pptks
+            fprintf(ps_fp, "%d,", cp->unused_pkts_at_start_of_run);                             // upkts
         }
         else {
-            fprintf (ps_fp,","); // pending packets time gap
-            fprintf (ps_fp,","); // pending packet count
+            fprintf (ps_fp,","); // pending packets time gap (tgap)
+            fprintf (ps_fp,","); // pending packet count (ppkts)
+            fprintf (ps_fp,","); // unused packets at the start of the run (upkts)
         }
         fprintf (ps_fp, "%d,", cp->critical); // cr
         fprintf (ps_fp, "%d,", cp->indicator); // I
-        if (cp->end_of_run_flag) {
+        if (cp->start_of_run_flag) {
+            fprintf (ps_fp, "%d,", cp->resume_from_beginning); //  rb
+            fprintf(ps_fp, "%d,", cp->continuing_channel);                                      // cont
+            fprintf (ps_fp, "%d,", cp->resume_from_beginning==2 && cp->critical); // Inc
+            if (cp->resume_from_beginning == 2)
+                fprintf (ps_fp, "%d,", cp->bp_TS_gap); // bp_gap
+            else
+                fprintf (ps_fp, ","); 
+            fprintf (ps_fp, "%d,", (int) cp->out_of_service_duration); // oos_d
+            fprintf (ps_fp, "%d,", cp->socc_when_going_oos); // oos_o
+            fprintf (ps_fp, "%d,", cp->channel_x_in_good_shape); // x
+            fprintf (ps_fp, "%d,", cp->channel_y_in_good_shape); // y
+        } else {
+            fprintf (ps_fp,","); // rb
+            fprintf (ps_fp,","); // cont
+            fprintf (ps_fp,","); // Inc
+            fprintf (ps_fp,","); // bp_gap
+            fprintf (ps_fp,","); // oos_d
+            fprintf (ps_fp,","); // oos_o
+            fprintf (ps_fp,","); // x
+            fprintf (ps_fp,","); // y
+        }
+
+        if (cp->start_of_run_flag) {
             fprintf(ps_fp, "%d,", cp->last_run_length); // rlen
-            fprintf(ps_fp, "%d,", cp->last_fast_run_length); // flen 
+            fprintf(ps_fp, "%d,", cp->run_length); // flen
             fprintf (ps_fp, "%d,", cp->last_run_length - cp->last_fast_run_length); // I
         } else {
             fprintf (ps_fp,","); // rlen
-            fprintf (ps_fp,","); // flen 
+            fprintf(ps_fp, "%d,", cp->run_length); // flen
             fprintf (ps_fp,","); // I 
         }
-
 
 	    fprintf (ps_fp, "%.0lf,", cp->tx_epoch_ms);                                             // tx_TS
 	    fprintf (ps_fp, "%.0lf,", cp->rx_epoch_ms);                                             // rx_TS
@@ -3046,17 +3401,26 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
         fprintf (ps_fp, "%d,", cp->socc);
         if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000); else fprintf (ps_fp, ",");
         fprintf (ps_fp, ",");       // retx
-        fprintf (ps_fp, ",");       // pending_packet_count
-        fprintf (ps_fp, ",");       // pending packets time gap
+        fprintf (ps_fp, ",");       // pending packets time gap (tgap)
+        fprintf (ps_fp, ",");       // pending_packet_count (ppkts)
+        fprintf (ps_fp, ",");       // unsed packets at the start of a run (upkts)
+        fprintf (ps_fp, ",");       // cont
         fprintf (ps_fp, ",");       // cr
-        fprintf (ps_fp, ",");       // indicator function
-        if (cp->end_of_run_flag) {
+        fprintf (ps_fp, ",");       // indicator
+        fprintf (ps_fp, ",");       // rb
+        fprintf (ps_fp, ",");       // Inc(orrect)
+        fprintf (ps_fp, ",");       // bp_gap
+        fprintf (ps_fp, ",");       // oos
+        fprintf (ps_fp, ",");       // oos_occ
+        fprintf (ps_fp, ",");       // x
+        fprintf (ps_fp, ",");       // y
+        if (cp->start_of_run_flag) {
             fprintf(ps_fp, "%d,", cp->last_run_length); // rlen
-            fprintf(ps_fp, "%d,", cp->last_fast_run_length); // flen 
+            fprintf(ps_fp, "%d,", cp->run_length); // flen
             fprintf (ps_fp, "%d,", cp->last_run_length - cp->last_fast_run_length); // I
         } else {
             fprintf (ps_fp,","); // rlen
-            fprintf (ps_fp,","); // flen 
+            fprintf(ps_fp, "%d,", cp->run_length); // flen
             fprintf (ps_fp,","); // I 
         }
         fprintf (ps_fp, ",");       // tx_TS
