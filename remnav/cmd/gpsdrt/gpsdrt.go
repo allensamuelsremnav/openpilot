@@ -16,7 +16,7 @@ import (
 )
 
 func watch(gpsdAddr string, verbose bool) chan []byte {
-	// Watch the gpsd at conn and remember latest TPV.
+	// Watch the gpsd at gpsdAddr and send TPV messages to output chan.
 	conn, reader := gpsd.Conn(gpsdAddr)
 
 	gpsd.PokeWatch(conn)
@@ -110,7 +110,6 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go gpsd.WatchBinned(*gpsdAddress, logCh, gnssDir, &wg)
-	wg.Add(len(devices))
 	rnnet.UDPDup(udpCh, devices, *dest, &wg, false)
 	wg.Wait()
 
