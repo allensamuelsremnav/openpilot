@@ -11,6 +11,8 @@ type Key[T constraints.Ordered] struct {
 	Timestamp T
 }
 
+// Keep only messages that are strictly after any timestamp that we've
+// seen so far.
 func Latest[T constraints.Ordered](msgs <-chan []byte, get func(msg []byte) Key[T]) <-chan []byte {
 	out := make(chan []byte)
 	go func() {

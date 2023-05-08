@@ -18,29 +18,28 @@ import (
 // sending on the listener back channel and not reading on the dialer
 // back channel.
 
-// BidiWRDev implements a dialing on a single devices, sending over
+// bidiWRDev implements dialing on a single devices, sending over
 // the connnection, and reading back communications.  It sends
 // until the send-message channel is closed and reports
 // sendWG.Done() when the send-message channel is closed.  Back
 // communications are forwarded to the returned chan<-[]byte, which is
 // never closed, without deduping.
-func BidiWRDev(send <-chan []byte, device string, deviceId uint8, pc *net.UDPConn, bufSize int, sendWG *sync.WaitGroup, verbose bool) <-chan []byte {
+func bidiWRDev(send <-chan []byte, device string, deviceId uint8, pc *net.UDPConn, bufSize int, sendWG *sync.WaitGroup, verbose bool) <-chan []byte {
 	// bufSize should be big enough for back communication.
-	log.Printf("BidiWRDev: device %s, deviceId %d\n", device, deviceId)
+	log.Printf("bidiWRDev: device %s, deviceId %d\n", device, deviceId)
 
 	// Send msgs to connnection.
-	sendWG.Add(1)
 	go func() {
 		defer sendWG.Done()
 		for msg := range send {
 			// dialer->listener msgs are prefixed with a byte containing the logical device id.
 			_, err := pc.Write(append([]byte{deviceId}, msg...))
 			if err != nil {
-				log.Printf("BidiWRDev: %v", err)
+				log.Printf("bidiWRDev: %v", err)
 				continue
 			}
 			if verbose {
-				log.Printf("BidiWRDev: ->%s, %d bytes, '%s'\n", device, len(msg), msg)
+				log.Printf("bidiWRDev: ->%s, %d bytes, '%s'\n", device, len(msg), msg)
 			}
 		}
 	}()
@@ -52,7 +51,7 @@ func BidiWRDev(send <-chan []byte, device string, deviceId uint8, pc *net.UDPCon
 			buf := make([]byte, bufSize)
 			n, _, err := pc.ReadFrom(buf)
 			if err != nil {
-				log.Printf("BidiWRDev/ReadFrom: %v", err)
+				log.Printf("bidiWRDev/ReadFrom: %v", err)
 				continue
 			}
 			recvChan <- buf[:n]
@@ -64,19 +63,14 @@ func BidiWRDev(send <-chan []byte, device string, deviceId uint8, pc *net.UDPCon
 // BidiWR implements a virtual connection using multiple devices,
 // sending messages over all devices and collecting all back
 // communication.
-func BidiWR(sendMsgs <-chan []byte, devices []string, dest string, bufSize int, verbose bool) <-chan []byte {
+func BidiWR(sendMsgs <-chan []byte, devices []string, dest string, bufSize int, wg *sync.WaitGroup, verbose bool) <-chan []byte {
 	// Make a parallel array of channels and goroutines.
-	// This WaitGroup to be sure the senders are ready to receive.
-
-	// This WaitGroup for all senders to complete.
-	var sendWG sync.WaitGroup
 
 	var sendChans []chan []byte
-
 	var recvChs []<-chan []byte
 	var activeDevices []string
 	for i, d := range devices {
-		pc, err := DialUDP(d, dest, "BidiWRDev")
+		pc, err := DialUDP(d, dest, "BidiWR")
 		if err != nil {
 			log.Println(err)
 			continue
@@ -84,7 +78,8 @@ func BidiWR(sendMsgs <-chan []byte, devices []string, dest string, bufSize int, 
 		activeDevices = append(activeDevices, d)
 		sCh := make(chan []byte)
 		sendChans = append(sendChans, sCh)
-		rCh := BidiWRDev(sCh, d, uint8(i), pc, bufSize, &sendWG, verbose)
+		wg.Add(1)
+		rCh := bidiWRDev(sCh, d, uint8(i), pc, bufSize, wg, verbose)
 		recvChs = append(recvChs, rCh)
 	}
 
@@ -103,11 +98,11 @@ func BidiWR(sendMsgs <-chan []byte, devices []string, dest string, bufSize int, 
 		for _, ch := range sendChans {
 			close(ch)
 		}
-		sendWG.Wait()
 	}()
 
 	// Merge recvChs to a single channel.
 	recvChan := make(chan []byte)
+
 	var recvWG sync.WaitGroup
 	for _, ch := range recvChs {
 		recvWG.Add(1)
@@ -118,10 +113,12 @@ func BidiWR(sendMsgs <-chan []byte, devices []string, dest string, bufSize int, 
 			recvWG.Done()
 		}(ch)
 	}
+	// Close merged channel when all recvChs are closed.
 	go func() {
 		recvWG.Wait()
 		close(recvChan)
 	}()
+
 	return recvChan
 }
 

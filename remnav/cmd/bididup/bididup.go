@@ -26,7 +26,7 @@ func counter(n int, sleep time.Duration) <-chan []byte {
 		b[i] = runes[r.Intn(len(runes))]
 	}
 	prefix := string(b)
-	log.Printf("bididial: prefix %s\n", prefix)
+	log.Printf("bididup: send prefix %s\n", prefix)
 
 	msgs := make(chan []byte)
 
@@ -65,12 +65,12 @@ func files(filenames []string, sleep time.Duration) <-chan []byte {
 }
 
 func main() {
-	dest := flag.String("dest", "10.0.0.210:6001", "destination address")
+	dest := flag.String("dest", "10.0.0.60:6001", "destination address")
 	bufSize := flag.Int("bufsize", 4096, "buffer size for reading")
 	verbose := flag.Bool("verbose", false, "verbosity on")
 	packets := flag.Int("packets", 100, "number of test packets")
 	devs := flag.String("devices", "eth0,wlan0", "comma-separated list of network devices, e.g. eth0,wlan0")
-	sleep := flag.Int("sleep", 100, "sleep between packets, microseconds")
+	sleep := flag.Int("sleep", 1000000, "sleep between packets, microseconds")
 	flag.Parse()
 	devices := strings.Split(*devs, ",")
 	sleepDuration := time.Duration(*sleep) * time.Microsecond
@@ -86,16 +86,20 @@ func main() {
 		sendMsgs = files(flag.Args(), sleepDuration)
 	}
 
+	// Wait on all sends and all receives.
+	var wg sync.WaitGroup
+
 	// dialer<--listener messages
-	var recvChan <-chan []byte = rnnet.BidiWR(sendMsgs, devices, *dest, *bufSize, *verbose)
-	var recvWG sync.WaitGroup
-	recvWG.Add(1)
+	recvChan := rnnet.BidiWR(sendMsgs, devices, *dest, *bufSize,
+		&wg, *verbose)
+
+	wg.Add(1)
 	go func() {
-		defer recvWG.Done()
+		defer wg.Done()
 		for msg := range recvChan {
-			fmt.Printf("bididial: (recvchan) '%s'\n", string(msg))
+			fmt.Printf("bididup: (recvchan) '%s'\n", string(msg))
 		}
 	}()
 
-	recvWG.Wait()
+	wg.Wait()
 }
