@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	gpsd "remnav.com/remnav/metadata/gpsd"
+	"remnav.com/remnav/metadata/storage"
 )
 
 func main() {
@@ -37,7 +38,7 @@ func main() {
 		log.Printf("ignoring unexpected argument %s\n", flag.Arg(0))
 	}
 
-	gnssPath := gpsd.LogDir("gpsdol", *vehicleRootFlag, *archiveServerFlag, *archiveRootFlag)
+	gnssPath := gpsd.LogDir("gpsdol", *vehicleRootFlag, storage.RawGNSSSubdir, *archiveServerFlag, *archiveRootFlag)
 
 	// Set up the connection to gpsd.
 	conn, reader := gpsd.Conn(*gpsdAddressFlag)

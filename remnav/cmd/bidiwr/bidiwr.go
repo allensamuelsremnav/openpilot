@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -48,11 +49,37 @@ func writeTo(pc net.PacketConn, addrs <-chan net.Addr, replies <-chan []byte, wG
 	}
 }
 
+// Forward messages that are newer than any previous message according the field key.
+func filter(msgs <-chan []byte, key string) <-chan []byte {
+	filtered := make(chan []byte)
+	go func() {
+		var latest int64
+		for msg := range msgs {
+			var f interface{}
+			err := json.Unmarshal(msg, &f)
+			if err != nil {
+				log.Fatal(err)
+			}
+			m := f.(map[string]interface{})
+			v, ok := m[key]
+			if ok {
+				ts := int64(v.(float64))
+				if ts > latest {
+					latest = ts
+					filtered <- msg
+				}
+			}
+		}
+	}()
+	return filtered
+}
+
 func main() {
 	localPort := flag.Int("port", rnnet.VehicleTrajectoryRequestApplication, "listen and reply on this local port")
 	destDefault := fmt.Sprintf("10.0.0.60:%d", rnnet.OperatorTrajectoryListen)
 	dest := flag.String("dest", destDefault, "destination address")
 	bufSize := flag.Int("bufsize", 4096, "buffer size for reading")
+	recvKey := flag.String("recv_key", "requested", "filter latest received message using this field")
 	verbose := flag.Bool("verbose", false, "verbosity on")
 	devs := flag.String("devices", "eth0,eth0", "comma-separated list of network devices")
 	flag.Parse()
@@ -75,7 +102,8 @@ func main() {
 	var wg sync.WaitGroup
 
 	replies := rnnet.BidiWR(pcReads, devices, *dest, *bufSize, &wg, *verbose)
-	go writeTo(pc, addrs, replies, &wg, *verbose)
+	filtered := filter(replies, *recvKey)
+	go writeTo(pc, addrs, filtered, &wg, *verbose)
 	wg.Wait()
 
 }

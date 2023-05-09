@@ -18,6 +18,7 @@ func main() {
 	localPort := flag.Int("port", rnnet.VehicleTrajectoryRequestApplication, "listen and reply on this local port")
 	bufSize := flag.Int("bufsize", 4096, "buffer size for reading")
 	verbose := flag.Bool("verbose", false, "verbosity on")
+	progress := flag.Bool("progress", false, "show progress indicator")
 	timeout := flag.Int("timeout", 1000, "timeout for reads during initialization, millieconds")
 	flag.Parse()
 
@@ -38,7 +39,7 @@ func main() {
 			"class":      traj.ClassTrajectoryApplication,
 			"trajectory": 0,
 			"applied":    0,
-			"operator":   0,
+			"log":        0,
 		})
 
 	for {
@@ -82,7 +83,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	var latest int64
 	for {
 		var trajectory traj.Trajectory
 		err := json.Unmarshal(buf[:n], &trajectory)
@@ -91,30 +91,32 @@ func main() {
 		}
 
 		// Handle trajectory request
-		// Dedup and discard stale messages
-		if latest == 0 || trajectory.Time > latest {
-			latest = trajectory.Time
-			if *verbose {
-				fmt.Println(string(buf[:n]))
-			}
+		if *progress {
+			fmt.Printf("t")
+		}
+		if *verbose {
+			fmt.Println(string(buf[:n]))
+		}
 
-			// Send applied message
-			probe, _ := json.Marshal(
-				map[string]interface{}{
-					"class":      traj.ClassTrajectoryApplication,
-					"trajectory": trajectory.Time,
-					"applied":    time.Now().UnixMicro(),
-					"operator":   0,
-				})
+		// Send applied message
+		applied, _ := json.Marshal(
+			map[string]interface{}{
+				"class":      traj.ClassTrajectoryApplication,
+				"trajectory": trajectory.Requested,
+				"applied":    time.Now().UnixMicro(),
+				"log":        0,
+			})
 
-			_, err = pc.Write(probe)
-			if err != nil {
-				log.Fatal(err)
-			}
+		_, err = pc.Write(applied)
+		if err != nil {
+			log.Fatal(err)
+		}
 
-			if *verbose {
-				fmt.Println(string(probe))
-			}
+		if *progress {
+			fmt.Printf("a")
+		}
+		if *verbose {
+			fmt.Println(string(applied))
 		}
 
 		// Wait for next request

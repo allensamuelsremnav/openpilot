@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	gpsd "remnav.com/remnav/metadata/gpsd"
+	"remnav.com/remnav/metadata/storage"
 	rnnet "remnav.com/remnav/net"
 )
 
@@ -91,7 +92,7 @@ func main() {
 		devices = append(devices, t)
 	}
 
-	gnssDir := gpsd.LogDir("gpsdrt", *vehicleRoot, *archiveServer, *archiveRoot)
+	gnssDir := gpsd.LogDir("gpsdrt", *vehicleRoot, storage.RawGNSSSubdir, *archiveServer, *archiveRoot)
 	// Get message stream from gpsd server.
 	msgs := watch(*gpsdAddress, *verbose)
 

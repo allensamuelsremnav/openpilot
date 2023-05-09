@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	gpsd "remnav.com/remnav/metadata/gpsd"
+	"remnav.com/remnav/metadata/storage"
 	rnnet "remnav.com/remnav/net"
 )
 
@@ -96,7 +97,8 @@ func main() {
 		forwardChannels = append(forwardChannels, ch)
 	}
 	logCh := make(chan string)
-	gnssDir := gpsd.LogDir("gpsdrt", *logRoot, "", "")
+
+	gnssDir := gpsd.LogDir("gpsdrt", *logRoot, storage.RawGNSSSubdir, "", "")
 	var watchWG sync.WaitGroup
 	watchWG.Add(1)
 	go gpsd.WatchBinned("port", logCh, gnssDir, &watchWG)
