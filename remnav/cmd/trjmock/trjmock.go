@@ -31,7 +31,7 @@ func main() {
 	sleepDuration := time.Duration(*sleep) * time.Millisecond
 
 	logDir := gpsd.LogDir("trajectory", *logRoot, storage.TrajectorySubdir, "", "")
-	logCh := make(chan []byte, 4)
+	logCh := make(chan []byte, 2) // Need a small rate buffer at 100 Hz.
 
 	send := make(chan []byte)
 	recvd := rnnet.BidiRW(*listen, *bufSize, send, *verbose)
