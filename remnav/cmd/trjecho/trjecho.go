@@ -70,7 +70,7 @@ func main() {
 	}
 
 	if n <= 0 {
-		log.Fatalf("programming error, expected %d == 0", n)
+		log.Fatalf("programming error, expected %d > 0", n)
 
 	}
 
