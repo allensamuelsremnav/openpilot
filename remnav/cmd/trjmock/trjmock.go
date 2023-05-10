@@ -83,6 +83,9 @@ func main() {
 					"log":       t,
 				})
 			send <- trajectory
+			if *progress {
+				fmt.Printf("t")
+			}
 			if *verbose {
 				fmt.Println(string(trajectory))
 			}
