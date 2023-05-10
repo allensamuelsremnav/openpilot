@@ -93,6 +93,8 @@ func main() {
 			}
 			time.Sleep(sleepDuration)
 		}
+		close(send)
 	}()
 	wg.Wait()
+	close(logCh)
 }
