@@ -49,7 +49,8 @@
 #define MIN_EST_T2R_LATENCY 10
 // #define FRAME_PERIOD_MS 33.34 33.34049421
 // #define FRAME_PERIOD_MS 33.36490893
-#define FRAME_PERIOD_MS 33.34136441
+// #define FRAME_PERIOD_MS 33.34136441
+#define FRAME_PERIOD_MS 33.3656922228
 #define MAX_GPS			25000				// maximum entries in the gps file. fatal if there are more.
 #define TX_BUFFER_SIZE (20*60*1000)
 #define CD_BUFFER_SIZE (20*60*1000)
@@ -57,6 +58,7 @@
 #define AVGQ_BUFFER_SIZE (20*60*1000*3)
 #define LD_BUFFER_SIZE (20*60*1000)
 #define SD_BUFFER_SIZE (20*60*1000)
+#define FD_BUFFER_SIZE (20*60*30)
 #define IN_SERVICE 1
 #define OUT_OF_SERVICE 0
 
@@ -113,7 +115,7 @@ struct s_txlog {
 
 struct s_cmetadata {
     int packet_num;                 // packet number read from this line of the carrier s_metadata finle 
-    double vx_epoch_ms; 
+    double vx_epoch_ms;
     double tx_epoch_ms; 
     double rx_epoch_ms;
     int socc; 
@@ -276,6 +278,7 @@ struct s_carrier {
     int reason_debug; 
     int bp_TS_gap;                      // gap between bp_TS of this and other channesl for current packet - 1 (last retired packet)
     int skip_pkts;                      // number of packets to skip at the start of the run
+    int unretired_pkts_debug;           // unretired packets from other channel
 
     // structures associated with current packet
     struct s_avgqdata *avgqdp; 
@@ -584,6 +587,8 @@ struct  s_latency *ls0=NULL, *ls1=NULL, *ls2=NULL;  // latency log data array so
 int     len_ld0=0, len_ld1=0, len_ld2=0;
 struct  s_service *sd0=NULL, *sd1=NULL, *sd2=NULL;  // serivce log data array sorted by state transition time
 int     len_sd0=0, len_sd1=0, len_sd2=0;
+struct  frame *fd = NULL;                           // frame array`
+int     len_fd; 
 
 int main (int argc, char* argv[]) {
     struct  s_file_table_entry file_table[100]; // file list
@@ -897,6 +902,9 @@ SKIP_FILE_LIST:
     lmdp->rx_epoch_ms = -1; // so out-of-order calculations for the first frame are correct.
     cmdp = lmdp+1; 
     md_index = 1; 
+    fd = (struct frame *) malloc (sizeof (struct frame) * FD_BUFFER_SIZE); 
+    struct frame *fdp = fd; 
+    len_fd = 0;
 
     // session stat structure initialization
     init_session_stats (ssp);
@@ -1011,9 +1019,10 @@ SKIP_FILE_LIST:
             //
             // call end of frame clients
             //
+            *fdp = *cfp; fdp++; len_fd++;
             emit_frame_stats (0, cfp);
             if (have_carrier_metadata)
-                carrier_metadata_clients (0, ssp, cfp, c0p, c1p, c2p); 
+                carrier_metadata_clients (0, ssp, (fdp-1), c0p, c1p, c2p); 
             update_session_frame_stats (ssp, cfp);
 
 
@@ -1472,6 +1481,8 @@ int read_pr_line (
 } // end of read_pr_line
 
 void my_free () {
+
+    if (fd !=NULL) free (fd); 
 
     if (td0 != NULL) free (td0); 
     if (td1 != NULL) free (td1); 
@@ -2381,23 +2392,23 @@ void emit_packet_header (FILE *ps_fp) {
     // Delivered packet meta data
     fprintf (ps_fp, "retx, ");
     fprintf (ps_fp, "ch, ");
+    fprintf (ps_fp, "est,");
     fprintf (ps_fp, "MMbps, ");
     fprintf (ps_fp, "tx_TS, ");
     fprintf (ps_fp, "rx_TS, ");
     fprintf (ps_fp, "Pc2r, ");
     fprintf (ps_fp, "Pt2r, ");
-    fprintf (ps_fp, "est,");
     
     // service resumption indicator
+	fprintf (ps_fp, "c2t, ");
     fprintf (ps_fp, "Res,");
     fprintf (ps_fp, "Res_ch,");
-	fprintf (ps_fp, "c2t, ");
 
     // per carrier meta data
     int i; 
     for (i=0; i<3; i++) {
         fprintf (ps_fp, "C%d: c2r, c2v, t2r, r2t, est_t2r, ert, socc, MMbps, retx,", i); 
-        fprintf (ps_fp, "tgap, ppkts, upkts, cr, I, rb, cont, Inc, bp_gap, oos_d, oos_o, x, y, rlen, flen, I,");
+        fprintf (ps_fp, "tgap, ppkts, upkts, spkts, cont, Inc, rdbg, urpkt, oos_d, oos_o, cr, I, rb, bp_gap, x, y, rlen, flen, I,");
         fprintf (ps_fp, "tx_TS, rx_TS, r2t_TS, ert_TS, socc_TS, bp_pkt_TS, bp_pkt, bp_t2r,"); 
         fprintf (ps_fp, "Ravg, IS, qst, qsz, avg_ms, avg_pkt,");
     }
@@ -2460,6 +2471,7 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
         // Delivered packet meta data
         fprintf (ps_fp, "%u, ", mdp->retx);
         fprintf (ps_fp, "%u, ", mdp->ch);
+        if (len_brmd) fprintf (ps_fp, "%d,", brmdp->encoder_state); else fprintf (ps_fp, ",");
         if (mdp->kbps > 0) 
             fprintf (ps_fp, "%.1f, ", ((float) mdp->kbps)/1000);
         else fprintf (ps_fp, ","); 
@@ -2467,7 +2479,6 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
         fprintf (ps_fp, "%.0lf, ", mdp->rx_epoch_ms);
         fprintf (ps_fp, "%.1f, ", mdp->rx_epoch_ms - fp->camera_epoch_ms);
         fprintf (ps_fp, "%.1f, ", mdp->rx_epoch_ms - mdp->tx_epoch_ms);
-        if (len_brmd) fprintf (ps_fp, "%d,", brmdp->encoder_state); else fprintf (ps_fp, ",");
 
         return;
 } // emit_frame_stats_for_per_packet_file
@@ -2481,71 +2492,27 @@ void run_length_state_machine (int channel, struct s_carrier *cp,
     cp->start_of_run_flag = 0; 
     cp->indicator = 0; 
 
-    /*
-    // run length state machine
-    if (cp->run_length) { // a run is in progress
-        if (cp->tx) { // previous run continuing or finished and a new one started
-            struct s_service *state_xp = find_closest_sdp (cp->tx_epoch_ms, sd, len_sd);
-            cp->state_xp_TS = state_xp->state_transition_epoch_ms; 
-            if (cp->state_xp_TS == cp->prev_pkt_state_xp_TS) { // current run is continuing
-                cp->run_length++;
-                if (cp->fast_run_length) { // fast run is in progress
-                    if (cp->socc <=10) // fast run continuing
-                        cp->fast_run_length++;
-                    else { // fast run ended
-                        cp->last_fast_run_length = cp->fast_run_length; 
-                        cp->fast_run_length = 0; 
-                    }
-                } 
-            } else { // previous run finished and a new one started with this packet
-                cp->last_run_length = cp->run_length; 
-                if (cp->fast_run_length) // if the fast run already ended no need to update
-                    cp->last_fast_run_length = cp->fast_run_length; 
-                cp->run_length = 1; 
-                cp->fast_run_length = 1; 
-                cp->end_of_run_flag = 1; 
-                cp->enable_indicator = 1;
-            } // previous run finished and a new one started with this packet
-        } else { // previous run finshed and a new run did not start
-                cp->last_run_length = cp->run_length; 
-                if (cp->fast_run_length) // if the fast run already ended no need to update
-                    cp->last_fast_run_length = cp->fast_run_length; 
-                cp->run_length = 0; 
-                cp->fast_run_length = 0; 
-                cp->end_of_run_flag = 1; 
-        } // previous run finshed and a new run did not start
-    } // a run is in progress
-    else { // no run is in progress
-        // check for start of a run
-        if (cp->tx) {
-            cp->run_length = 1; 
-            cp->fast_run_length = 1; 
-            cp->enable_indicator = 1;
-        } // a new run started
-    } // no run in progress
-    */
-
     // run length state machine - changes state only if the channel transferred this packet
-    if (cp->tx) {
+    // retx packsts are ignored which is incorrect but very clumsy to handle in this program
+    if (cp->tx && !cp->retx) {
 
+        // find the closest state transition preceding this packet's tx
         struct s_service *state_xp = find_closest_sdp (cp->tx_epoch_ms, sd, len_sd);
         if ((state_xp->state == 0) && (cp->tx_epoch_ms <= state_xp->state_transition_epoch_ms))
             // tx occurred in same ms right before channel goes out of service
             // go back one more transition
             state_xp = find_closest_smaller_sdp (state_xp->state_transition_epoch_ms, sd, len_sd); 
         cp->state_xp_TS = state_xp->state_transition_epoch_ms;
-        // if state transition occurred between this and previous packet,  
+
+        // if state transition occurred between this and previous packet this channel transmitted,  
         // then the previous run finished and a new run has begun with this packet
         if (cp->state_xp_TS != cp->prev_pkt_state_xp_TS) {
             cp->last_run_length = cp->run_length; 
             cp->run_length = 1; 
             cp->start_of_run_flag = 1; 
             cp->enable_indicator = 1; 
-            // when the run starts cxp is the first packet that the channel is going to transmit
+            // when the run starts, cp is the first packet that the channel is going to transmit
             // so find the closest packet whose camera_epoch_ms is less than the tx_epoch_ms of this packet
-            // if (cp->tx_epoch_ms == 1682646087360)
-                // printf ("got to 1682646087360\n");
-            // double c2t = fp->tx_epoch_ms_1st_packet - fp->camera_epoch_ms; 
             struct s_metadata *txlastp = find_closest_mdp_by_camera_TS (cp->tx_epoch_ms-c2t, md, len_md);
             cp->pending_packet_count = txlastp->packet_num - cp->packet_num + 1; 
             cp->tgap = (int) (cp->tx_epoch_ms - (txlastp->camera_epoch_ms + c2t)); 
@@ -2569,7 +2536,7 @@ void run_length_state_machine (int channel, struct s_carrier *cp,
             }
         }  // if enable_indicator still armed
         
-        // copy current pkt info to previous pkt in preparation for next 
+        // copy current pkt info now that done using it for next evaluation of the state
         cp->prev_pkt_tx_epoch_ms = cp->tx_epoch_ms; 
         cp->prev_pkt_state_xp_TS = cp->state_xp_TS;
         cp->prev_pkt_num =  cp->packet_num; 
@@ -2592,11 +2559,13 @@ int channel_in_good_shape (
     double est_t2r = lsp->t2r_ms + (epoch_TS - lsp->bp_epoch_ms);
     
     int in_good_shape = 
-        (sdp->state == 1)    // is in_service state
+        (sdp->state == 1);    // is in_service state
+        /*
         &&        
         (sdp->zeroUplinkQueue || (tdp->occ <= 10)) // occupancy is in good place
         &&
         (est_t2r <= 80);
+        */
 
     if (debug) {
         fprintf (dbg_fp, 
@@ -2611,6 +2580,8 @@ int channel_in_good_shape (
 // returns 1 if service should start from the begining of the pending packets queue, 
 // 2 otherwise. Also sets the unused_pkts_at_start_of_run field of s_carrier
 int resume_from_beginning (
+    struct frame *fp, 
+    int len_fd,
     struct s_carrier *cp, 
     struct s_service *sd, int len_sd, 
     struct s_txlog *td, int len_td,
@@ -2640,14 +2611,15 @@ int resume_from_beginning (
     struct s_metadata *mdp = find_closest_mdp_by_rx_TS (cp->rx_epoch_ms, md, len_md);
     cp->unused_pkts_at_start_of_run = mdp->packet_num - cp->packet_num + 1; 
 
-    // algo 1 for computing resume_from_begining : did not work well
-    // resume from the beining if this channel was out of service for less than a frame time
-    // or other channels are not in good shape
+    // determine if other channels are in good shape or not
     cp->channel_x_in_good_shape = 
         channel_in_good_shape (cp->tx_epoch_ms, "x", sdx, len_sdx, lsx, len_ldx, tdx, len_tdx);
     cp->channel_y_in_good_shape =
        channel_in_good_shape (cp->tx_epoch_ms, "y", sdy, len_sdy, lsy, len_ldy, tdy, len_tdy);
 
+    // algo 1 for computing resume_from_begining : did not work well
+    // resume from the beining if this channel was out of service for less than a frame time
+    // or other channels are not in good shape
     int from_beginning = 
         (cp->out_of_service_duration < FRAME_PERIOD_MS)
         ||
@@ -2668,46 +2640,90 @@ int resume_from_beginning (
 
     // algo 2 for determining resume_from_beginning (OVERIDES ALGO 1)
     if (cp->packet_num == 0) { // first packet (trivial case) so start from beginning
+        cp->continuing_channel = 1; 
         cp->skip_pkts = 0; 
+        cp->reason_debug = 0;
         return 1; 
     }
+
     // if (cp->packet_num == 6714)
         // printf ("reached 6714\n");
+
     // check if this channel backpropagated the last retired packet from the encoder queue
     struct s_cmetadata *cdp = find_packet_in_cd (cp->packet_num-1, cp->cdhead, cp->len_cd);
     struct s_cmetadata *cdpx = find_packet_in_cd (cp->packet_num-1, cpx->cdhead, cpx->len_cd);
     struct s_cmetadata *cdpy = find_packet_in_cd (cp->packet_num-1, cpy->cdhead, cpy->len_cd);
-
-    if (cdp == NULL)  { // channel did not participate in this packet
-        // the resuming channel will not be able to catch up for at least 60ms (r2t+t2r)
+    if (// resuming channel is not a continuing channel if it did not transmit packet n-1 OR
+        // did not tranmit fast enough relative to other channels
+        (cdp == NULL) 
+        // ||
+        // (cdpx != NULL) && (cdpx->rx_epoch_ms < (cdp->rx_epoch_ms /* - 5 */))
+        // ||
+        // (cdpy != NULL) && (cdpy->rx_epoch_ms < (cdp->rx_epoch_ms /*- 5 */))
+        )
         cp->continuing_channel = 0; 
-        return 2; 
-    } 
-    cp->continuing_channel = 1; // assume that resuming channel was the fastest
-
-    if ((cdpx != NULL) // channel-x participated in this packet
-        // && cp->channel_x_in_good_shape 
-        && (cdpx->rx_epoch_ms < cdp->rx_epoch_ms)) {
-        // channel x is running faster and was reponsible for retiring packet_num - 1
-        // so no need to resume from the beginning
-        cp->continuing_channel = 0; 
-        cp->bp_TS_gap = abs (cdpx->ldp->bp_epoch_ms - cdp->ldp->bp_epoch_ms);
-        return 2; 
-    }
-
-    if ((cdpy != NULL) // channel-y participated in this packet
-        // && cp->channel_y_in_good_shape
-        && (cdpy->rx_epoch_ms < cdp->rx_epoch_ms)) {
-        // channel x is running faster and was reponsible for retiring packet_num - 1
-        // so no need to resume from the beginning
-        cp->continuing_channel = 0; 
-        cp->bp_TS_gap = abs (cdpy->ldp->bp_epoch_ms - cdp->ldp->bp_epoch_ms);
-        return 2; 
-    }
+    else // resuming channel was the first to retire the last packet 
+        cp->continuing_channel = 1; 
     
-    // else resuming channel was the fasetest. so resume from the beginning
-    return 1;
+    if (cp->continuing_channel) {
+        cp->skip_pkts = 0; 
+        cp->reason_debug = 1;
+        return 1; 
+    } // if resuming channel is a continuing channel
+    
+    // get here if another channel retired the last packet first
 
+    // find weighted average packet size of the last 3 frames
+    int average_frame_szP; 
+    // float weight_1 = 1.0/3.0, weight_2 = 1.0/3.0, weight_3 = 1.0/3.0;
+    float weight_1 = 0.5, weight_2 = 0.25, weight_3 = 0.25;
+    // float weight_1 = 1.0, weight_2 = 0.0, weight_3 = 0.0;
+    if (fp->frame_count < 3)
+        average_frame_szP = fp->packet_count; 
+    else
+        average_frame_szP =  (int)
+            fp->packet_count * weight_1 + (fp-1)->packet_count * weight_2
+            + (fp-2)->packet_count * weight_3;
+
+    // if the channel that retired the last packet first transmitted is out of service, 
+    // determine the number of packdets it transmitted beyond this packet before
+    // going out of service 
+    struct s_carrier *faster_cp;
+    struct s_service *sdp; 
+    struct s_cmetadata *faster_cdp;
+    if (cdpx==NULL 
+        ||
+        (cdpy != NULL) && (cdpx->rx_epoch_ms > cdpy->rx_epoch_ms)) {
+        // channel y is faster
+        sdp = find_closest_sdp (cp->tx_epoch_ms, sdy, len_sdy);
+        faster_cp = cpy; 
+        faster_cdp = cdpy; 
+    } else {
+        // channel x is faster
+        sdp = find_closest_sdp (cp->tx_epoch_ms, sdx, len_sd);
+        faster_cp = cpx; 
+        faster_cdp = cdpx; 
+    }
+
+    float fraction_to_skip = 1.5; // 1.0; // 1.75; 
+    if (sdp->state == 1) { // is in service
+        cp->skip_pkts = fraction_to_skip * average_frame_szP; // weighted average of the last 3 frames;
+        cp->reason_debug = 2; 
+    } else { // not in service
+        // find number of unretired packets that have been transmitted by this channel
+        double oos_TS = sdp->state_transition_epoch_ms; 
+        int unretired_pkts = 0; 
+        faster_cdp++; // move past the packet_num-1
+        while ((faster_cdp < (faster_cp->cdhead+faster_cp->len_cd)) && 
+            (faster_cdp->tx_epoch_ms <= oos_TS)) {
+            unretired_pkts++;
+            faster_cdp++; 
+        } // while there are more transmitted pkts before chnnel went oos
+        cp->skip_pkts = MIN (unretired_pkts, fraction_to_skip * average_frame_szP);
+        cp->reason_debug = 3; 
+        cp->unretired_pkts_debug = unretired_pkts; 
+    } // not in service 
+    return 2; 
 } // resume_from_beginning
 
 void print_debug_part1 (int channel, struct s_carrier *cp) {
@@ -2721,7 +2737,7 @@ void print_debug_part1 (int channel, struct s_carrier *cp) {
 // assumes called at the end of a frame after frame and session stats have been updated.
 // emits packet stats and analytics output followed by frame stats and analytics
 void carrier_metadata_clients (
-    int print_header, struct s_session *ssp, struct frame *fp,
+    int print_header, struct s_session *ssp, struct frame *fp, 
     struct s_carrier *c0p, struct s_carrier *c1p, struct s_carrier *c2p ) {
 
     // check if MD_BUFFER is holding all the packets of the frame
@@ -2757,9 +2773,10 @@ void carrier_metadata_clients (
         // determine where should a resuming channel start service from
         if (c0p->start_of_run_flag) {
             if (debug) print_debug_part1 (0, c0p); 
-            if (c0p->packet_num == 546)
-                printf ("GOT TO 546\n");
+            // if (c0p->packet_num == 546)
+                // printf ("GOT TO 546\n");
             c0p->resume_from_beginning = resume_from_beginning (
+                fp, len_fd,
                 c0p, sd0, len_sd0, td0, len_td0, 
                 c1p, sd1, len_sd1, ls1, len_ld1, td1, len_td1, 
                 c2p, sd2, len_sd2, ls2, len_ld2, td2, len_td2);
@@ -2773,6 +2790,7 @@ void carrier_metadata_clients (
         if (c1p->start_of_run_flag) {
             if (debug) print_debug_part1 (1, c1p); 
             c1p->resume_from_beginning = resume_from_beginning (
+                fp, len_fd,
                 c1p, sd1, len_sd1, td1, len_td1,
                 c0p, sd0, len_sd0, ls0, len_ld0, td0, len_td0, 
                 c2p, sd2, len_sd2, ls2, len_ld2, td2, len_td2);
@@ -2787,6 +2805,7 @@ void carrier_metadata_clients (
         if (c2p->start_of_run_flag) {
             if (debug) print_debug_part1 (2, c2p); 
             c2p->resume_from_beginning = resume_from_beginning (
+                fp, len_fd,
                 c2p, sd2, len_sd2, td2, len_td2, 
                 c0p, sd0, len_sd0, ls0, len_ld0, td0, len_td0, 
                 c1p, sd1, len_sd1, ls1, len_ld1, td1, len_td1);
@@ -3292,6 +3311,9 @@ void initialize_cp_from_cd ( struct s_metadata *mdp, struct s_carrier *cp, int t
 void emit_resumption_stats (
     struct s_carrier *c0p, struct s_carrier *c1p, struct s_carrier *c2p, double c2t) {
 
+        // c2t
+        fprintf (ps_fp, "%d,", (int) c2t);
+
         // service resumption inidcator
         // somewhat incorrect if multiple channels are resuming at the same time
         // which does not happen very often
@@ -3309,8 +3331,7 @@ void emit_resumption_stats (
         }
         else fprintf (ps_fp, ",,");                                                              
 
-        // c2t
-        fprintf (ps_fp, "%d,", (int) c2t);
+        return;
 } // emit_resumption_stats
 
 // outputs per carrier stats and fills out some of the fields of s_carrier structure from cd array
@@ -3328,37 +3349,46 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
         if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000);          // MMbps
         else fprintf (ps_fp, ",");                                                              
         fprintf (ps_fp, "%d,", cp->retx);                                                       // retx
-        if ((cp->start_of_run_flag) || cp->indicator) { // channel entering service
+        if (cp->start_of_run_flag) { // channel entering service
             fprintf (ps_fp, "%d,", cp->tgap);                                                   // tgap
             fprintf(ps_fp, "%d,", cp->pending_packet_count);                                    // pptks
             fprintf(ps_fp, "%d,", cp->unused_pkts_at_start_of_run);                             // upkts
+            fprintf(ps_fp, "%d,", cp->skip_pkts);                                               // spkts
+            fprintf(ps_fp, "%d,", cp->continuing_channel);                                      // cont
+            fprintf (ps_fp, "%d,", cp->unused_pkts_at_start_of_run - cp->skip_pkts);            // Inc
+            fprintf (ps_fp, "%d,", cp->reason_debug); // rdbg
+            if (cp->reason_debug==3)
+                fprintf (ps_fp, "%d,", cp->unretired_pkts_debug); // urpkt
+            else
+                fprintf (ps_fp,","); // urpkt
+            fprintf (ps_fp, "%d,", (int) cp->out_of_service_duration); // oos_d
+            fprintf (ps_fp, "%d,", cp->socc_when_going_oos); // oos_o
         }
         else {
             fprintf (ps_fp,","); // pending packets time gap (tgap)
             fprintf (ps_fp,","); // pending packet count (ppkts)
             fprintf (ps_fp,","); // unused packets at the start of the run (upkts)
+            fprintf (ps_fp,","); // spkts
+            fprintf (ps_fp,","); // cont
+            fprintf (ps_fp,","); // Inc
+            fprintf (ps_fp,","); // rdbg
+            fprintf (ps_fp,","); // urpkt
+            fprintf (ps_fp,","); // oos_d
+            fprintf (ps_fp,","); // oos_o
         }
         fprintf (ps_fp, "%d,", cp->critical); // cr
         fprintf (ps_fp, "%d,", cp->indicator); // I
         if (cp->start_of_run_flag) {
             fprintf (ps_fp, "%d,", cp->resume_from_beginning); //  rb
-            fprintf(ps_fp, "%d,", cp->continuing_channel);                                      // cont
-            fprintf (ps_fp, "%d,", cp->resume_from_beginning==2 && cp->critical); // Inc
             if (cp->resume_from_beginning == 2)
                 fprintf (ps_fp, "%d,", cp->bp_TS_gap); // bp_gap
             else
                 fprintf (ps_fp, ","); 
-            fprintf (ps_fp, "%d,", (int) cp->out_of_service_duration); // oos_d
-            fprintf (ps_fp, "%d,", cp->socc_when_going_oos); // oos_o
             fprintf (ps_fp, "%d,", cp->channel_x_in_good_shape); // x
             fprintf (ps_fp, "%d,", cp->channel_y_in_good_shape); // y
         } else {
             fprintf (ps_fp,","); // rb
-            fprintf (ps_fp,","); // cont
-            fprintf (ps_fp,","); // Inc
             fprintf (ps_fp,","); // bp_gap
-            fprintf (ps_fp,","); // oos_d
-            fprintf (ps_fp,","); // oos_o
             fprintf (ps_fp,","); // x
             fprintf (ps_fp,","); // y
         }
@@ -3404,14 +3434,17 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
         fprintf (ps_fp, ",");       // pending packets time gap (tgap)
         fprintf (ps_fp, ",");       // pending_packet_count (ppkts)
         fprintf (ps_fp, ",");       // unsed packets at the start of a run (upkts)
+        fprintf (ps_fp, ",");       // spkts
         fprintf (ps_fp, ",");       // cont
+        fprintf (ps_fp, ",");       // Inc(orrect)
+        fprintf (ps_fp, ",");       // rdbg
+        fprintf (ps_fp, ",");       // urpkt
+        fprintf (ps_fp, ",");       // oos_d
+        fprintf (ps_fp, ",");       // oos_o
         fprintf (ps_fp, ",");       // cr
         fprintf (ps_fp, ",");       // indicator
         fprintf (ps_fp, ",");       // rb
-        fprintf (ps_fp, ",");       // Inc(orrect)
         fprintf (ps_fp, ",");       // bp_gap
-        fprintf (ps_fp, ",");       // oos
-        fprintf (ps_fp, ",");       // oos_occ
         fprintf (ps_fp, ",");       // x
         fprintf (ps_fp, ",");       // y
         if (cp->start_of_run_flag) {
