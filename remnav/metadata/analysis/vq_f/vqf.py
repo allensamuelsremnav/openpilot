@@ -1,0 +1,300 @@
+import sys
+import math
+import time
+from operator import itemgetter
+import bisect
+from collections import namedtuple
+
+def read_log_file (filename, tuplename):
+    """ returns an array (list) of specified namedtuples from the data in the filename"""
+    array = []
+    file = open (filename, "r")
+    for line_num, line in enumerate (file):
+        field_list = []
+        for fields in line.split(","):
+            try: # collect all integer values following ":"
+                field_list += [(int(fields.split(":")[1]))]
+            except: # skip if no numerical value following ":"
+                pass
+        try: 
+            array += [tuplename._make(field_list)]
+        except:
+            err_str = "WARNING read_log_file: incorrect number of filelds: " + filename  + " Line " + str(line_num) + ": " + " ".join (str(e) for e in field_list) +"\n"
+            sys.stderr.write (err_str)
+
+    return array
+
+def read_array_line (array, TS_field): 
+    """ returns a valid line from the array by doing sanity checking of TS_field"""
+    for i, line in enumerate (array):
+        if line.TS_field == 0:
+            pass
+        else: 
+            yield line
+
+def read_line (array):
+    i = 0
+    while i < 3:
+        yield (array[i]) 
+        i += 1
+
+indir = "C:/Users/gopal/Downloads/04_19_2023/"
+outdir = "C:/Users/gopal/Downloads/analysis_output/"
+# sys.stderr = open ("warnings
+
+# tx file prefix
+tx_namepart = "2023_04_19_16_31_02_v11_8_4"
+# tx_namepart = "test"
+
+# rx file prefix
+rx_namepart = "2023_04_19_16_31_05_v_9_7_3_online"
+# rx_namepart = "test"
+
+#
+# log and csv file structures
+#
+files_dic_fields = namedtuple ("files_dic_fields", "filename, fields")
+files_dic = {}
+log_dic = {}
+
+# uplink log
+# uplink_queue. ch: 1, timestamp: 1681947064182, queue_size: 316, elapsed_time_since_last_queue_update: 9, actual_rate: 0
+uplink_fields = namedtuple ("uplink_fields", " uplink_queue_ch, queue_size_sample_TS, queue_size, \
+                             elapsed_time_since_last_queue_update, actual_rate")
+files_dic.update ({"uplink":  files_dic_fields._make ([indir+"uplink_queue_"+tx_namepart+".log", uplink_fields])})
+uplink_array = []
+log_dic.update ({"uplink": uplink_array})
+
+# service log
+# CH: 2, change to out-of-service state, latency: 0, latencyTime: 0, estimated latency: 2614851439, stop_sending flag: 0 , uplink queue size: 0, zeroUplinkQueue: 0, service flag: 0, numCHOut: 1, Time: 1681947064175, packetNum: 0
+service_fields = namedtuple ("service_fields", "channel, bp_t2r, bp_t2r_receive_TS, est_t2r, stop_sending_flag, \
+                             uplink_queue_size, zeroUplinkQueue, service_flag, numCHOut, service_transition_TS, bp_t2r_packetNum")
+files_dic.update ({"service": files_dic_fields._make ([indir+"service_"+tx_namepart+".log", service_fields])})
+service_array = []
+log_dic.update ({"service": service_array})
+
+# latency log
+# ch: 0, received a latency, numCHOut:2, packetNum: 4294967295, latency: 40, time: 1681947064236, sent from ch: 0
+latency_fields = namedtuple ("latency_fields", "receiving_channel, numCHOut, PktNum, latency, receive_TS, reporting_channel")
+files_dic.update ({"latency": files_dic_fields._make ([indir+"latency_"+tx_namepart+".log", latency_fields])})
+latency_array = []
+log_dic.update ({"latency": latency_array})
+
+"""
+# retx log
+# ch: 2, received a retx, numCHOut:2, startPacketNum: 39753, run: 1, time: 1681946093091
+
+# bitrate log
+# send_bitrate: 830000, encoder state: 2, ch0 quality state: 1, ch1 quality state: 1, ch2 quality state: 1, time: 1681947065306
+
+# avgQ log
+# RollingAvg75. Probe. CH: 2, RollingAvg75: 0.000000, qualityState: 1, queue size: 0, time: 1681947064175
+
+# probe log
+# ch: 0, receive_a_probe_packet. sendTime: 1681946022261, latency: 45, receivedTime: 1681946022306
+probe_fields = namedtuple ("probe_fields", "sending_channel, send_TS, latency, receive_TS")
+files_dic.update ({"probe":   files_dic_fields._make ([indir+"probe_"+rx_namepart+".log",probe_fields])})
+# print (files_dic)
+probe_array = []
+log_dic.update ({"probe": probe_array})
+
+# carrier csv
+# packe_number	 sender_timestamp	 receiver_timestamp	 video_packet_len	 frame_start	 frame_number	 frame_rate	 frame_resolution	 frame_end	 camera_timestamp	 retx	 ch	 latency
+# 0	             8.61157E+14	     1.68195E+12	     1384	             1	              0	             0	         0	                 0	         1.68195E+12	     0	     0	 330
+
+# dedup csv
+# packe_number	 sender_timestamp	 receiver_timestamp	 video_packet_len	 frame_start	 frame_number	 frame_rate	 frame_resolution	 frame_end	 camera_timestamp	 retx	 ch	 latency
+# 0	             8.61156E+14	     1.68195E+12	     1384	             1	             0	             0	         0	                 0	         1.68195E+12	     0	     2	    37
+"""
+
+# check that files_dic and log_dic are consistent
+files_dic_keys = set (list (files_dic.keys()))
+log_dic_keys = set (list (log_dic.keys()))
+if (files_dic_keys != log_dic_keys): 
+    print ("keys don't match")
+    print ("files_dic_keys: ", files_dic_keys)
+    print ("log_dic keys:   ", log_dic_keys)
+else:
+    print ("filename dictionary is consistent with dictionary containing the actual logs")
+
+# read all the log data files. Each log is stored as list of named tupel defe
+for item in files_dic:
+    print ("reading file: ", files_dic[item].filename)
+    log_dic[item] = read_log_file (files_dic[item].filename, files_dic[item].fields)
+    print ("\t file lenght = {}".format (len(log_dic[item])))
+
+# clean up latency file to retain channel to channel communication only
+print ("Removing unnecessary lines from the latency file")
+print ("Original latency file length: {}".format (len(log_dic["latency"])))
+new_list = []
+for i, line in enumerate (log_dic["latency"]):
+    if i % 100_000 == 0: 
+        print ("processing line {}".format (i))
+    if line.receiving_channel == line.reporting_channel: 
+        new_list += [(line)]
+log_dic["latency"] = new_list
+print ("After removing unnecessary lines, latency file lenght: {}".format (len(log_dic["latency"])))
+
+# synthesize service states
+IN_SERVICE = 1
+OUT_OF_SERVICE = 0
+TRANSITION_TO_OUT_OF_SERVICE_IN_5ms = 2
+channel_state = [OUT_OF_SERVICE,OUT_OF_SERVICE,OUT_OF_SERVICE] # att, vz, t-mobile
+
+latency_index = 0
+uplink_index = 0
+synthesized_service_index = 0
+while latency_index < len(log_dic["latency"]) and uplink_index < len(log_dic["uplink"]):
+    latency_line = log_dic["latency"][latency_index]
+    uplink_line = log_dic["uplink"][uplink_index]
+    print (latency_line)
+    print (uplink_line)
+    # if latency_line.
+    exit ()
+"""
+for i, line in enumerate (log_dic["latency"]):
+    print (line)
+    print (new_list[i])
+    if i == 3:
+        break
+
+fout = open (outdir+"delete_me_test.csv", "w")
+for line in log_dic["latency"]:
+    fout.write("receving_channel, {}, reporting_chanel, {}, PktNum, {}, receive_TS, {}\n".format ( \
+        line.receiving_channel, line.reporting_channel, line.PktNum, line.receive_TS))
+fout.close()
+
+
+##################################################
+# start of scratch
+##################################################
+# print ("uplink len: ", len(log_dic["uplink"]), type (len(log_dic["uplink"])))
+# print ("service len: ", len(log_dic["service"]))
+
+fieldname = "uplink"
+print ("uplink len2: ", len(log_dic[fieldname]))
+
+print ("reading from generator")
+r = read_line (log_dic["service"])
+# while (line := next (r, None)) is not None:
+    # print (line)
+
+
+line = (next(r, None))
+print (line)
+print ("channel: ", line.channel)
+print ("bp_t2r: ", line.bp_t2r)
+
+print (next(r, None))
+print (next(r, None))
+print (next(r, None))
+
+for line in r:
+    print (type(line))
+    print (line)
+print (type(line))
+print (line)
+
+
+exit ()
+
+for i in files_dic:
+    print ("\n PRINTING file: ", files_dic[i].filename, " length: ", len(log_dic[i]), "\n")
+    for j, log_data in enumerate (log_dic[i]):
+        print (log_data)
+        if j>3:
+            break
+##################################################
+# end of scratch
+##################################################
+"""
+
+"""
+##################################################
+# IN_SERVICE state machine
+##################################################
+
+STATE == IN_SERVICE
+    transition to OUT_OF_SERVICE
+    if (
+        (occupancy_monitor_working && (occupancy > 10)) 
+        || 
+        (est_bp_t2r > 80ms)) 
+        && (3 channels in IN_SERVICE_STATES 
+        ||
+     	// only one channel besides this one is IN_SERVICE
+     	Remaining channel has been in service for at least 5ms)
+    )
+STATE == OUT_OF_SERVICE
+    transition to IN_SERVICE 
+    if (
+        (!occupancy_monitor_working_correctly || (occupancy < 5))
+        &&
+        ((est_bp_t2r < 50ms))
+   )
+"""
+
+"""
+#
+# initialize states to be out of service
+#
+# current_state 
+OUT_OF_SERVICE = 0
+IN_SERVICE = 1
+# transition reason
+# 1 if t2r, 2 if queue size, 3 if both, 0 if undefined 
+computed_service_state_fields = namedtuple ("computed_service_state_fields", 
+    "current_state, transition_TS, transition_reason")
+computed_service_state = {"att": (OUT_OF_SERVICE, 0, 0),
+                          "vz":  (OUT_OF_SERVICE, 0, 0),
+                          "tm":  (OUT_OF_SERVICE, 0, 0)}
+
+# while there are more entries in uplink and latency log to process
+read_uplink_line = read_log_file (log_dic["uplink"], "queue_size_sample_TS")
+read_latency_line = read_log_file (log_dic["latency"], "bp_t2r_receive_TS")
+
+uplink_line = next (read_uplink_line, None)
+latency_line = next (read_latency_line, None)
+
+while (uplink_line is not None) and (latency_line is not None):
+    if uplink_line.queue_size_sample_TS < latency_line.receive_TS:
+        # process queue
+        pass
+    
+    # obtain a valid feedback line 
+    # if queue size feedback is earlier than t2r feedbback
+        # process queue size feedback
+        # increment uplink array index
+    # else
+        # process t2r feedback
+        # increment service array index
+    # if state change then record the event and the reason
+    # find closest (smaller or bigger) state change in the service log
+    # generate warning if state change is further than the threshold
+    # generate warning if computed state does not match the expected state
+
+for item in files_dic:
+    print ("printing file: ", files_dic[item][0])
+    for i in files_dic[item][2]:
+        print (i)
+
+latency_log = open ("latency.txt", "r")
+latency_array = read_log_file (latency_log, files_dic["latency"][1])
+
+print ("latency log", "id=", id(latency_array))
+for i, line in enumerate(latency_array):
+    print (i, latency_array[i])
+
+# namedtuple_list = [latency_fields, probe_fields]
+# print (namedtuple_list)
+
+print ("latency log", "id=", id(latency_array))
+for i, line in enumerate(latency_array):
+    print(i, line.PktNum)
+
+probe_log = open ("probe.txt", "r")
+probe_array = read_log_file (probe_log)
+print ("probe log", "id=", id(probe_array))
+for line in probe_array:
+    print (line)
+"""
