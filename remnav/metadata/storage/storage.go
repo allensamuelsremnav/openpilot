@@ -8,3 +8,6 @@ var GNSSSubdir = "gnss"
 
 // Raw gnss logs are stored in this subdirectory of the archive directory
 var RawGNSSSubdir = "gnss"
+
+// Trajectory requests and applied messages are stored in this subdirectory.
+var TrajectorySubdir = "trajectory"

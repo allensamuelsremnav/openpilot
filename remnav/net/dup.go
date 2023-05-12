@@ -41,11 +41,11 @@ func UDPDup(msgs <-chan []byte, devices []string, dest string, completedWG *sync
 		conn, err := DialUDP(d, dest, "UDPSendDev")
 		if err != nil {
 			log.Println(err)
-			completedWG.Done()
 			continue
 		}
 		ch := make(chan []byte)
 		startedWG.Add(1)
+		completedWG.Add(1)
 		go udpDev(ch, d, conn, &startedWG, completedWG, verbose)
 		chs = append(chs, ch)
 		activeDevices = append(activeDevices, d)

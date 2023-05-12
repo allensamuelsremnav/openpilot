@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	machineid "github.com/denisbrodbeck/machineid"
-	storage "remnav.com/remnav/metadata/storage"
 )
 
 func fileTransfer(machineID, gnssSubdir, localRoot, archiveServer, archiveRoot string, script io.Writer) {
@@ -43,7 +42,7 @@ rsync -arv ${LOCAL_ROOT}/${GNSS_SUBDIR}/${MACHINE_ID} ${ARCHIVE_USER}@${ARCHIVE_
 }
 
 // Initialize the log storage and return path to directory.
-func LogDir(tag, vehicleRoot, archiveServer, archiveRoot string) string {
+func LogDir(tag, vehicleRoot, appSubdir, archiveServer, archiveRoot string) string {
 	// tag identifies source, e.g. gpsdol or gpsdrt
 	protectedID, err := machineid.ProtectedID(tag)
 	if err != nil {
@@ -52,29 +51,29 @@ func LogDir(tag, vehicleRoot, archiveServer, archiveRoot string) string {
 
 	log.Printf("%s: machine id %s\n", tag, protectedID)
 
-	// Make the local gnss storage directory if it doesn't exist.
-	gnssPath := filepath.Join(vehicleRoot, storage.RawGNSSSubdir, protectedID)
-	err = os.MkdirAll(gnssPath, 0775)
+	// Make the local app storage directory if it doesn't exist.
+	appPath := filepath.Join(vehicleRoot, appSubdir, protectedID)
+	err = os.MkdirAll(appPath, 0775)
 	if err != nil {
 		log.Fatalf("%s: %s while creating directory %s",
-			os.Args[0], err, gnssPath)
+			os.Args[0], err, appPath)
 	}
 	// umask modifies the group permission; fix it.
-	err = os.Chmod(gnssPath, 0775)
+	err = os.Chmod(appPath, 0775)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	if len(archiveServer) != 0 {
 		// Write script to transfer local session files.
-		scriptFilepath := filepath.Join(gnssPath, "filetransfer.sh")
+		scriptFilepath := filepath.Join(appPath, "filetransfer.sh")
 		scriptFile, err := os.Create(scriptFilepath)
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer scriptFile.Close()
 		fileTransfer(protectedID,
-			storage.RawGNSSSubdir,
+			appSubdir,
 			vehicleRoot,
 			archiveServer, archiveRoot,
 			scriptFile)
@@ -84,5 +83,5 @@ func LogDir(tag, vehicleRoot, archiveServer, archiveRoot string) string {
 			scriptFilepath)
 	}
 
-	return gnssPath
+	return appPath
 }

@@ -12,11 +12,12 @@ import (
 	"sync"
 
 	gpsd "remnav.com/remnav/metadata/gpsd"
+	"remnav.com/remnav/metadata/storage"
 	rnnet "remnav.com/remnav/net"
 )
 
 func watch(gpsdAddr string, verbose bool) chan []byte {
-	// Watch the gpsd at conn and remember latest TPV.
+	// Watch the gpsd at gpsdAddr and send TPV messages to output chan.
 	conn, reader := gpsd.Conn(gpsdAddr)
 
 	gpsd.PokeWatch(conn)
@@ -91,7 +92,7 @@ func main() {
 		devices = append(devices, t)
 	}
 
-	gnssDir := gpsd.LogDir("gpsdrt", *vehicleRoot, *archiveServer, *archiveRoot)
+	gnssDir := gpsd.LogDir("gpsdrt", *vehicleRoot, storage.RawGNSSSubdir, *archiveServer, *archiveRoot)
 	// Get message stream from gpsd server.
 	msgs := watch(*gpsdAddress, *verbose)
 
@@ -110,7 +111,6 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go gpsd.WatchBinned(*gpsdAddress, logCh, gnssDir, &wg)
-	wg.Add(len(devices))
 	rnnet.UDPDup(udpCh, devices, *dest, &wg, false)
 	wg.Wait()
 

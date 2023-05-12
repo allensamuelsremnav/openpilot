@@ -41,7 +41,9 @@ func files(filenames []string, sleep time.Duration, msgs chan<- []byte) {
 }
 
 func main() {
-	dest := flag.String("dest", "10.0.0.11:6001", "destination address")
+	dest := flag.String("dest",
+		"10.0.0.60:"+strconv.Itoa(rnnet.OperatorGpsdListen),
+		"destination host:port, e.g. 96.64.247.70:"+strconv.Itoa(rnnet.OperatorGpsdListen))
 	verbose := flag.Bool("verbose", false, "verbosity on")
 	packets := flag.Int("packets", 100, "number of test packets")
 	devs := flag.String("devices", "eth0,wlan0", "comma-separated list of network devices, e.g. eth0,wlan0")
@@ -57,7 +59,6 @@ func main() {
 	defer close(msgs)
 
 	var wg sync.WaitGroup
-	wg.Add(len(devices))
 	rnnet.UDPDup(msgs, devices, *dest, &wg, *verbose)
 
 	if len(flag.Args()) == 0 {

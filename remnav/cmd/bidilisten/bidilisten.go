@@ -18,8 +18,8 @@ import (
 func main() {
 	port := flag.Int("port", 6001, "listen on this port for UDP, e.g. 6001")
 	bufSize := flag.Int("bufsize", 4096, "buffer size for incoming messages")
-	sleep := flag.Int("sleep", 1000, "sleep between packets, microseconds")
-	packets := flag.Int("packets", 0, "number of test packets")
+	sleep := flag.Int("sleep", 1000000, "sleep between packets, microseconds")
+	packets := flag.Int("packets", 100, "number of test packets to send")
 	echo := flag.Bool("echo", false, "echo on")
 	verbose := flag.Bool("verbose", false, "verbosity on")
 	flag.Parse()
@@ -55,10 +55,11 @@ func main() {
 			b[i] = runes[r.Intn(len(runes))]
 		}
 		prefix := string(b)
-		log.Printf("bidilisten: prefix %s\n", prefix)
+		log.Printf("bidilisten: send prefix %s\n", prefix)
 
 		for i := 0; i < *packets; i++ {
-			send <- []byte("bidilisten: (send) " + prefix + "_" + strconv.Itoa(i))
+			sendMsg := []byte("bidilisten: (send) " + prefix + "_" + strconv.Itoa(i))
+			send <- sendMsg
 			time.Sleep(sleepDuration)
 		}
 		close(send)
