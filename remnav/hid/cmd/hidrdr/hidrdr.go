@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	vidPID := flag.String("vidpid", "046d:c261", "colon-separated hex vid and pid")
+	vidPID := flag.String("vidpid", "046d:c262", "colon-separated hex vid and pid")
 	flag.Parse()
 
 	ids := strings.Split(*vidPID, ":")
@@ -43,7 +43,7 @@ func main() {
 		info.ProductStr)
 
 	// g920 has only one indexed string?
-	for i := 1; i < 2; i++ {
+	for i := 0; i < 10; i++ {
 		s, err := dev.GetIndexedStr(1)
 		if err != nil {
 			fmt.Printf("%d: %v\n", i, err)
@@ -53,7 +53,7 @@ func main() {
 
 	for {
 		buf := make([]byte, 65535)
-		n, err := dev.GetFeatureReport(buf)
+		n, err := dev.Read(buf)
 		if err != nil {
 			log.Fatal(err)
 		}
