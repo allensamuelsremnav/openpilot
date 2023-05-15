@@ -135,14 +135,21 @@ func main() {
 	}
 	log.Printf("vid:pid %04x:%04x %d:%d\n", vid, pid, vid, pid)
 
-	d, err := hid.OpenFirst(uint16(vid), uint16(pid))
+	dev, err := hid.OpenFirst(uint16(vid), uint16(pid))
 	if err != nil {
 		log.Fatal(err)
 	}
-	s, err := d.GetProductStr()
+	info, err := dev.GetDeviceInfo()
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("product string %s\n", s)
+
+	fmt.Printf("%s: ID %04x:%04x %s %s\n",
+		info.Path,
+		info.VendorID,
+		info.ProductID,
+		info.MfrStr,
+		info.ProductStr)
+
 	ExampleEnumerate()
 }
