@@ -31,8 +31,8 @@ a socket connection on the vehicle.  It also deduplicates received messages.
 
 ## ```trjecho```
 
-This program that reads trajectories and responds with
-trajectory-applied messages.  It uses a port (provided by ```bidiwr```).  It
+This program reads trajectories and responds with
+trajectory-applied messages.  It uses a local port (provided by ```bidiwr```).  It
 is a model for Python or C++ programs that want to use bidirectional
 UDP from the vehicle.
 
