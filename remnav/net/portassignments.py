@@ -21,8 +21,11 @@ all_assignments = [
             "Operator_Trajectory_Listen", 6002,
             "Bidi listener for trajectories and trajectory-applied messages."),
          Assignment(
-            "Operator_Unused_Available", 7000,
-            "Unused, available."),
+            "Operator_G920_Listen", 6003,
+            "Bidi listener for G920 HID reports."),
+         Assignment(
+            "Operator_G920_Trajectory", 7000,
+            "G920 HID reports to trajectory planner. localhost"),
          Assignment(
             "Operator_Gpsd_Trajectory", 7001,
             "Gpsd messages from the gpsd listener to trajectory planner. localhost"),

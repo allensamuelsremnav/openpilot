@@ -9,8 +9,11 @@ OPERATOR_GPSD_LISTEN = 6001
 # Bidi listener for trajectories and trajectory-applied messages.
 OPERATOR_TRAJECTORY_LISTEN = 6002
 
-# Unused, available.
-OPERATOR_UNUSED_AVAILABLE = 7000
+# Bidi listener for G920 HID reports.
+OPERATOR_G920_LISTEN = 6003
+
+# G920 HID reports to trajectory planner. localhost
+OPERATOR_G920_TRAJECTORY = 7000
 
 # Gpsd messages from the gpsd listener to trajectory planner. localhost
 OPERATOR_GPSD_TRAJECTORY = 7001

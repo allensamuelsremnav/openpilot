@@ -11,8 +11,11 @@ const OperatorGpsdListen = 6001
 // Bidi listener for trajectories and trajectory-applied messages.
 const OperatorTrajectoryListen = 6002
 
-// Unused, available.
-const OperatorUnusedAvailable = 7000
+// Bidi listener for G920 HID reports.
+const OperatorG920Listen = 6003
+
+// G920 HID reports to trajectory planner. localhost
+const OperatorG920Trajectory = 7000
 
 // Gpsd messages from the gpsd listener to trajectory planner. localhost
 const OperatorGpsdTrajectory = 7001
