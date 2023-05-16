@@ -1,4 +1,4 @@
-package hid
+package g920
 
 import (
 	"log"
@@ -14,6 +14,7 @@ const ButtonsFlappy = 2
 const Unknown3 = 3
 const WheelLowByte = 4
 const WheelHighByte = 5
+
 // Pedals 255 --> 0
 const PedalRight = 6
 const PedalMiddle = 7
@@ -21,14 +22,14 @@ const PedalLeft = 8
 const Unknown9 = 9
 
 type Report struct {
-	DpadXboxABXY int
+	DpadXboxABXY  int
 	ButtonsFlappy int
-	Wheel int
-	PedalLeft int
-	PedalMiddle int
-	PedalRight int
-	Unknown3 int
-	Unknown9 int
+	Wheel         int
+	PedalLeft     int
+	PedalMiddle   int
+	PedalRight    int
+	Unknown3      int
+	Unknown9      int
 }
 
 func Decode(buf []byte) (Report, error) {
@@ -52,7 +53,7 @@ func Decode(buf []byte) (Report, error) {
 	report.PedalLeft = int(buf[PedalLeft])
 	report.PedalMiddle = int(buf[PedalMiddle])
 	report.PedalRight = int(buf[PedalRight])
-	
+
 	report.DpadXboxABXY = int(buf[DpadXboxABXY])
 	report.ButtonsFlappy = int(buf[ButtonsFlappy])
 	report.Unknown3 = int(buf[Unknown3])
@@ -62,8 +63,8 @@ func Decode(buf []byte) (Report, error) {
 
 const ClassG920 = "G920"
 
-type  G920 struct {
-	Class string  `json:"class"`
-	Requested int64 `json:"requested"` // 
-	Report string `json:"report"` // uuencoded
+type G920 struct {
+	Class     string `json:"class"`
+	Requested int64  `json:"requested"` //
+	Report    string `json:"report"`    // uuencoded
 }

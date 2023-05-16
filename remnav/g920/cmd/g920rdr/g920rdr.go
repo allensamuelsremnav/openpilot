@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/sstallion/go-hid"
-	rnhid "remnav.com/remnav/hid"
+	rng920 "remnav.com/remnav/g920"
 )
 
 func main() {
@@ -61,10 +61,10 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		d, err := rnhid.Decode(buf[:n])
+		d, err := rng920.Decode(buf[:n])
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("wheel %6d, pedal (%3d, %3d, %3d), dpad_xboxabxy %3d, buttons_flappy %3d\n", d.Wheel - 256*128, d.PedalLeft, d.PedalMiddle, d.PedalRight, d.DpadXboxABXY, d.ButtonsFlappy)
+		fmt.Printf("wheel %6d, pedal (%3d, %3d, %3d), dpad_xboxabxy %3d, buttons_flappy %3d\n", d.Wheel-256*128, d.PedalLeft, d.PedalMiddle, d.PedalRight, d.DpadXboxABXY, d.ButtonsFlappy)
 	}
 }
