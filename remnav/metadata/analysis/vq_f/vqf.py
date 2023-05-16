@@ -38,17 +38,12 @@ def read_line (array):
         yield (array[i]) 
         i += 1
 
-indir = "C:/Users/gopal/Downloads/04_19_2023/"
+indir = "C:/Users/gopal/Downloads/05_12_2023/"
 outdir = "C:/Users/gopal/Downloads/analysis_output/"
-# sys.stderr = open ("warnings
 
-# tx file prefix
-tx_namepart = "2023_04_19_16_31_02_v11_8_4"
-# tx_namepart = "test"
-
-# rx file prefix
-rx_namepart = "2023_04_19_16_31_05_v_9_7_3_online"
-# rx_namepart = "test"
+# tx and rx file prefix
+tx_namepart = "2023_05_12_14_31_29_v11_8_4"
+rx_namepart = "2023_05_12_14_31_34_v_9_7_3_online"
 
 #
 # log and csv file structures
@@ -59,11 +54,19 @@ log_dic = {}
 
 # uplink log
 # uplink_queue. ch: 1, timestamp: 1681947064182, queue_size: 316, elapsed_time_since_last_queue_update: 9, actual_rate: 0
-uplink_fields = namedtuple ("uplink_fields", " uplink_queue_ch, queue_size_sample_TS, queue_size, \
+uplink_fields = namedtuple ("uplink_fields", "channel, queue_size_sample_TS, queue_size, \
                              elapsed_time_since_last_queue_update, actual_rate")
 files_dic.update ({"uplink":  files_dic_fields._make ([indir+"uplink_queue_"+tx_namepart+".log", uplink_fields])})
 uplink_array = []
 log_dic.update ({"uplink": uplink_array})
+
+# latency log
+# ch: 0, received a latency, numCHOut:2, packetNum: 4294967295, latency: 40, time: 1681947064236, sent from ch: 0
+# receive_TS is the time when the back propagated t2r info is received by the vehicle
+latency_fields = namedtuple ("latency_fields", "receiving_channel, numCHOut, PktNum, bp_t2r, bp_t2r_receive_TS, reporting_channel")
+files_dic.update ({"latency": files_dic_fields._make ([indir+"latency_"+tx_namepart+".log", latency_fields])})
+latency_array = []
+log_dic.update ({"latency": latency_array})
 
 # service log
 # CH: 2, change to out-of-service state, latency: 0, latencyTime: 0, estimated latency: 2614851439, stop_sending flag: 0 , uplink queue size: 0, zeroUplinkQueue: 0, service flag: 0, numCHOut: 1, Time: 1681947064175, packetNum: 0
@@ -72,13 +75,6 @@ service_fields = namedtuple ("service_fields", "channel, bp_t2r, bp_t2r_receive_
 files_dic.update ({"service": files_dic_fields._make ([indir+"service_"+tx_namepart+".log", service_fields])})
 service_array = []
 log_dic.update ({"service": service_array})
-
-# latency log
-# ch: 0, received a latency, numCHOut:2, packetNum: 4294967295, latency: 40, time: 1681947064236, sent from ch: 0
-latency_fields = namedtuple ("latency_fields", "receiving_channel, numCHOut, PktNum, latency, receive_TS, reporting_channel")
-files_dic.update ({"latency": files_dic_fields._make ([indir+"latency_"+tx_namepart+".log", latency_fields])})
-latency_array = []
-log_dic.update ({"latency": latency_array})
 
 """
 # retx log
@@ -118,6 +114,7 @@ else:
     print ("filename dictionary is consistent with dictionary containing the actual logs")
 
 # read all the log data files. Each log is stored as list of named tupel defe
+fout = open (outdir+"delete_me_test.csv", "w")
 for item in files_dic:
     print ("reading file: ", files_dic[item].filename)
     log_dic[item] = read_log_file (files_dic[item].filename, files_dic[item].fields)
@@ -135,22 +132,146 @@ for i, line in enumerate (log_dic["latency"]):
 log_dic["latency"] = new_list
 print ("After removing unnecessary lines, latency file lenght: {}".format (len(log_dic["latency"])))
 
-# synthesize service states
+# In_service state machine states
 IN_SERVICE = 1
 OUT_OF_SERVICE = 0
-TRANSITION_TO_OUT_OF_SERVICE_IN_5ms = 2
-channel_state = [OUT_OF_SERVICE,OUT_OF_SERVICE,OUT_OF_SERVICE] # att, vz, t-mobile
+WAITING_TO_GO_OUT_OF_SERVICE = 2
 
+# channel quality state machine states
+GOOD_QUALITY = 0
+POOR_QUALITY = 2
+WAITING_TO_GO_GOOD = 3
+
+#inital states and input conditions
 latency_index = 0
 uplink_index = 0
+service_index = 0
 synthesized_service_index = 0
-while latency_index < len(log_dic["latency"]) and uplink_index < len(log_dic["uplink"]):
+itr_count = 0
+
+while latency_index < len(log_dic["latency"]) and uplink_index < len(log_dic["uplink"]) and service_index < len(log_dic["service"]):
+    
+    # set up next clock tick when the state transition should be evaluated
     latency_line = log_dic["latency"][latency_index]
     uplink_line = log_dic["uplink"][uplink_index]
-    print (latency_line)
-    print (uplink_line)
-    # if latency_line.
-    exit ()
+    service_line = log_dic["service"][service_index]
+
+    next_eval_TS = \
+        min (latency_line.bp_t2r_receive_TS, uplink_line.queue_size_sample_TS, service_line.service_transition_TS)
+    
+    if (uplink_line.queue_size_sample_TS == 1683927091587):
+        print ("reached uplink ts: ", 1683927091587)
+    
+    if (latency_index + uplink_index + service_index) == 0:  # initialization at the start of processing
+        bp_t2r_receive_TS = [next_eval_TS]*3
+        bp_t2r = [30]*3
+        est_t2r = [30]*3
+
+        channel_service_state = [IN_SERVICE]*3 # att, vz, t-mobile
+        channel_service_state_x_TS = [next_eval_TS]*3
+
+        queue_size_monitor_working = [True]*3
+        queue_size = [0]*3
+
+        channel_quality_state = [GOOD_QUALITY]*3
+
+        current_TS = next_eval_TS
+    # end of start of processing initialization
+
+    for i in range (3):
+        if (channel_service_state[i] == IN_SERVICE) and (est_t2r[i] <= 120):
+            next_eval_TS = min (next_eval_TS, current_TS + 120 - est_t2r[i] + 1)
+
+        if (channel_service_state[i] == WAITING_TO_GO_OUT_OF_SERVICE):
+            next_eval_TS = min (next_eval_TS, current_TS + 5 - others_in_service_for[i] + 1)
+
+        if (channel_service_state[i] == IN_SERVICE):
+            next_eval_TS = min (next_eval_TS, time_since_last_transition[i])
+
+    current_TS = next_eval_TS
+
+    # external inputs
+    if current_TS == latency_line.bp_t2r_receive_TS:
+        bp_t2r[latency_line.receiving_channel] = latency_line.bp_t2r
+        bp_t2r_receive_TS[latency_line.receiving_channel] = latency_line.bp_t2r_receive_TS
+        latency_index += 1
+    
+    if current_TS == uplink_line.queue_size_sample_TS: 
+        queue_size[uplink_line.channel] = uplink_line.queue_size
+        uplink_index += 1
+    
+    if current_TS == service_line.service_transition_TS:
+        queue_size_monitor_working[service_line.channel] = service_line.zeroUplinkQueue == 0
+        service_index += 1
+    
+    # synthesized inputs
+    est_t2r = [0]*3
+    for i in range (3):
+        est_t2r[i] = bp_t2r[i] + (current_TS - bp_t2r_receive_TS[i])
+    
+    num_of_channels_in_service = sum (int (x == IN_SERVICE) for x in channel_service_state)
+    
+    others_in_service_for = [0]*3
+    for i in range (3):
+        others_in_service_for[i] = current_TS - \
+            min ([(current_TS if channel_service_state[j] == OUT_OF_SERVICE else channel_service_state_x_TS[j]) \
+                  for j in range(3) if (j !=i)])
+    
+    channel_in_service_for = [0]*3 
+    for i in range (3):
+        channel_in_service_for[i] = current_TS - channel_service_state_x_TS[i]
+
+    ########################################################################################
+    # In_service state machine
+    ########################################################################################
+    next_channel_service_state = [st for st in channel_service_state]
+    for i in range (3):
+
+        if channel_service_state[i] == IN_SERVICE:
+            if (queue_size_monitor_working[i] and (queue_size[i] > 10)) or (est_t2r[i] > 120): 
+                # channel needs to go out of service as soon as possible
+                if (num_of_channels_in_service == 3): 
+                    next_channel_service_state[i], channel_service_state_x_TS[i] = \
+                        [OUT_OF_SERVICE, current_TS]
+                elif (num_of_channels_in_service == 2):
+                    next_channel_service_state[i], channel_service_state_x_TS[i] = \
+                        [OUT_OF_SERVICE, current_TS] if others_in_service_for[i] >=5 else \
+                        [WAITING_TO_GO_OUT_OF_SERVICE, channel_service_state_x_TS[i]]
+                # if this is the only active channel, then can not go out of service
+                
+        elif channel_service_state[i] == WAITING_TO_GO_OUT_OF_SERVICE:
+            if (num_of_channels_in_service > 2) or (others_in_service_for[i] > 5):
+                next_channel_service_state[i], channel_service_state_x_TS[i] = \
+                    [OUT_OF_SERVICE, current_TS]
+
+        else: # channel_service_state[i] = OUT_OF_SERVICE
+            if (not queue_size_monitor_working[i] or (queue_size[i] < 5)) and (est_t2r[i] < 80):
+                next_channel_service_state[i], channel_service_state_x_TS[i] = \
+                    [IN_SERVICE, current_TS]
+    
+        # emit output if state change
+        if (next_channel_service_state[i] != WAITING_TO_GO_OUT_OF_SERVICE) and (channel_service_state[i] != next_channel_service_state[i]): 
+            fout.write("x_TS,{TS}, x_ch,{ch}, state,{st}, mon,{m}, qsz,{q}, est_t2r,{t2r}, numChIS,{n}, others,{o}".format (\
+            TS=channel_service_state_x_TS[i], ch=i, st=next_channel_service_state[i], m=queue_size_monitor_working[i], \
+            q=queue_size[i], t2r=est_t2r[i], n=num_of_channels_in_service, o=others_in_service_for[i]))
+            fout.write("\n")
+    
+            if itr_count % 1000 == 0: 
+                print ("itr_count: ", itr_count)
+            itr_count += 1
+    # for In_service state machine of each channel
+    channel_service_state = [st for st in next_channel_service_state]
+
+    ########################################################################################
+    # channel quality state machine
+    ########################################################################################
+# while have not exhausted at least one input log file
+
+fout.close ()
+exit ()
+
+
+
 """
 for i, line in enumerate (log_dic["latency"]):
     print (line)
