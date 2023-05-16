@@ -1,3 +1,4 @@
+// Application to debug reading and decoding G920 messages.
 package main
 
 import (
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/sstallion/go-hid"
+	rnhid "remnav.com/remnav/hid"
 )
 
 func main() {
@@ -48,7 +50,9 @@ func main() {
 		if err != nil {
 			fmt.Printf("%d: %v\n", i, err)
 		}
-		fmt.Printf("%d: %s\n", i, s)
+		if s != "Logitech" {
+			log.Printf("unexpected indexed string %d: %s\n", i, s)
+		}
 	}
 
 	for {
@@ -57,6 +61,10 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println(buf[:n])
+		d, err := rnhid.Decode(buf[:n])
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("wheel %6d, pedal (%3d, %3d, %3d), dpad_xboxabxy %3d, buttons_flappy %3d\n", d.Wheel - 256*128, d.PedalLeft, d.PedalMiddle, d.PedalRight, d.DpadXboxABXY, d.ButtonsFlappy)
 	}
 }
