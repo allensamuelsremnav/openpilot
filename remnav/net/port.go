@@ -11,8 +11,11 @@ const OperatorGpsdListen = 6001
 // Bidi listener for trajectories and trajectory-applied messages.
 const OperatorTrajectoryListen = 6002
 
-// Unused, available.
-const OperatorUnusedAvailable = 7000
+// Bidi listener for G920 HID reports.
+const OperatorG920Listen = 6003
+
+// G920 HID reports to trajectory planner. localhost
+const OperatorG920Trajectory = 7000
 
 // Gpsd messages from the gpsd listener to trajectory planner. localhost
 const OperatorGpsdTrajectory = 7001
@@ -20,8 +23,11 @@ const OperatorGpsdTrajectory = 7001
 // Trajectory messages from trajectory planner to trajectory listener for forwarding. localhost
 const OperatorTrajectoryRequest = 7002
 
+// Trajectory messages from trajectory planner to display. localhost
+const OperatorTrajectoryRequestDisplay = 7003
+
 // Trajectory-applied messages from trajectory listener to display. localhost
-const OperatorTrajectoryApplication = 7003
+const OperatorTrajectoryApplication = 7004
 
 // Overlay messages from decoder and gpsd listener to operator (display).
 const OperatorOverlayListen = 7777

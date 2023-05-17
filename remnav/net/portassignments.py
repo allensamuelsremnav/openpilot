@@ -21,8 +21,11 @@ all_assignments = [
             "Operator_Trajectory_Listen", 6002,
             "Bidi listener for trajectories and trajectory-applied messages."),
          Assignment(
-            "Operator_Unused_Available", 7000,
-            "Unused, available."),
+            "Operator_G920_Listen", 6003,
+            "Bidi listener for G920 HID reports."),
+         Assignment(
+            "Operator_G920_Trajectory", 7000,
+            "G920 HID reports to trajectory planner. localhost"),
          Assignment(
             "Operator_Gpsd_Trajectory", 7001,
             "Gpsd messages from the gpsd listener to trajectory planner. localhost"),
@@ -30,7 +33,10 @@ all_assignments = [
             "Operator_Trajectory_Request", 7002,
             "Trajectory messages from trajectory planner to trajectory listener for forwarding. localhost"),
          Assignment(
-            "Operator_Trajectory_Application", 7003,
+            "Operator_Trajectory_Request_Display", 7003,
+            "Trajectory messages from trajectory planner to display. localhost"),
+         Assignment(
+            "Operator_Trajectory_Application", 7004,
             "Trajectory-applied messages from trajectory listener to display. localhost"),
          Assignment(
             "Operator_Overlay_Listen", 7777,
