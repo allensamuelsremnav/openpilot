@@ -47,20 +47,6 @@ func dedup(pc net.PacketConn, bufSize int) <-chan []byte {
 	return rnnet.Latest(msgs, getter)
 }
 
-// Forward messages to this UDP port.
-func forward(msgs chan []byte, port int) {
-	conn, err := net.Dial("udp", ":"+strconv.Itoa(port))
-	if err != nil {
-		log.Fatal(err)
-	}
-	for msg := range msgs {
-		_, err := conn.Write(msg)
-		if err != nil {
-			log.Printf("port %d: %v\n", port, err)
-		}
-	}
-}
-
 func main() {
 
 	listenPort := flag.Int("listen", rnnet.OperatorGpsdListen, "listen on this port for UDP")
@@ -90,18 +76,20 @@ func main() {
 	}
 	log.Printf("%s: forwarding to ports %v\n", progName, forwards)
 
+	logCh := make(chan string)
+	gnssDir := gpsd.LogDir("gpsdrt", *logRoot, storage.RawGNSSSubdir, "", "")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go gpsd.WatchBinned("port", logCh, gnssDir, &wg)
+
+	wg.Add(len(forwards))
 	var forwardChannels []chan []byte
 	for _, port := range forwards {
 		ch := make(chan []byte)
-		go forward(ch, port)
+		go rnnet.WritePort(ch, port, &wg)
 		forwardChannels = append(forwardChannels, ch)
 	}
-	logCh := make(chan string)
-
-	gnssDir := gpsd.LogDir("gpsdrt", *logRoot, storage.RawGNSSSubdir, "", "")
-	var watchWG sync.WaitGroup
-	watchWG.Add(1)
-	go gpsd.WatchBinned("port", logCh, gnssDir, &watchWG)
 
 	// listen to incoming udp packets
 	pc, err := net.ListenPacket("udp", ":"+strconv.Itoa(*listenPort))
@@ -128,5 +116,5 @@ func main() {
 		}
 
 	}
-	watchWG.Wait()
+	wg.Wait()
 }

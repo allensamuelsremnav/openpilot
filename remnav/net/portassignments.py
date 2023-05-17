@@ -33,7 +33,10 @@ all_assignments = [
             "Operator_Trajectory_Request", 7002,
             "Trajectory messages from trajectory planner to trajectory listener for forwarding. localhost"),
          Assignment(
-            "Operator_Trajectory_Application", 7003,
+            "Operator_Trajectory_Request_Display", 7003,
+            "Trajectory messages from trajectory planner to display. localhost"),
+         Assignment(
+            "Operator_Trajectory_Application", 7004,
             "Trajectory-applied messages from trajectory listener to display. localhost"),
          Assignment(
             "Operator_Overlay_Listen", 7777,

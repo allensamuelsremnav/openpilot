@@ -21,8 +21,11 @@ OPERATOR_GPSD_TRAJECTORY = 7001
 # Trajectory messages from trajectory planner to trajectory listener for forwarding. localhost
 OPERATOR_TRAJECTORY_REQUEST = 7002
 
+# Trajectory messages from trajectory planner to display. localhost
+OPERATOR_TRAJECTORY_REQUEST_DISPLAY = 7003
+
 # Trajectory-applied messages from trajectory listener to display. localhost
-OPERATOR_TRAJECTORY_APPLICATION = 7003
+OPERATOR_TRAJECTORY_APPLICATION = 7004
 
 # Overlay messages from decoder and gpsd listener to operator (display).
 OPERATOR_OVERLAY_LISTEN = 7777

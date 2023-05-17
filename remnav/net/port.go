@@ -23,8 +23,11 @@ const OperatorGpsdTrajectory = 7001
 // Trajectory messages from trajectory planner to trajectory listener for forwarding. localhost
 const OperatorTrajectoryRequest = 7002
 
+// Trajectory messages from trajectory planner to display. localhost
+const OperatorTrajectoryRequestDisplay = 7003
+
 // Trajectory-applied messages from trajectory listener to display. localhost
-const OperatorTrajectoryApplication = 7003
+const OperatorTrajectoryApplication = 7004
 
 // Overlay messages from decoder and gpsd listener to operator (display).
 const OperatorOverlayListen = 7777

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strconv"
+	"sync"
 )
 
 func DialUDP(device, dest, tag string) (*net.UDPConn, error) {
@@ -59,4 +61,20 @@ func ReadFrom(pc net.PacketConn, bufSize int) (<-chan []byte, chan net.Addr) {
 		close(addrs)
 	}()
 	return msgs, addrs
+}
+
+// Write msgs to this port.
+func WritePort(msgs chan []byte, port int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	conn, err := net.Dial("udp", ":"+strconv.Itoa(port))
+	defer conn.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+	for msg := range msgs {
+		_, err := conn.Write(msg)
+		if err != nil {
+			log.Printf("port %d: %v\n", port, err)
+		}
+	}
 }

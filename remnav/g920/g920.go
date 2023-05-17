@@ -1,6 +1,9 @@
 package g920
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 )
 
@@ -65,6 +68,24 @@ const ClassG920 = "G920"
 
 type G920 struct {
 	Class     string `json:"class"`
-	Requested int64  `json:"requested"` //
+	Requested int64  `json:"requested"` // μs since Unix epoch
 	Report    string `json:"report"`    // uuencoded
+}
+
+type tsProbe struct {
+	Class     string `json:"class"`
+	Requested int64  `json:"requested"`
+}
+
+// Extract the timestamp.
+func Timestamp(msg []byte) (int64, error) {
+	var probe tsProbe
+	err := json.Unmarshal(msg, &probe)
+	if err != nil {
+		return 0, err
+	}
+	if probe.Class == ClassG920 {
+		return probe.Requested, nil
+	}
+	return 0, errors.New(fmt.Sprintf("unexpected class %s", probe.Class))
 }
