@@ -15,14 +15,12 @@ import (
 	"time"
 
 	"github.com/sstallion/go-hid"
-	rnlog "remnav.com/remnav/log"
-	rnnet "remnav.com/remnav/net"
 	g920 "remnav.com/remnav/g920"
+	rnlog "remnav.com/remnav/log"
 	gpsd "remnav.com/remnav/metadata/gpsd"
 	storage "remnav.com/remnav/metadata/storage"
-	
+	rnnet "remnav.com/remnav/net"
 )
-
 
 func main() {
 	vidPID := flag.String("vidpid", "046d:c262", "colon-separated hex vid and pid")
@@ -63,21 +61,18 @@ func main() {
 	send := make(chan []byte)
 	recvd := rnnet.BidiRW(*listen, *bufSize, send, *verbose)
 
-
 	var wg sync.WaitGroup
-	
+
 	// Send to the local port.
 	wg.Add(1)
-	localCh:= make(chan []byte)
+	localCh := make(chan []byte)
 	go rnnet.WritePort(localCh, *localPort, &wg)
-
 
 	// Log
 	wg.Add(1)
 	logDir := gpsd.LogDir("g920", *logRoot, storage.G920Subdir, "", "")
 	logCh := make(chan []byte, 2)
 	go rnlog.Binned(logCh, g920.Timestamp, logDir, &wg)
-
 
 	// Periodically report on bidi heartbeats.
 	go func() {
@@ -91,7 +86,7 @@ func main() {
 				n += 1
 			case <-ticker.C:
 				log.Printf("%.0f heartbeats/s",
-					float64(n) / interval.Seconds())
+					float64(n)/interval.Seconds())
 				n = 0
 			}
 		}
@@ -108,32 +103,32 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("%s: ID %04x:%04x %s %s\n",	
-	info.Path,
+	log.Printf("%s: ID %04x:%04x %s %s\n",
+		info.Path,
 		info.VendorID,
 		info.ProductID,
 		info.MfrStr,
 		info.ProductStr)
 
 	/*
-	// Use this code to measure report rate, which can be 450 reports/s or higher.
-	reportCounter := make(chan bool)
-	go func() {
-		interval := time.Second
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		var reportCount int
-		for {
-			select {
-			case <-reportCounter:
-				reportCount += 1
-			case <-ticker.C:
-				log.Printf("%.0f reports/s",
-				float64(reportCount) / interval.Seconds())
-				reportCount = 0
+		// Use this code to measure report rate, which can be 450 reports/s or higher.
+		reportCounter := make(chan bool)
+		go func() {
+			interval := time.Second
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			var reportCount int
+			for {
+				select {
+				case <-reportCounter:
+					reportCount += 1
+				case <-ticker.C:
+					log.Printf("%.0f reports/s",
+					float64(reportCount) / interval.Seconds())
+					reportCount = 0
+				}
 			}
-		}
-	}()
+		}()
 	*/
 
 	for {
@@ -142,7 +137,6 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-
 
 		var m g920.G920
 		m.Class = g920.ClassG920
@@ -156,12 +150,12 @@ func main() {
 		default:
 			log.Printf("%s: log channel not ready\n", progName)
 		}
-		
+
 		/*
-		select {
-		case reportCounter <- true:
-		default:
-		}
+			select {
+			case reportCounter <- true:
+			default:
+			}
 		*/
 
 		if *progress {
@@ -172,10 +166,9 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
-			fmt.Printf("wheel %6d, pedal (%3d, %3d, %3d), dpad_xboxabxy %3d, buttons_flappy %3d\n", d.Wheel - 256*128, d.PedalLeft, d.PedalMiddle, d.PedalRight, d.DpadXboxABXY, d.ButtonsFlappy)
+			fmt.Printf("wheel %6d, pedal (%3d, %3d, %3d), dpad_xboxabxy %3d, buttons_flappy %3d\n", d.Wheel-256*128, d.PedalLeft, d.PedalMiddle, d.PedalRight, d.DpadXboxABXY, d.ButtonsFlappy)
 		}
 	}
 
-	
 	wg.Wait()
 }

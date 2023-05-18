@@ -41,3 +41,6 @@ const OperatorVideoListen = 8888
 // Trajectory requests from trajectory dialer to trajectory execution; trajectory-applied messages from trajectory execution to trajectory dialer for forwarding. localhost
 const VehicleTrajectoryRequestApplication = 7000
 
+// G920 reports to trajectory execution; heartbeats to keep bidi alive. localhost
+const VehicleG920 = 7001
+
