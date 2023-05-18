@@ -70,9 +70,9 @@ const ClassG920 = "G920"
 
 type G920 struct {
 	Class       string  `json:"class"`
-	Requested   int64   `json:"requested"` // μs since Unix epoch
-	Wheel       float64 `json:"wheel"`
-	PedalMiddle float64 `json:"pedalmiddle"`
+	Requested   int64   `json:"requested"`    // μs since Unix epoch
+	Wheel       float64 `json:"wheel"`        // radians. clockwise negative.
+	PedalMiddle float64 `json:"pedalmiddle"`  // 0 not pushed, 1 fully pushed
 	PedalRight  float64 `json:"pedalright"`
 }
 
@@ -80,10 +80,11 @@ func AsG920(buf []byte) G920 {
 	var m G920
 	m.Class = ClassG920
 	m.Requested = time.Now().UnixMicro()
-	wheel := 256*float64(buf[WheelHighByte]) + float64(buf[WheelLowByte])
-	m.Wheel = (wheel - 256*128) * 2 * math.Pi * 5 / 4
-	m.PedalMiddle = 1 - float64(buf[PedalMiddle])/256
-	m.PedalRight = 1 - float64(buf[PedalRight])/256
+	wheel := 256*float64(buf[WheelHighByte]) + float64(buf[WheelLowByte]) - 256*128
+	// Full lock is plus/minus 1.25 revolutions.
+	m.Wheel = -wheel / 32768 * 2 * math.Pi * 5 / 4
+	m.PedalMiddle = 1 - float64(buf[PedalMiddle])/255
+	m.PedalRight = 1 - float64(buf[PedalRight])/255
 	return m
 }
 
