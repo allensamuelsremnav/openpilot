@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/sstallion/go-hid"
-	rng920 "remnav.com/remnav/g920"
+	"remnav.com/remnav/g920"
 )
 
 func main() {
@@ -67,7 +67,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		d, err := rng920.Decode(buf[:n])
+		d, err := g920.Decode(buf[:n])
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -78,8 +78,8 @@ func main() {
 			pedalMiddle = d.PedalMiddle
 			pedalRight = d.PedalRight
 		}
-		if allCount % 1000 == 0 {
-			fmt.Printf("pedalCount %d/%d, %.2f\n", pedalCount, allCount, float64(pedalCount) / float64(allCount))
+		if allCount%1000 == 0 {
+			fmt.Printf("pedalCount %d/%d, %.2f\n", pedalCount, allCount, float64(pedalCount)/float64(allCount))
 			allCount = 0
 			pedalCount = 0
 			pedalLeft = 0
@@ -87,6 +87,7 @@ func main() {
 			pedalRight = 0
 		}
 		fmt.Printf("wheel %6d (%d, %d), pedal (%3d, %3d, %3d), dpad_xboxabxy %3d, buttons_flappy %3d\n",
-			d.Wheel-256*128, buf[rng920.WheelHighByte], buf[rng920.WheelLowByte], d.PedalLeft, d.PedalMiddle, d.PedalRight, d.DpadXboxABXY, d.ButtonsFlappy)
+			d.Wheel-256*128, buf[g920.WheelHighByte], buf[g920.WheelLowByte], d.PedalLeft, d.PedalMiddle, d.PedalRight, d.DpadXboxABXY, d.ButtonsFlappy)
+		fmt.Println(g920.AsG920(buf[:n]))
 	}
 }

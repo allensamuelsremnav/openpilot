@@ -31,7 +31,7 @@ func main() {
 	progress := flag.Bool("progress", false, "show progress indicator")
 	flag.Parse()
 
-	heartbeatDuration := time.Duration(*heartbeat) * time.Millisecond
+	heartbeatInterval := time.Duration(*heartbeat) * time.Millisecond
 
 	logDir := gpsd.LogDir("g920", *logRoot, storage.G920Subdir, "", "")
 	logCh := make(chan []byte, 2)
@@ -47,21 +47,7 @@ func main() {
 	}
 
 	// Send heartbeats forever.
-	var hb g920.Heartbeat
-	hb.Class = g920.ClassHeartbeat
-	beat, _ := json.Marshal(hb)
-	go func() {
-		for {
-			_, err := pc.Write(beat)
-			if err != nil {
-				log.Fatal(err)
-			}
-			if *progress {
-				fmt.Printf("h")
-			}
-			time.Sleep(heartbeatDuration)
-		}
-	}()
+	go rnnet.HeartbeatSource(heartbeatInterval, pc, *progress)
 
 	// Use this code to measure report rate, which can be 450 reports/s or higher.
 	reportCounter := make(chan bool)

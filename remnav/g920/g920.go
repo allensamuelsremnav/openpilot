@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
+	"time"
 )
 
 const ReportLength = 10
@@ -67,9 +69,22 @@ func Decode(buf []byte) (Report, error) {
 const ClassG920 = "G920"
 
 type G920 struct {
-	Class     string `json:"class"`
-	Requested int64  `json:"requested"` // μs since Unix epoch
-	Report    string `json:"report"`    // base64
+	Class       string  `json:"class"`
+	Requested   int64   `json:"requested"` // μs since Unix epoch
+	Wheel       float64 `json:"wheel"`
+	PedalMiddle float64 `json:"pedalmiddle"`
+	PedalRight  float64 `json:"pedalright"`
+}
+
+func AsG920(buf []byte) G920 {
+	var m G920
+	m.Class = ClassG920
+	m.Requested = time.Now().UnixMicro()
+	wheel := 256*float64(buf[WheelHighByte]) + float64(buf[WheelLowByte])
+	m.Wheel = (wheel - 256*128) * 2 * math.Pi * 5 / 4
+	m.PedalMiddle = 1 - float64(buf[PedalMiddle])/256
+	m.PedalRight = 1 - float64(buf[PedalRight])/256
+	return m
 }
 
 type tsProbe struct {
@@ -84,14 +99,8 @@ func Timestamp(msg []byte) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if probe.Class == ClassG920 {
-		return probe.Requested, nil
+	if probe.Class != ClassG920 {
+		return 0, errors.New(fmt.Sprintf("unexpected class %s", probe.Class))
 	}
-	return 0, errors.New(fmt.Sprintf("unexpected class %s", probe.Class))
-}
-
-const ClassHeartbeat = "HEARTBEAT"
-
-type Heartbeat struct {
-	Class string `json:"class"`
+	return probe.Requested, nil
 }
