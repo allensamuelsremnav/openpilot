@@ -41,4 +41,7 @@ const int32_t OPERATOR_VIDEO_LISTEN = 8888;
 // Trajectory requests from trajectory dialer to trajectory execution; trajectory-applied messages from trajectory execution to trajectory dialer for forwarding. localhost
 const int32_t VEHICLE_TRAJECTORY_REQUEST_APPLICATION = 7000;
 
+// G920 reports to trajectory execution; heartbeats to keep bidi alive. localhost
+const int32_t VEHICLE_G920 = 7001;
+
 #endif  // REMNAV_NET_PORTS_H_

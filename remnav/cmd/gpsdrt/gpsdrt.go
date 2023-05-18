@@ -68,7 +68,7 @@ func main() {
 	devs := flag.String("devices", "eth0,eth0",
 		"comma-separated list of network devices, e.g. wlan0_1,wlan1_1,wlan2_1")
 	vehicleRoot := flag.String("vehicle_root",
-		"/home/greg/gpsdrt_log",
+		"/home/greg/remnav_log",
 		"vehicle storage directory, e.g. '/home/user/6TB/vehicle/remconnect'")
 	archiveServer := flag.String("archive_server",
 		"96.64.247.70",

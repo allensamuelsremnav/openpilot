@@ -69,7 +69,7 @@ const ClassG920 = "G920"
 type G920 struct {
 	Class     string `json:"class"`
 	Requested int64  `json:"requested"` // μs since Unix epoch
-	Report    string `json:"report"`    // uuencoded
+	Report    string `json:"report"`    // base64
 }
 
 type tsProbe struct {
@@ -88,4 +88,10 @@ func Timestamp(msg []byte) (int64, error) {
 		return probe.Requested, nil
 	}
 	return 0, errors.New(fmt.Sprintf("unexpected class %s", probe.Class))
+}
+
+const ClassHeartbeat = "HEARTBEAT"
+
+type Heartbeat struct {
+	Class string `json:"class"`
 }

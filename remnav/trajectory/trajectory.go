@@ -61,7 +61,8 @@ func Dedup(recvd <-chan []byte, progress, verbose bool) <-chan []byte {
 				log.Fatal(err)
 			}
 			if applied.Class != ClassTrajectoryApplication {
-				log.Fatal(errors.New(fmt.Sprintf("expected class %s, got %s", applied.Class, applied.Class)))
+				log.Fatal(errors.New(fmt.Sprintf("expected class %s, got %s",
+					ClassTrajectoryApplication, applied.Class)))
 			}
 			if applied.Trajectory > latest {
 				if progress {
