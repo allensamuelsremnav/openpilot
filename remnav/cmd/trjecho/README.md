@@ -50,3 +50,9 @@ will see a sequence of `a`'s and `t`'s indicating that applied
 ```trjmock.exe``` > ```bidiwr``` > ```trjecho```
 
 ```x > y``` means "restart y after restarting x".
+
+## Port assignments
+
+Language-specific files for port assignments are in
+```rn1/remnav/net/port.py```, ```port.h```, and ```port.go```.
+
