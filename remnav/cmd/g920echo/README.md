@@ -12,8 +12,3 @@ operator direction is only used for heartbeats.
 
 See ```rn1/remnav/cmd/trjecho/README.md``` for information about the
 three-component architecture and conventional port assignments.
-
-# G920 report structure
-
-See ```rn1/remnav/g920/g920.go``` for an example decoding function and
-constants for indices in the array of bytes in the report.
