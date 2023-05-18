@@ -55,6 +55,12 @@ func main() {
 		}
 	}
 
+	// Counters to estimate how often the pedal states change.
+	var allCount, pedalCount int
+	pedalLeft := -1
+	pedalMiddle := -1
+	pedalRight := -1
+
 	for {
 		buf := make([]byte, 65535)
 		n, err := dev.Read(buf)
@@ -65,6 +71,21 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("wheel %6d, pedal (%3d, %3d, %3d), dpad_xboxabxy %3d, buttons_flappy %3d\n", d.Wheel-256*128, d.PedalLeft, d.PedalMiddle, d.PedalRight, d.DpadXboxABXY, d.ButtonsFlappy)
+		allCount += 1
+		if d.PedalLeft != pedalLeft || d.PedalMiddle != pedalMiddle || d.PedalRight != pedalRight {
+			pedalCount += 1
+			pedalLeft = d.PedalLeft
+			pedalMiddle = d.PedalMiddle
+			pedalRight = d.PedalRight
+		}
+		if allCount % 1000 == 0 {
+			fmt.Printf("pedalCount %d/%d, %.2f\n", pedalCount, allCount, float64(pedalCount) / float64(allCount))
+			allCount = 0
+			pedalCount = 0
+			pedalLeft = 0
+			pedalMiddle = 0
+			pedalRight = 0
+		}
+		// fmt.Printf("wheel %6d, pedal (%3d, %3d, %3d), dpad_xboxabxy %3d, buttons_flappy %3d\n", d.Wheel-256*128, d.PedalLeft, d.PedalMiddle, d.PedalRight, d.DpadXboxABXY, d.ButtonsFlappy)
 	}
 }
