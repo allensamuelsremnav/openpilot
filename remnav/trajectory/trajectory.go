@@ -17,6 +17,21 @@ type Trajectory struct {
 	Speed     float64 `json':"speed"`     // m/s
 }
 
+func (t Trajectory) Bytes() []byte {
+	bytes, err := json.Marshal(t)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return bytes
+}
+func (t Trajectory) Timestamp() (int64, error) {
+	return t.Requested, nil
+}
+
+func (t Trajectory) String() string {
+	return t.String()
+}
+
 const ClassTrajectoryApplication = "TRAJECTORY_APPLICATION"
 
 type TrajectoryApplication struct {
@@ -27,30 +42,25 @@ type TrajectoryApplication struct {
 	Log int64 `json:"log"` // μs since Unix epoch
 }
 
-type tsProbe struct {
-	Class     string `json:"class"`
-	Requested int64  `json:"requested"` // μs since Unix epoch
-	Log       int64  `json:"log"`       // μs since Unix epoch}
-}
-
-// Extract the timestamp for a Trajectory or TrajectoryApplication.
-func Timestamp(msg []byte) (int64, error) {
-	var probe tsProbe
-	err := json.Unmarshal(msg, &probe)
+func (a TrajectoryApplication) Bytes() []byte {
+	bytes, err := json.Marshal(a)
 	if err != nil {
-		return 0, err
+		log.Fatal(err)
 	}
-	if probe.Class == ClassTrajectory {
-		return probe.Requested, nil
-	} else if probe.Class == ClassTrajectoryApplication {
-		return probe.Log, nil
-	}
-	return 0, errors.New(fmt.Sprintf("unexpected class %s", probe.Class))
+	return bytes
 }
 
-// Return a channel of deduped messages with log time.
-func Dedup(recvd <-chan []byte, progress, verbose bool) <-chan []byte {
-	deduped := make(chan []byte)
+func (a TrajectoryApplication) Timestamp() (int64, error) {
+	return a.Log, nil
+}
+
+func (a TrajectoryApplication) String() string {
+	return string(a.Bytes())
+}
+
+// Return a channel of deduped application messages with log time.
+func Dedup(recvd <-chan []byte, progress, verbose bool) <-chan TrajectoryApplication {
+	deduped := make(chan TrajectoryApplication)
 	go func() {
 		defer close(deduped)
 		var latest int64
@@ -70,11 +80,10 @@ func Dedup(recvd <-chan []byte, progress, verbose bool) <-chan []byte {
 				}
 				latest = applied.Trajectory
 				applied.Log = time.Now().UnixMicro()
-				annotated, _ := json.Marshal(applied)
 				if verbose {
-					fmt.Println(string(annotated))
+					fmt.Println(applied.String())
 				}
-				deduped <- annotated
+				deduped <- applied
 			}
 		}
 	}()

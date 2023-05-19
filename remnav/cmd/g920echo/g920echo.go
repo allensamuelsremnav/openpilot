@@ -34,11 +34,11 @@ func main() {
 	heartbeatInterval := time.Duration(*heartbeat) * time.Millisecond
 
 	logDir := gpsd.LogDir("g920", *logRoot, storage.G920Subdir, "", "")
-	logCh := make(chan []byte, 2)
+	logCh := make(chan rnlog.Loggable, 2)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go rnlog.Binned(logCh, g920.Timestamp, logDir, &wg)
+	go rnlog.Binned(logCh, logDir, &wg)
 
 	// Local port to bidiwr.
 	pc, err := net.Dial("udp", ":"+strconv.Itoa(*localPort))
@@ -75,7 +75,17 @@ func main() {
 			log.Fatal(err)
 		}
 
-		logCh <- buf[:n]
+		var report g920.G920
+		err = json.Unmarshal(buf[:n], &report)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if report.Class != g920.ClassG920 {
+			log.Fatal(errors.New(fmt.Sprintf("expected class %s, got %s",
+				g920.ClassG920, report.Class)))
+		}
+
+		logCh <- report
 		if *progress {
 			fmt.Printf("g")
 		}
@@ -86,15 +96,6 @@ func main() {
 		}
 
 		// Do something with the report
-		var report g920.G920
-		err = json.Unmarshal(buf[:n], &report)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if report.Class != g920.ClassG920 {
-			log.Fatal(errors.New(fmt.Sprintf("expected class %s, got %s",
-				g920.ClassG920, report.Class)))
-		}
 
 	}
 

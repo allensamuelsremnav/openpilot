@@ -2,8 +2,6 @@ package g920
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
 	"log"
 	"math"
 	"time"
@@ -70,12 +68,13 @@ const ClassG920 = "G920"
 
 type G920 struct {
 	Class       string  `json:"class"`
-	Requested   int64   `json:"requested"`    // μs since Unix epoch
-	Wheel       float64 `json:"wheel"`        // radians. clockwise negative.
-	PedalMiddle float64 `json:"pedalmiddle"`  // 0 not pushed, 1 fully pushed
+	Requested   int64   `json:"requested"`   // μs since Unix epoch
+	Wheel       float64 `json:"wheel"`       // radians. clockwise negative.
+	PedalMiddle float64 `json:"pedalmiddle"` // 0 not pushed, 1 fully pushed
 	PedalRight  float64 `json:"pedalright"`
 }
 
+// Unpack byte slice.
 func AsG920(buf []byte) G920 {
 	var m G920
 	m.Class = ClassG920
@@ -88,20 +87,18 @@ func AsG920(buf []byte) G920 {
 	return m
 }
 
-type tsProbe struct {
-	Class     string `json:"class"`
-	Requested int64  `json:"requested"`
+func (g G920) Bytes() []byte {
+	bytes, err := json.Marshal(g)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return bytes
 }
 
-// Extract the timestamp.
-func Timestamp(msg []byte) (int64, error) {
-	var probe tsProbe
-	err := json.Unmarshal(msg, &probe)
-	if err != nil {
-		return 0, err
-	}
-	if probe.Class != ClassG920 {
-		return 0, errors.New(fmt.Sprintf("unexpected class %s", probe.Class))
-	}
-	return probe.Requested, nil
+func (g G920) String() string {
+	return string(g.Bytes())
+}
+
+func (g G920) Timestamp() (int64, error) {
+	return g.Requested, nil
 }

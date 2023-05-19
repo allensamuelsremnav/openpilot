@@ -2,7 +2,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -48,7 +47,7 @@ func main() {
 	sleepDuration := time.Duration(*sleep) * time.Millisecond
 
 	logDir := gpsd.LogDir("trajectory", *logRoot, storage.TrajectorySubdir, "", "")
-	logCh := make(chan []byte, 2) // Need a small rate buffer at 100 Hz.
+	logCh := make(chan rnlog.Loggable, 2) // Need a small rate buffer at 100 Hz.
 
 	send := make(chan []byte)
 	recvd := rnnet.BidiRW(*listen, *bufSize, send, *verbose)
@@ -56,7 +55,7 @@ func main() {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go rnlog.Binned(logCh, trj.Timestamp, logDir, &wg)
+	go rnlog.Binned(logCh, logDir, &wg)
 
 	// Application messages go to the display.
 	wg.Add(1)
@@ -65,7 +64,7 @@ func main() {
 
 	go func() {
 		for msg := range deduped {
-			applCh <- msg
+			applCh <- msg.Bytes()
 
 			select {
 			case logCh <- msg:
@@ -85,20 +84,20 @@ func main() {
 		defer wg.Done()
 		for {
 			t := time.Now().UnixMicro()
-			trajectory, _ := json.Marshal(
-				map[string]interface{}{
-					"class":     trj.ClassTrajectory,
-					"requested": t,
-					"curvature": *curvature,
-					"speed":     *speed,
-				})
-			send <- trajectory
-			localTrajCh <- trajectory
+			trajectory := trj.Trajectory{
+				Class:     trj.ClassTrajectory,
+				Requested: t,
+				Curvature: *curvature,
+				Speed:     *speed,
+			}
+			bytes := trajectory.Bytes()
+			send <- bytes
+			localTrajCh <- bytes
 			if *progress {
 				fmt.Printf("t")
 			}
 			if *verbose {
-				fmt.Println(string(trajectory))
+				fmt.Println(trajectory.String())
 			}
 			select {
 			case logCh <- trajectory:

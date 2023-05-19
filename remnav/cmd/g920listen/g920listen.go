@@ -21,7 +21,7 @@ import (
 	rnnet "remnav.com/remnav/net"
 )
 
-func read(dev *hid.Device, bidiSend, localCh, logCh chan<- []byte, progName string, progress bool, wg *sync.WaitGroup) {
+func read(dev *hid.Device, bidiSend, localCh chan<- []byte, logCh chan<- rnlog.Loggable, progName string, progress bool, wg *sync.WaitGroup) {
 	pedalMiddle := -1.0
 	pedalRight := -1.0
 	for {
@@ -39,7 +39,7 @@ func read(dev *hid.Device, bidiSend, localCh, logCh chan<- []byte, progName stri
 		}
 		localCh <- msg
 		select {
-		case logCh <- msg:
+		case logCh <- m:
 		default:
 			log.Printf("%s: log channel not ready\n", progName)
 		}
@@ -99,8 +99,8 @@ func main() {
 	// Log
 	wg.Add(1)
 	logDir := gpsd.LogDir("g920", *logRoot, storage.G920Subdir, "", "")
-	logCh := make(chan []byte, 2)
-	go rnlog.Binned(logCh, g920.Timestamp, logDir, &wg)
+	logCh := make(chan rnlog.Loggable, 2)
+	go rnlog.Binned(logCh, logDir, &wg)
 
 	// Periodically report on bidi heartbeats.
 	go rnnet.HeartbeatSink(bidiRecvd, time.Minute)
