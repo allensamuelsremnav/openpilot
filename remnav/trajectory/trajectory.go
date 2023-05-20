@@ -29,7 +29,7 @@ func (t Trajectory) Timestamp() (int64, error) {
 }
 
 func (t Trajectory) String() string {
-	return t.String()
+	return string(t.Bytes())
 }
 
 const ClassTrajectoryApplication = "TRAJECTORY_APPLICATION"
