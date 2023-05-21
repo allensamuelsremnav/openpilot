@@ -1,6 +1,7 @@
 package trajectory
 
 import (
+	"fmt"
 	"math"
 	"testing"
 )
@@ -31,6 +32,24 @@ func TestCurvature(t *testing.T) {
 	} {
 		got := params.curvature(aw.arg)
 		if math.Abs(got-aw.want) > 1e-17 {
+			t.Fatalf("got %v, want %v for case %v", got, aw.want, aw)
+		}
+	}
+}
+
+func TestCurvatureSmallAngle(t *testing.T) {
+	setup()
+	for _, aw := range []struct {
+		arg  float64
+		want float64
+	}{
+		{0.0, 4 * 1e300},
+		{5e-301, 4 * 1e300},
+		{-5e-301, -4 * 1e300},
+	} {
+		got := params.curvature(aw.arg)
+		if math.Abs(got-aw.want) > 1e286 {
+			fmt.Println(got - aw.want)
 			t.Fatalf("got %v, want %v for case %v", got, aw.want, aw)
 		}
 	}
