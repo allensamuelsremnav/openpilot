@@ -2,6 +2,8 @@ package trajectory
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"math"
 	"time"
@@ -41,7 +43,7 @@ func (s Speed) String() string {
 type Parameters struct {
 	Wheelbase float64 // m
 	// Convert game wheel positions to tire angle.
-	GameWheel2Tire float64
+	GameWheelToTire float64
 	// Maximum allowed tire angle
 	TireMax float64 // radians
 	// Tire steering max angular velocity
@@ -52,7 +54,7 @@ type Parameters struct {
 
 // Convert game wheel to tire angle.
 func (p Parameters) tire(gWheel float64) float64 {
-	tire := gWheel * p.GameWheel2Tire
+	tire := gWheel * p.GameWheelToTire
 	if math.Abs(tire) > p.TireMax {
 		tire = math.Copysign(p.TireMax, tire)
 	}
@@ -78,7 +80,7 @@ func (p Parameters) limitDtireDt(tireState, tireRequested, dt float64) float64 {
 func (p Parameters) curvature(tire float64) float64 {
 	sin := math.Sin(tire)
 	// Don't divide by zero
-	eps := 1e-300
+	const eps = 1e-300
 	if math.Abs(sin) < eps {
 		sin = math.Copysign(eps, sin)
 	}
@@ -93,12 +95,16 @@ func intervalController(setpoint time.Duration, tickPrev, tickNow time.Time) tim
 	return adjusted
 }
 
-// Make a speed class from the TPV message.
-func tpv2speed(buf []byte) Speed {
+// Make a Speed class from the TPV message.
+func tpvToSpeed(buf []byte) Speed {
 	var tpv gpsd.TPV
 	err := json.Unmarshal(buf, &tpv)
 	if err != nil {
 		log.Fatal(err)
+	}
+	const classTPV = "TPV"
+	if tpv.Class != classTPV {
+		log.Fatal(errors.New(fmt.Sprintf("expected class %s, got %s", classTPV, tpv.Class)))
 	}
 	return Speed{Class: "SPEED",
 		Gpsd:     tpv.Time.UnixMicro(),
@@ -106,6 +112,7 @@ func tpv2speed(buf []byte) Speed {
 		Speed:    tpv.Speed}
 
 }
+
 func Planner(param Parameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G920,
 	logCh chan<- rnlog.Loggable) <-chan []byte {
 	trajectories := make(chan []byte)
@@ -132,7 +139,7 @@ func Planner(param Parameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G920,
 					log.Printf("GPSD channel closed")
 					return
 				}
-				speed = tpv2speed(tpv)
+				speed = tpvToSpeed(tpv)
 			case report, okG920 = <-g920Ch:
 				if !okG920 {
 					log.Printf("G920 channel closed")
@@ -140,7 +147,8 @@ func Planner(param Parameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G920,
 				}
 			case <-ticker.C:
 				tireRequested := param.tire(report.Wheel)
-				dt := float64(report.Requested-reportPrev.Requested) * 1e6
+				const microsToSeconds = 1e-6
+				dt := float64(report.Requested-reportPrev.Requested) * microsToSeconds
 				if dt <= 0 {
 					log.Printf("dt <= 0 for G920 at %d", report.Requested)
 					continue

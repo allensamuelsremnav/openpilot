@@ -10,10 +10,10 @@ var params Parameters
 
 func setup() {
 	params = Parameters{Wheelbase: 4,
-		GameWheel2Tire: math.Pi, // One full turn lock-to-lock
-		TireMax:        math.Pi / 2,
-		DtireDtMax:     0.25,
-		Interval:       50,
+		GameWheelToTire: math.Pi, // One full turn lock-to-lock
+		TireMax:         math.Pi / 2,
+		DtireDtMax:      0.25,
+		Interval:        50,
 	}
 }
 
