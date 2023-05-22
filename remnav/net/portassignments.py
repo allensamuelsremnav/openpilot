@@ -52,6 +52,10 @@ all_assignments = [
             "Trajectory requests from trajectory dialer to "
             "trajectory execution; trajectory-applied messages from trajectory execution "
             "to trajectory dialer for forwarding. localhost"),
+         Assignment(
+            "Vehicle_G920", 7001,
+            "G920 reports to trajectory execution; heartbeats to keep bidi alive. "
+            "localhost"),
          ]),
 ]
 

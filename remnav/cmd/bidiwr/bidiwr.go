@@ -49,14 +49,25 @@ func writeTo(pc net.PacketConn, addrs <-chan net.Addr, replies <-chan []byte, wG
 }
 
 func main() {
-	localPort := flag.Int("port", rnnet.VehicleTrajectoryRequestApplication, "listen and reply on this local port")
-	destDefault := fmt.Sprintf("10.0.0.60:%d", rnnet.OperatorTrajectoryListen)
-	dest := flag.String("dest", destDefault, "destination address")
+	localUsage := fmt.Sprintf("listen and reply and this local port, i.e. %d  or %d (trajectories or g920).",
+		rnnet.VehicleTrajectoryRequestApplication, rnnet.VehicleG920)
+	localPort := flag.Int("port", 0, localUsage)
+
+	destUsage := fmt.Sprintf("destination address, i.e. 10.0.0.60:%d or %d  (trajectories or g920)",
+		rnnet.OperatorTrajectoryListen, rnnet.OperatorG920Listen)
+	dest := flag.String("dest", "", destUsage)
 	bufSize := flag.Int("bufsize", 4096, "buffer size for reading")
 	recvKey := flag.String("recv_key", "requested", "filter latest received message using this field")
 	verbose := flag.Bool("verbose", false, "verbosity on")
 	devs := flag.String("devices", "eth0,eth0", "comma-separated list of network devices")
 	flag.Parse()
+
+	if *localPort == 0 {
+		log.Fatal("--port required")
+	}
+	if len(*dest) == 0 {
+		log.Fatal("--dest required")
+	}
 
 	devices := strings.Split(*devs, ",")
 	log.Printf("%s, local port %d", os.Args[0], *localPort)

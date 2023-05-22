@@ -11,3 +11,9 @@ var RawGNSSSubdir = "gnss"
 
 // Trajectory requests and applied messages are stored in this subdirectory.
 var TrajectorySubdir = "trajectory"
+
+// G920 reports are stored in this subdirectory.
+var G920Subdir = "g920"
+
+
+
