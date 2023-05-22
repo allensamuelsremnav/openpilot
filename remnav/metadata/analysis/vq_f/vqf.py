@@ -130,6 +130,7 @@ log_dic = {}
 #
 # log files
 #
+"""
 # uplink log
 # uplink_queue. ch: 1, timestamp: 1681947064182, queue_size: 316, elapsed_time_since_last_queue_update: 9, actual_rate: 0
 uplink_fields = namedtuple ("uplink_fields", "channel, queue_size_sample_TS, queue_size, \
@@ -137,6 +138,7 @@ uplink_fields = namedtuple ("uplink_fields", "channel, queue_size_sample_TS, que
 files_dic.update ({"uplink":  files_dic_fields._make ([in_dir+"uplink_queue_"+tx_namepart+".log", uplink_fields])})
 uplink_array = []
 log_dic.update ({"uplink": uplink_array})
+"""
 
 # latency log
 # ch: 0, received a latency, numCHOut:2, packetNum: 4294967295, latency: 40, time: 1681947064236, sent from ch: 0
@@ -184,6 +186,7 @@ log_dic.update ({"probe": probe_array})
 # csv files
 #
 TX_TS_INDEX = 1
+"""
 # carrier csv
 # packe_number	 sender_timestamp	 receiver_timestamp	 video_packet_len	 frame_start	 frame_number	 frame_rate	 frame_resolution	 frame_end	 camera_timestamp	 retx	 chPacketNum
 # 0	             8.62473E+14	     1.68452E+12	     1384	              1	              0	             0	          0	                 0	         1.68452E+12	     0	      0
@@ -194,6 +197,7 @@ for i in range (3):
     files_dic.update ({"chrx"+str(i): files_dic_fields._make ([in_dir+rx_namepart+"_ch"+ str(i) + ".csv", chrx_fields])})
     chrx_array = []
     log_dic.update ({"chrx"+str(i): chrx_array})
+"""
 
 # dedup csv
 # packe_number	 sender_timestamp	 receiver_timestamp	 video_packet_len	 frame_start	 frame_number	 frame_rate	 frame_resolution	 frame_end	 camera_timestamp	 retx	 ch	 latency
@@ -255,11 +259,11 @@ for i, line in enumerate (log_dic["dedup"]):
     else:
         frame_szP += 1
 
+"""
 # sort chrx arrays by tx_TS
 for i in range(3):
     log_dic["chrx"+str(i)].sort (key = lambda a: a.tx_TS) 
 
-"""
 for line in log_dic["chrx0"]:
     fout.write("pkt #,{p}, tx_TS,{t}, rx_TS,{r},".format (p=line.pkt_num, t=line.tx_TS, r=line.rx_TS))
     fout.write("\n")
