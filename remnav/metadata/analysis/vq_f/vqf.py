@@ -2,9 +2,13 @@ import sys
 import math
 import time
 from operator import itemgetter
-import bisect
+from bisect import bisect_left, bisect_right
 from collections import namedtuple
 from copy import deepcopy
+
+#########################################################################################
+# function definitions
+#########################################################################################
 
 def read_log_file (filename, tuplename):
     """ returns an array (list) of specified namedtuples from the data in the filename"""
@@ -22,8 +26,72 @@ def read_log_file (filename, tuplename):
         except:
             err_str = "WARNING read_log_file: incorrect number of filelds: " + filename  + " Line " + str(line_num) + ": " + " ".join (str(e) for e in field_list) +"\n"
             sys.stderr.write (err_str)
+            exit ()
 
     return array
+
+def read_csv_file(filename, tuplename, tx_TS_index):
+    """ returns an array (list) of specified namedtuples from the data in the filename"""
+    array = []
+    file = open (filename, "r")
+    for line_num, line in enumerate (file):
+
+        if line_num == 0: # skip header
+            continue
+
+        field_list = []
+        for fields in line.split(","):
+            try: # collect all integer values following ":"
+                field_list += [int(fields)]
+            except: # skip if no numerical value following ":"
+                pass
+
+        # fix the tx time
+        field_list[tx_TS_index] = int (field_list[tx_TS_index]/512)
+
+        try: 
+            array += [tuplename._make(field_list)]
+        except:
+            err_str = "WARNING read_csv_file: incorrect number of filelds: " + filename  + " Line " + str(line_num) + ": " + " ".join (str(e) for e in field_list) +"\n"
+            sys.stderr.write (err_str)
+            exit ()
+
+    return array
+
+def index(a, x):
+    'Locate the leftmost value exactly equal to x'
+    i = bisect_left(a, x)
+    if i != len(a) and a[i] == x:
+        return i
+    raise ValueError
+
+def find_lt(a, x):
+    'Find rightmost value less than x'
+    i = bisect_left(a, x)
+    if i:
+        return a[i-1]
+    raise ValueError
+
+def find_le(a, x):
+    'Find rightmost value less than or equal to x'
+    i = bisect_right(a, x)
+    if i:
+        return a[i-1]
+    raise ValueError
+
+def find_gt(a, x):
+    'Find leftmost value greater than x'
+    i = bisect_right(a, x)
+    if i != len(a):
+        return a[i]
+    raise ValueError
+
+def find_ge(a, x):
+    'Find leftmost item greater than or equal to x'
+    i = bisect_left(a, x)
+    if i != len(a):
+        return a[i]
+    raise ValueError
 
 def read_array_line (array, TS_field): 
     """ returns a valid line from the array by doing sanity checking of TS_field"""
@@ -36,46 +104,62 @@ def read_array_line (array, TS_field):
 def read_line (array):
     i = 0
     while i < 3:
-        yield (array[i]) 
+        yield (array[i])
         i += 1
 
-indir = "C:/Users/gopal/Downloads/05_12_2023/"
-outdir = "C:/Users/gopal/Downloads/analysis_output/"
+#########################################################################################
+# in/out directory and file prefix/suffix
+#########################################################################################
+in_dir = "C:/Users/gopal/Downloads/05_19_2023/"
+out_dir = "C:/Users/gopal/Downloads/analysis_output/"
 
 # tx and rx file prefix
-tx_namepart = "2023_05_12_14_31_29_v11_8_4"
-rx_namepart = "2023_05_12_14_31_34_v_9_7_3_online"
+tx_namepart = "2023_05_19_11_38_37_v11_8_4"
+rx_namepart = "2023_05_19_11_38_43_v_9_7_3_online"
 
-#
+# tx_namepart = "2023_05_12_14_31_29_v11_8_4"
+# rx_namepart = "2023_05_12_14_31_34_v_9_7_3_online"
+
+#########################################################################################
 # log and csv file structures
-#
+#########################################################################################
 files_dic_fields = namedtuple ("files_dic_fields", "filename, fields")
 files_dic = {}
 log_dic = {}
 
+#
+# log files
+#
 # uplink log
 # uplink_queue. ch: 1, timestamp: 1681947064182, queue_size: 316, elapsed_time_since_last_queue_update: 9, actual_rate: 0
 uplink_fields = namedtuple ("uplink_fields", "channel, queue_size_sample_TS, queue_size, \
                              elapsed_time_since_last_queue_update, actual_rate")
-files_dic.update ({"uplink":  files_dic_fields._make ([indir+"uplink_queue_"+tx_namepart+".log", uplink_fields])})
+files_dic.update ({"uplink":  files_dic_fields._make ([in_dir+"uplink_queue_"+tx_namepart+".log", uplink_fields])})
 uplink_array = []
 log_dic.update ({"uplink": uplink_array})
 
 # latency log
 # ch: 0, received a latency, numCHOut:2, packetNum: 4294967295, latency: 40, time: 1681947064236, sent from ch: 0
 # receive_TS is the time when the back propagated t2r info is received by the vehicle
-latency_fields = namedtuple ("latency_fields", "receiving_channel, numCHOut, PktNum, bp_t2r, bp_t2r_receive_TS, reporting_channel")
-files_dic.update ({"latency": files_dic_fields._make ([indir+"latency_"+tx_namepart+".log", latency_fields])})
-latency_array = []
-log_dic.update ({"latency": latency_array})
+latency_fields = namedtuple ("latency_fields", "communicating_channel, numCHOut, PktNum, bp_t2r, bp_t2r_receive_TS, sending_channel")
+files_dic.update ({"all_latency": files_dic_fields._make ([in_dir+"latency_"+tx_namepart+".log", latency_fields])})
+all_latency_array = []
+log_dic.update ({"all_latency": all_latency_array})
 
 # service log
 # CH: 2, change to out-of-service state, latency: 0, latencyTime: 0, estimated latency: 2614851439, stop_sending flag: 0 , uplink queue size: 0, zeroUplinkQueue: 0, service flag: 0, numCHOut: 1, Time: 1681947064175, packetNum: 0
 service_fields = namedtuple ("service_fields", "channel, bp_t2r, bp_t2r_receive_TS, est_t2r, stop_sending_flag, \
                              uplink_queue_size, zeroUplinkQueue, service_flag, numCHOut, service_transition_TS, bp_t2r_packetNum")
-files_dic.update ({"service": files_dic_fields._make ([indir+"service_"+tx_namepart+".log", service_fields])})
+files_dic.update ({"service": files_dic_fields._make ([in_dir+"service_"+tx_namepart+".log", service_fields])})
 service_array = []
 log_dic.update ({"service": service_array})
+
+# skip decision log
+# CH: 0, Skip  1.5x (60ms) frame worth of packets. Method: 0, packetSent[lastPacketRetired]: 1, skip: 0, qsize: 10, framePacketNum: 0,  lastRetiredCH: 1, lastPacketRetired: 0, lastPacketRetiredTIme: 0, ch0 service: 1, ch1 service: 1, ch2 service: 0, ch0In: 1, ch1In : 1, ch2In: 0, ch0Matched:1, ch1Matched:1, ch2Matched:1, ch0-x:1, ch1-x:1, ch2-x:1, ch0InTime:1684521522628, ch1InTime: 1684521522572, ch2InTime:1684521517919, time: 1684521522628
+skip_fields = namedtuple ("skip_fields", "ch, method, ignore1, skip, qsize, szP,  ignore2, lrp, lrp_TS, ch0_IS_now, ch1_IS_now, ch2_IS_now, ch0_IS, ch1_IS, ch2_IS, ch0Matched, ch1Matched, ch2Matched, ch0_x, ch1_x, ch2_x, ch0InTime, ch1InTime, ch2InTime, resume_TS")
+files_dic.update ({"skip": files_dic_fields._make ([in_dir+"skip_decision_"+tx_namepart+".log", skip_fields])})
+skip_array = []
+log_dic.update ({"skip": skip_array})
 
 """
 # retx log
@@ -90,19 +174,35 @@ log_dic.update ({"service": service_array})
 # probe log
 # ch: 0, receive_a_probe_packet. sendTime: 1681946022261, latency: 45, receivedTime: 1681946022306
 probe_fields = namedtuple ("probe_fields", "sending_channel, send_TS, latency, receive_TS")
-files_dic.update ({"probe":   files_dic_fields._make ([indir+"probe_"+rx_namepart+".log",probe_fields])})
+files_dic.update ({"probe":   files_dic_fields._make ([in_dir+"probe_"+rx_namepart+".log",probe_fields])})
 # print (files_dic)
 probe_array = []
 log_dic.update ({"probe": probe_array})
+"""
 
+#
+# csv files
+#
+TX_TS_INDEX = 1
 # carrier csv
-# packe_number	 sender_timestamp	 receiver_timestamp	 video_packet_len	 frame_start	 frame_number	 frame_rate	 frame_resolution	 frame_end	 camera_timestamp	 retx	 ch	 latency
-# 0	             8.61157E+14	     1.68195E+12	     1384	             1	              0	             0	         0	                 0	         1.68195E+12	     0	     0	 330
+# packe_number	 sender_timestamp	 receiver_timestamp	 video_packet_len	 frame_start	 frame_number	 frame_rate	 frame_resolution	 frame_end	 camera_timestamp	 retx	 chPacketNum
+# 0	             8.62473E+14	     1.68452E+12	     1384	              1	              0	             0	          0	                 0	         1.68452E+12	     0	      0
+
+chrx_fields = namedtuple ("chrx_fields", "pkt_num, tx_TS, rx_TS, pkt_len, frame_start, frame_number, \
+                           frame_rate, frame_res, frame_end, camera_TS, retx, chk_pkt")
+for i in range (3):
+    files_dic.update ({"chrx"+str(i): files_dic_fields._make ([in_dir+rx_namepart+"_ch"+ str(i) + ".csv", chrx_fields])})
+    chrx_array = []
+    log_dic.update ({"chrx"+str(i): chrx_array})
 
 # dedup csv
 # packe_number	 sender_timestamp	 receiver_timestamp	 video_packet_len	 frame_start	 frame_number	 frame_rate	 frame_resolution	 frame_end	 camera_timestamp	 retx	 ch	 latency
 # 0	             8.61156E+14	     1.68195E+12	     1384	             1	             0	             0	         0	                 0	         1.68195E+12	     0	     2	    37
-"""
+dedup_fields = namedtuple ("dedup_fields", "pkt_num, tx_TS, rx_TS, pkt_len, frame_start, frame_number, \
+                           frame_rate, frame_res, frame_end, camera_TS, retx, ch, latency")
+files_dic.update ({"dedup": files_dic_fields._make ([in_dir+rx_namepart+".csv", dedup_fields])})
+dedup_array = []
+log_dic.update ({"dedup": dedup_array})
 
 # check that files_dic and log_dic are consistent
 files_dic_keys = set (list (files_dic.keys()))
@@ -111,27 +211,181 @@ if (files_dic_keys != log_dic_keys):
     print ("keys don't match")
     print ("files_dic_keys: ", files_dic_keys)
     print ("log_dic keys:   ", log_dic_keys)
-else:
-    print ("filename dictionary is consistent with dictionary containing the actual logs")
+    exit ()
 
-# read all the log data files. Each log is stored as list of named tupel defe
-fout = open (outdir+"delete_me_test.csv", "w")
+#########################################################################################
+# read all the log data files. Each log is stored as list of namedtuples defined earlier
+#########################################################################################
+
+fout = open (out_dir+"delete_me_test.csv", "w")
+
 for item in files_dic:
     print ("reading file: ", files_dic[item].filename)
-    log_dic[item] = read_log_file (files_dic[item].filename, files_dic[item].fields)
-    print ("\t file lenght = {}".format (len(log_dic[item])))
+    if item == "dedup" or item.startswith("chrx"):
+        log_dic[item] = read_csv_file (files_dic[item].filename, files_dic[item].fields, TX_TS_INDEX)
+    else:
+        log_dic[item] = read_log_file (files_dic[item].filename, files_dic[item].fields)
+    print ("\t file length = {}".format (len(log_dic[item])))
 
-# clean up latency file to retain channel to channel communication only
+# create cleaned up latency file to retain channel to channel communication only
+# create max pcaket list - largest packet number that has been back propagated up to each latency array line
 print ("Removing unnecessary lines from the latency file")
-print ("Original latency file length: {}".format (len(log_dic["latency"])))
-new_list = []
-for i, line in enumerate (log_dic["latency"]):
-    if i % 100_000 == 0: 
-        print ("processing line {}".format (i))
-    if line.receiving_channel == line.reporting_channel: 
-        new_list += [(line)]
-log_dic["latency"] = new_list
+print ("Original latency file length: {}".format (len(log_dic["all_latency"])))
+short_list = []
+max_bp_list = [0]
+for i, line in enumerate (log_dic["all_latency"]):
+    if line.communicating_channel == line.sending_channel: 
+        short_list += [(line)]
+    if i:
+        max_bp_list += [max(line.PktNum, max_bp_list[i-1])] if (line.PktNum != 4294967295) else [max_bp_list[i-1]] 
+log_dic.update ({"latency": short_list})
 print ("After removing unnecessary lines, latency file lenght: {}".format (len(log_dic["latency"])))
+
+# create array indexable by packet number that returns frame number and frame size in packets
+frame_sz_list_fields = namedtuple ("frame_sz_list_fields", "frame_num, frame_szP")
+frame_sz_list = []
+frame_num = 0
+frame_szP = 0
+for i, line in enumerate (log_dic["dedup"]):
+    if i and line.frame_start:
+        for j in range(frame_szP):
+            frame_sz_list += [frame_sz_list_fields(frame_num, frame_szP)]
+        frame_szP = 1
+        frame_num += 1
+    else:
+        frame_szP += 1
+
+# sort chrx arrays by tx_TS
+for i in range(3):
+    log_dic["chrx"+str(i)].sort (key = lambda a: a.tx_TS) 
+
+"""
+for line in log_dic["chrx0"]:
+    fout.write("pkt #,{p}, tx_TS,{t}, rx_TS,{r},".format (p=line.pkt_num, t=line.tx_TS, r=line.rx_TS))
+    fout.write("\n")
+"""
+
+########################################################################################
+# Resume checks
+########################################################################################
+
+service_index = 0
+skip_index = 0
+
+while service_index < len(log_dic["service"]):
+
+    # read a a going into service line
+    service_line = log_dic["service"][service_index]
+    if (service_line.service_flag == 0): # not going into serivce
+        service_index += 1
+        continue
+
+    # find largest (last) packet number that was retired closest to the service resumption 
+    # and channel-x which is all the channels that retired it the earliest
+    index = bisect_left (log_dic["all_latency"], service_line.service_transition_TS, key=lambda a: a.bp_t2r_receive_TS)
+    if (index):
+        index -= 1 # left bisect returns the index where the element should be inserted
+    last_retired_pkt_num = max_bp_list[index]
+    last_retired_pkt_TS = log_dic["all_latency"][index].bp_t2r_receive_TS # this is closest bp to service_transition_TS
+    channel_x = [0]*3
+    channel_x_lindex = [0]*3 # index into all_latency array for debugging
+    channel_x_t2r = [0]*3
+    while (index >= 0) and (last_retired_pkt_num == max_bp_list[index]):
+        if (log_dic["all_latency"][index].PktNum != last_retired_pkt_num):
+            pass
+        elif (log_dic["all_latency"][index].bp_t2r_receive_TS == last_retired_pkt_TS):
+            # multiple channels can retire the packet at the same time (at ealiiest_bp_TS)
+            channel_x [log_dic["all_latency"][index].sending_channel] = 1
+            channel_x_lindex [log_dic["all_latency"][index].sending_channel] = index
+            channel_x_t2r [log_dic["all_latency"][index].sending_channel] = log_dic["all_latency"][index].bp_t2r
+        elif (log_dic["all_latency"][index].bp_t2r_receive_TS < last_retired_pkt_TS):
+            # found an earlier receive time for last retired packet
+            channel_x = [0]*3
+            channel_x_lindex = [0]*3
+            channel_x [log_dic["all_latency"][index].sending_channel] = 1
+            channel_x_lindex [log_dic["all_latency"][index].sending_channel] = index
+            channel_x_t2r [log_dic["all_latency"][index].sending_channel] = log_dic["all_latency"][index].bp_t2r
+            last_retired_pkt_TS = log_dic["all_latency"][index].bp_t2r_receive_TS
+        index -= 1
+
+    # find if channel-x has remained in service since transmitting the last retired packet
+    index = service_index-1 # skip the resuming service state transition being processed
+    found_last_state_x = [0] *3
+    last_state_x = [0] *3
+    last_state_x_TS = [0]*3
+    while ((index >= 0) and (sum(found_last_state_x) != 3)):
+        line = log_dic["service"][index]
+        if (found_last_state_x[line.channel] == 0):
+            last_state_x[line.channel] = line.service_flag
+            last_state_x_TS[line.channel] = line.service_transition_TS
+            found_last_state_x[line.channel] = 1
+        index -= 1
+
+    channel_x_in_service = [0]*3
+    for i in range (3):
+        channel_x_in_service[i] = \
+            int (channel_x[i] and \
+            found_last_state_x[i] and last_state_x[i] and \
+            (last_state_x_TS[i] <= (last_retired_pkt_TS -30 - channel_x_t2r[i])))
+
+    # compute the number of packets to be skipped
+    if (sum(channel_x_in_service) == 0) or (log_dic["skip"][skip_index].qsize==0):
+        skip = 0
+    else:
+        skip = int(1.5 * frame_sz_list[last_retired_pkt_num].frame_szP)
+    skip_diff = skip - log_dic["skip"][skip_index].skip
+
+    # service time = bp_TS rather than < bp_TS
+    bug = 0
+    for i in range(3):
+        bug += int (channel_x[i] and \
+            (log_dic["all_latency"][channel_x_lindex[i]].sending_channel != log_dic["all_latency"][channel_x_lindex[i]].communicating_channel))
+        ignore = bug + int (log_dic["skip"][skip_index].resume_TS == log_dic["skip"][skip_index].lrp_TS)
+
+    # outputs
+    fout.write ("ch,{c}, is_TS,{t}, skip,{sk}, err,{e}, bug,{b}, ig,{ig}, qsz,{q}, ch-x,{cx}, ch-lidx,{cxl}, ch-t2r,{t2r}, lrp,{lrp}, bp_TS,{bp},".format \
+        (c= service_line.channel, t=service_line.service_transition_TS, sk=skip, e=skip_diff, b=bug, ig=ignore, q=log_dic["skip"][skip_index].qsize, \
+        cx=channel_x, cxl=channel_x_lindex, t2r=channel_x_t2r, lrp=last_retired_pkt_num, bp=last_retired_pkt_TS))
+    fout.write ("last_x,{x}, last_x_TS,{t}, ch-x_IS,{i},".format(x=last_state_x, t=last_state_x_TS, i=channel_x_in_service))
+    fout.write ("f#,{f}, szP,{s},".format(f=frame_sz_list[last_retired_pkt_num].frame_num+1, \
+        s=frame_sz_list[last_retired_pkt_num].frame_szP))
+    fout.write ("\n")
+
+    # process next service line
+    if service_index % 1000 == 0: 
+        print ("Resume checks @ service index: ", service_index)
+
+    # if service_index == 1000: 
+    #    break
+
+    service_index += 1
+    skip_index += 1
+
+# while there are more service transitions to be analyzed
+
+fout.close ()
+exit ()
+
+########################################################################################
+# resume effectiveness checks
+########################################################################################
+for i, line in enumerate (log_dic["skip"]):
+        resume_TS = line.resume_TS
+        resume_ch = line.ch
+        skip = line.skip
+
+    # check if the first 10 packets of the resuming channel have the best or near best delivery time
+
+
+# while there are more service transitions to be analyzed
+
+
+fout.close ()
+exit ()
+
+########################################################################################
+# In_service state machine checks
+########################################################################################
 
 # In_service state machine states
 IN_SERVICE = 1
@@ -143,7 +397,9 @@ GOOD_QUALITY = 0
 POOR_QUALITY = 2
 WAITING_TO_GO_GOOD = 3
 
+#
 # set epoch times and other initial conditions 
+#
 latency_index = 0
 uplink_index = 0
 service_index = 0
@@ -171,11 +427,14 @@ current_TS = next_external_eval_TS
 channel_quality_state_x_TS = [next_external_eval_TS]*3
 # end of start of processing initialization
 
+#
+# main loop
+#
 itr_count = 0
 while latency_index < len(log_dic["latency"]) and uplink_index < len(log_dic["uplink"]) and service_index < len(log_dic["service"]):
     
     #
-    # set up next clock tick when the state transition should be evaluated
+    # set up next clock tick when the state transition should be evaluated and read external inputs
     #
     latency_line = log_dic["latency"][latency_index]
     uplink_line = log_dic["uplink"][uplink_index]
@@ -210,8 +469,8 @@ while latency_index < len(log_dic["latency"]) and uplink_index < len(log_dic["up
         
         # read all the nputs with the timestamps = current_TS
         while (current_TS == latency_line.bp_t2r_receive_TS) and (latency_index < len(log_dic["latency"])):
-            bp_t2r[latency_line.receiving_channel] = latency_line.bp_t2r
-            bp_t2r_receive_TS[latency_line.receiving_channel] = latency_line.bp_t2r_receive_TS
+            bp_t2r[latency_line.sending_channel] = latency_line.bp_t2r
+            bp_t2r_receive_TS[latency_line.sending_channel] = latency_line.bp_t2r_receive_TS
             latency_index += 1
             if (latency_index < len(log_dic["latency"])): latency_line = log_dic["latency"][latency_index]
         
@@ -230,7 +489,9 @@ while latency_index < len(log_dic["latency"]) and uplink_index < len(log_dic["up
     if (current_TS == 1683927095731):
         print ("current_TS: ", 1683927095731)
     """
+    #
     # synthesized inputs
+    #
     est_t2r = [0]*3
     for i in range (3):
         est_t2r[i] = bp_t2r[i] + (current_TS - bp_t2r_receive_TS[i])
@@ -245,15 +506,17 @@ while latency_index < len(log_dic["latency"]) and uplink_index < len(log_dic["up
     for i in range (3):
         channel_in_service_for[i] = current_TS - channel_service_state_x_TS[i]
 
-    ########################################################################################
+    #
     # In_service state machine
-    ########################################################################################
-    next_channel_service_state = [st for st in channel_service_state]
+    #
+    next_channel_service_state = deepcopy(channel_service_state)
     service_state_transition = [0]*3
     for i in range (3):
 
+        # update next state transition depedent inputs
         num_of_channels_in_service = sum (int (x != OUT_OF_SERVICE) for x in next_channel_service_state)
 
+        # state machine
         if channel_service_state[i] == IN_SERVICE:
             if (queue_size_monitor_working[i] and (queue_size[i] > 10)) or (est_t2r[i] >= 120): 
                 # channel needs to go out of service as soon as possible
@@ -297,8 +560,10 @@ while latency_index < len(log_dic["latency"]) and uplink_index < len(log_dic["up
             if itr_count % 1000 == 0: 
                 print ("itr_count: ", itr_count)
             itr_count += 1
-    # for In_service state machine of each channel
-    channel_service_state = [st for st in next_channel_service_state]
+
+    # for In_service state machine transition of each channel
+    channel_service_state = deepcopy(next_channel_service_state)
+    # channel_service_state = [st for st in next_channel_service_state]
 
     """
     ########################################################################################
@@ -322,11 +587,8 @@ while latency_index < len(log_dic["latency"]) and uplink_index < len(log_dic["up
     if itr_count == 200:
         break
     """
+
 # while have not exhausted at least one input log file
-
-fout.close ()
-exit ()
-
 
 
 """
@@ -336,10 +598,10 @@ for i, line in enumerate (log_dic["latency"]):
     if i == 3:
         break
 
-fout = open (outdir+"delete_me_test.csv", "w")
+fout = open (out_dir+"delete_me_test.csv", "w")
 for line in log_dic["latency"]:
-    fout.write("receving_channel, {}, reporting_chanel, {}, PktNum, {}, receive_TS, {}\n".format ( \
-        line.receiving_channel, line.reporting_channel, line.PktNum, line.receive_TS))
+    fout.write("communicating_channel, {}, sending_channel, {}, PktNum, {}, receive_TS, {}\n".format ( \
+        line.communicating_channel, line.sending_channel, line.PktNum, line.receive_TS))
 fout.close()
 
 
