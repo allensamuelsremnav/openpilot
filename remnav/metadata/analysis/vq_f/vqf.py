@@ -1,6 +1,7 @@
 import sys
 import math
 import time
+from pathlib import Path
 from operator import itemgetter
 from bisect import bisect_left, bisect_right
 from collections import namedtuple
@@ -12,6 +13,11 @@ from copy import deepcopy
 
 def read_log_file (filename, tuplename):
     """ returns an array (list) of specified namedtuples from the data in the filename"""
+
+    path = Path(filename)
+    if path.is_file () == False: 
+        return None
+
     array = []
     file = open (filename, "r")
     for line_num, line in enumerate (file):
@@ -26,12 +32,18 @@ def read_log_file (filename, tuplename):
         except:
             err_str = "WARNING read_log_file: incorrect number of filelds: " + filename  + " Line " + str(line_num) + ": " + " ".join (str(e) for e in field_list) +"\n"
             sys.stderr.write (err_str)
-            exit ()
+            # exit ()
 
     return array
+# end of read_log_file
 
 def read_csv_file(filename, tuplename, tx_TS_index):
     """ returns an array (list) of specified namedtuples from the data in the filename"""
+
+    path = Path(filename)
+    if path.is_file () == False: 
+        return None
+
     array = []
     file = open (filename, "r")
     for line_num, line in enumerate (file):
@@ -57,68 +69,50 @@ def read_csv_file(filename, tuplename, tx_TS_index):
             exit ()
 
     return array
-
-def index(a, x):
-    'Locate the leftmost value exactly equal to x'
-    i = bisect_left(a, x)
-    if i != len(a) and a[i] == x:
-        return i
-    raise ValueError
-
-def find_lt(a, x):
-    'Find rightmost value less than x'
-    i = bisect_left(a, x)
-    if i:
-        return a[i-1]
-    raise ValueError
-
-def find_le(a, x):
-    'Find rightmost value less than or equal to x'
-    i = bisect_right(a, x)
-    if i:
-        return a[i-1]
-    raise ValueError
-
-def find_gt(a, x):
-    'Find leftmost value greater than x'
-    i = bisect_right(a, x)
-    if i != len(a):
-        return a[i]
-    raise ValueError
-
-def find_ge(a, x):
-    'Find leftmost item greater than or equal to x'
-    i = bisect_left(a, x)
-    if i != len(a):
-        return a[i]
-    raise ValueError
-
-def read_array_line (array, TS_field): 
-    """ returns a valid line from the array by doing sanity checking of TS_field"""
-    for i, line in enumerate (array):
-        if line.TS_field == 0:
-            pass
-        else: 
-            yield line
-
-def read_line (array):
-    i = 0
-    while i < 3:
-        yield (array[i])
-        i += 1
+# end of read_csv_file
 
 #########################################################################################
 # in/out directory and file prefix/suffix
 #########################################################################################
-in_dir = "C:/Users/gopal/Downloads/05_19_2023/"
+in_dir = "C:/Users/gopal/Downloads/05_22_2023/"
 out_dir = "C:/Users/gopal/Downloads/analysis_output/"
 
-# tx and rx file prefix
-tx_namepart = "2023_05_19_11_38_37_v11_8_4"
-rx_namepart = "2023_05_19_11_38_43_v_9_7_3_online"
+# rx_name_part = "2023_05_22_14_24_18_v_9_7_3_online"
+# tx_name_part = "2023_05_22_14_24_13_v11_8_4"
 
-# tx_namepart = "2023_05_12_14_31_29_v11_8_4"
-# rx_namepart = "2023_05_12_14_31_34_v_9_7_3_online"
+rx_name_part = "2023_05_22_14_41_50_v_9_7_3_online"
+tx_name_part = "2023_05_22_14_41_45_v11_8_4"
+
+# rx_name_part = "2023_05_19_10_16_32_v_9_7_3_online"
+# tx_name_part = "2023_05_19_10_16_27_v11_8_4"
+
+# rx_name_part = "2023_05_19_10_25_42_v_9_7_3_online"
+# tx_name_part = "2023_05_19_10_25_37_v11_8_4"
+
+# rx_name_part = "2023_05_19_10_42_40_v_9_7_3_online"
+# tx_name_part = "2023_05_19_10_42_35_v11_8_4"
+
+# rx_name_part = "2023_05_19_10_55_32_v_9_7_3_online"
+# tx_name_part = "2023_05_19_10_55_27_v11_8_4"
+
+# tx and rx file prefix
+# rx_name_part = "2023_05_19_11_20_37_v_9_7_3_online"
+# tx_name_part =  "2023_05_19_11_20_31_v11_8_4"
+
+# rx_name_part = "2023_05_19_11_29_52_v_9_7_3_online"
+# tx_name_part =  "2023_05_19_11_29_47_v11_8_4"
+
+# tx_name_part = "2023_05_19_11_38_37_v11_8_4"
+# rx_name_part = "2023_05_19_11_38_43_v_9_7_3_online"
+
+# tx_name_part = "2023_05_19_11_03_57_v11_8_4"
+# rx_name_part = "2023_05_19_11_04_02_v_9_7_3_online"
+
+# tx_name_part = "2023_05_19_10_34_26_v11_8_4"
+# rx_name_part = "2023_05_19_10_34_31_v_9_7_3_online"
+
+# tx_name_part = "2023_05_12_14_31_29_v11_8_4"
+# rx_name_part = "2023_05_12_14_31_34_v_9_7_3_online"
 
 #########################################################################################
 # log and csv file structures
@@ -135,7 +129,7 @@ log_dic = {}
 # uplink_queue. ch: 1, timestamp: 1681947064182, queue_size: 316, elapsed_time_since_last_queue_update: 9, actual_rate: 0
 uplink_fields = namedtuple ("uplink_fields", "channel, queue_size_sample_TS, queue_size, \
                              elapsed_time_since_last_queue_update, actual_rate")
-files_dic.update ({"uplink":  files_dic_fields._make ([in_dir+"uplink_queue_"+tx_namepart+".log", uplink_fields])})
+files_dic.update ({"uplink":  files_dic_fields._make ([in_dir+"uplink_queue_"+tx_name_part+".log", uplink_fields])})
 uplink_array = []
 log_dic.update ({"uplink": uplink_array})
 """
@@ -144,7 +138,7 @@ log_dic.update ({"uplink": uplink_array})
 # ch: 0, received a latency, numCHOut:2, packetNum: 4294967295, latency: 40, time: 1681947064236, sent from ch: 0
 # receive_TS is the time when the back propagated t2r info is received by the vehicle
 latency_fields = namedtuple ("latency_fields", "communicating_channel, numCHOut, PktNum, bp_t2r, bp_t2r_receive_TS, sending_channel")
-files_dic.update ({"all_latency": files_dic_fields._make ([in_dir+"latency_"+tx_namepart+".log", latency_fields])})
+files_dic.update ({"all_latency": files_dic_fields._make ([in_dir+"latency_"+tx_name_part+".log", latency_fields])})
 all_latency_array = []
 log_dic.update ({"all_latency": all_latency_array})
 
@@ -152,14 +146,14 @@ log_dic.update ({"all_latency": all_latency_array})
 # CH: 2, change to out-of-service state, latency: 0, latencyTime: 0, estimated latency: 2614851439, stop_sending flag: 0 , uplink queue size: 0, zeroUplinkQueue: 0, service flag: 0, numCHOut: 1, Time: 1681947064175, packetNum: 0
 service_fields = namedtuple ("service_fields", "channel, bp_t2r, bp_t2r_receive_TS, est_t2r, stop_sending_flag, \
                              uplink_queue_size, zeroUplinkQueue, service_flag, numCHOut, service_transition_TS, bp_t2r_packetNum")
-files_dic.update ({"service": files_dic_fields._make ([in_dir+"service_"+tx_namepart+".log", service_fields])})
+files_dic.update ({"service": files_dic_fields._make ([in_dir+"service_"+tx_name_part+".log", service_fields])})
 service_array = []
 log_dic.update ({"service": service_array})
 
 # skip decision log
 # CH: 0, Skip  1.5x (60ms) frame worth of packets. Method: 0, packetSent[lastPacketRetired]: 1, skip: 0, qsize: 10, framePacketNum: 0,  lastRetiredCH: 1, lastPacketRetired: 0, lastPacketRetiredTIme: 0, ch0 service: 1, ch1 service: 1, ch2 service: 0, ch0In: 1, ch1In : 1, ch2In: 0, ch0Matched:1, ch1Matched:1, ch2Matched:1, ch0-x:1, ch1-x:1, ch2-x:1, ch0InTime:1684521522628, ch1InTime: 1684521522572, ch2InTime:1684521517919, time: 1684521522628
 skip_fields = namedtuple ("skip_fields", "ch, method, ignore1, skip, qsize, szP,  ignore2, lrp, lrp_TS, ch0_IS_now, ch1_IS_now, ch2_IS_now, ch0_IS, ch1_IS, ch2_IS, ch0Matched, ch1Matched, ch2Matched, ch0_x, ch1_x, ch2_x, ch0InTime, ch1InTime, ch2InTime, resume_TS")
-files_dic.update ({"skip": files_dic_fields._make ([in_dir+"skip_decision_"+tx_namepart+".log", skip_fields])})
+files_dic.update ({"skip": files_dic_fields._make ([in_dir+"skip_decision_"+tx_name_part+".log", skip_fields])})
 skip_array = []
 log_dic.update ({"skip": skip_array})
 
@@ -176,7 +170,7 @@ log_dic.update ({"skip": skip_array})
 # probe log
 # ch: 0, receive_a_probe_packet. sendTime: 1681946022261, latency: 45, receivedTime: 1681946022306
 probe_fields = namedtuple ("probe_fields", "sending_channel, send_TS, latency, receive_TS")
-files_dic.update ({"probe":   files_dic_fields._make ([in_dir+"probe_"+rx_namepart+".log",probe_fields])})
+files_dic.update ({"probe":   files_dic_fields._make ([in_dir+"probe_"+rx_name_part+".log",probe_fields])})
 # print (files_dic)
 probe_array = []
 log_dic.update ({"probe": probe_array})
@@ -186,7 +180,6 @@ log_dic.update ({"probe": probe_array})
 # csv files
 #
 TX_TS_INDEX = 1
-"""
 # carrier csv
 # packe_number	 sender_timestamp	 receiver_timestamp	 video_packet_len	 frame_start	 frame_number	 frame_rate	 frame_resolution	 frame_end	 camera_timestamp	 retx	 chPacketNum
 # 0	             8.62473E+14	     1.68452E+12	     1384	              1	              0	             0	          0	                 0	         1.68452E+12	     0	      0
@@ -194,17 +187,16 @@ TX_TS_INDEX = 1
 chrx_fields = namedtuple ("chrx_fields", "pkt_num, tx_TS, rx_TS, pkt_len, frame_start, frame_number, \
                            frame_rate, frame_res, frame_end, camera_TS, retx, chk_pkt")
 for i in range (3):
-    files_dic.update ({"chrx"+str(i): files_dic_fields._make ([in_dir+rx_namepart+"_ch"+ str(i) + ".csv", chrx_fields])})
+    files_dic.update ({"chrx"+str(i): files_dic_fields._make ([in_dir+rx_name_part+"_ch"+ str(i) + ".csv", chrx_fields])})
     chrx_array = []
     log_dic.update ({"chrx"+str(i): chrx_array})
-"""
 
 # dedup csv
 # packe_number	 sender_timestamp	 receiver_timestamp	 video_packet_len	 frame_start	 frame_number	 frame_rate	 frame_resolution	 frame_end	 camera_timestamp	 retx	 ch	 latency
 # 0	             8.61156E+14	     1.68195E+12	     1384	             1	             0	             0	         0	                 0	         1.68195E+12	     0	     2	    37
 dedup_fields = namedtuple ("dedup_fields", "pkt_num, tx_TS, rx_TS, pkt_len, frame_start, frame_number, \
                            frame_rate, frame_res, frame_end, camera_TS, retx, ch, latency")
-files_dic.update ({"dedup": files_dic_fields._make ([in_dir+rx_namepart+".csv", dedup_fields])})
+files_dic.update ({"dedup": files_dic_fields._make ([in_dir+rx_name_part+".csv", dedup_fields])})
 dedup_array = []
 log_dic.update ({"dedup": dedup_array})
 
@@ -221,15 +213,17 @@ if (files_dic_keys != log_dic_keys):
 # read all the log data files. Each log is stored as list of namedtuples defined earlier
 #########################################################################################
 
-fout = open (out_dir+"delete_me_test.csv", "w")
+fout = open (out_dir + "skip_eff_chk_" + tx_name_part + ".csv", "w")
 
+# read all the log and csv files
 for item in files_dic:
     print ("reading file: ", files_dic[item].filename)
     if item == "dedup" or item.startswith("chrx"):
         log_dic[item] = read_csv_file (files_dic[item].filename, files_dic[item].fields, TX_TS_INDEX)
     else:
         log_dic[item] = read_log_file (files_dic[item].filename, files_dic[item].fields)
-    print ("\t file length = {}".format (len(log_dic[item])))
+    if (log_dic[item] != None):
+        print ("\t file length = {}".format (len(log_dic[item])))
 
 # create cleaned up latency file to retain channel to channel communication only
 # create max pcaket list - largest packet number that has been back propagated up to each latency array line
@@ -270,8 +264,69 @@ for line in log_dic["chrx0"]:
 """
 
 ########################################################################################
-# Resume checks
+# resume effectiveness checks
 ########################################################################################
+
+for i, is_line in enumerate (log_dic["service"] if log_dic["skip"] == None else log_dic["skip"]):
+    if log_dic["skip"] == None: # skip_decision file does not exist, so use service file
+        resume_ch = is_line.channel
+        resume_TS = is_line.service_transition_TS
+        skip = 0
+    else: # use skip_decision file
+        resume_ch = is_line.ch
+        resume_TS = is_line.resume_TS
+        skip = is_line.skip
+
+    # check if the first 10 packets of the resuming channel have the best or near best delivery time
+    ch_resume_index = bisect_left (log_dic["chrx"+str(resume_ch)], resume_TS, key=lambda a: a.tx_TS)
+
+    for j in range (10):
+        ch_index = ch_resume_index + j
+        if ch_index > len(log_dic["chrx"+str(resume_ch)])-1:
+            break # reached the end of the array, no more transmissions to check
+        ch_line = log_dic["chrx"+str(resume_ch)][ch_index]
+        pkt_num = ch_line.pkt_num
+
+        # find this packet in the dedup array
+        dd_index = bisect_left (log_dic["dedup"], pkt_num, key = lambda a: a.pkt_num)
+        if (dd_index == len (log_dic["dedup"])) or (log_dic["dedup"][dd_index].pkt_num != pkt_num):
+            err_str = "WARNING Resume effect. check: Could not find pkt {p} in dedup array. Res Ch={c} Res_TS={t}\n".format (
+                p=pkt_num, c=resume_ch, t=resume_TS)
+            sys.stderr.write (err_str)
+            continue # skip checking this packet
+        
+        # check if resuming channel was effective
+        resume_t2r = ch_line.rx_TS - ch_line.tx_TS
+        resume_c2t = ch_line.tx_TS - ch_line.camera_TS if ch_line.camera_TS != 0 else 0
+        resume_rx_TS = ch_line.rx_TS
+        dd_rx_TS = log_dic["dedup"][dd_index].rx_TS
+        dd_tx_TS = log_dic["dedup"][dd_index].tx_TS
+        dd_cx_TS = log_dic["dedup"][dd_index].camera_TS 
+        dd_c2r = dd_rx_TS - dd_cx_TS if dd_cx_TS != 0 else 0
+        diff = resume_rx_TS - dd_rx_TS
+        fout.write ("ch,{c}, is_TS,{t}, skip,{s}, {i}, ch_idx,{ci}, pkt#,{p}, ch_rx_TS,{crt}, dd_rx_TS,{drt}, c-d,{d},".format (
+            c=resume_ch, t=resume_TS, s=skip, i=j, ci=ch_index, p=pkt_num, crt=resume_rx_TS, drt=dd_rx_TS, d=diff))
+        if (log_dic["skip"] != None):
+            fout.write ("qsz,{q}, ch-x{x}, ch_x_is,{xis}, lrp,{lrp}, lrp_TS,{lrpt}, c2r,{c2r}, t2r,{t2r}, c2t,{c2t},".format (
+                q=is_line.qsize, x=[is_line.ch0_x, is_line.ch1_x, is_line.ch2_x], 
+                xis=[is_line.ch0_IS, is_line.ch1_IS, is_line.ch2_IS], lrp=is_line.lrp, lrpt=is_line.lrp_TS,
+                c2r=dd_c2r, t2r=resume_t2r, c2t=resume_c2t))
+        fout.write ("\n")
+
+    # for the first 10 transmissions of the resuming channel
+
+    if i % 1000 == 0: 
+        print ("Resume effectiveness checks @ skip_decision line:", i)
+
+# for each service transition
+
+fout.close ()
+
+########################################################################################
+# Resume algo checks
+########################################################################################
+
+fout = open (out_dir + "skip_algo_chk_" + tx_name_part + ".csv", "w")
 
 service_index = 0
 skip_index = 0
@@ -288,7 +343,7 @@ while service_index < len(log_dic["service"]):
     # and channel-x which is all the channels that retired it the earliest
     index = bisect_left (log_dic["all_latency"], service_line.service_transition_TS, key=lambda a: a.bp_t2r_receive_TS)
     if (index):
-        index -= 1 # left bisect returns the index where the element should be inserted
+        index -= 1 # since bisect_left will return index of first GE element
     last_retired_pkt_num = max_bp_list[index]
     last_retired_pkt_TS = log_dic["all_latency"][index].bp_t2r_receive_TS # this is closest bp to service_transition_TS
     channel_x = [0]*3
@@ -339,7 +394,7 @@ while service_index < len(log_dic["service"]):
         skip = int(1.5 * frame_sz_list[last_retired_pkt_num].frame_szP)
     skip_diff = skip - log_dic["skip"][skip_index].skip
 
-    # service time = bp_TS rather than < bp_TS
+    # temporary deubgging filters
     bug = 0
     for i in range(3):
         bug += int (channel_x[i] and \
@@ -357,7 +412,7 @@ while service_index < len(log_dic["service"]):
 
     # process next service line
     if service_index % 1000 == 0: 
-        print ("Resume checks @ service index: ", service_index)
+        print ("Resume algo checks @ service index: ", service_index)
 
     # if service_index == 1000: 
     #    break
@@ -366,23 +421,6 @@ while service_index < len(log_dic["service"]):
     skip_index += 1
 
 # while there are more service transitions to be analyzed
-
-fout.close ()
-exit ()
-
-########################################################################################
-# resume effectiveness checks
-########################################################################################
-for i, line in enumerate (log_dic["skip"]):
-        resume_TS = line.resume_TS
-        resume_ch = line.ch
-        skip = line.skip
-
-    # check if the first 10 packets of the resuming channel have the best or near best delivery time
-
-
-# while there are more service transitions to be analyzed
-
 
 fout.close ()
 exit ()
