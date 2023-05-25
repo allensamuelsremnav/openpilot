@@ -11,6 +11,21 @@ from copy import deepcopy
 # function definitions
 #########################################################################################
 
+def init_channel_x (num):
+    """ initializes speicified lists to 3 elements to 0 """
+    a = []
+    for x in range(num):
+        a += [[0]*3]
+    return a
+
+def set_channel (channel, latency_line, lrp_num, lrp_TS, index):
+    channel["x"][line.sending_channel] = 1
+    channel["t2r"][line.sending_channel] = line.bp_t2r
+    channel["lrp_num"][line.sending_channel] = lrp_num
+    channel["lrp_TS"][line.sending_channel] = lrp_TS
+    channel["lindex"][line.sending_channel] = index
+    return
+
 def read_log_file (filename, tuplename):
     """ returns an array (list) of specified namedtuples from the data in the filename"""
 
@@ -66,7 +81,7 @@ def read_csv_file(filename, tuplename, tx_TS_index):
         except:
             err_str = "WARNING read_csv_file: incorrect number of filelds: " + filename  + " Line " + str(line_num) + ": " + " ".join (str(e) for e in field_list) +"\n"
             sys.stderr.write (err_str)
-            exit ()
+            # exit ()
 
     return array
 # end of read_csv_file
@@ -230,12 +245,12 @@ for item in files_dic:
 print ("Removing unnecessary lines from the latency file")
 print ("Original latency file length: {}".format (len(log_dic["all_latency"])))
 short_list = []
-max_bp_list = [0]
+max_bp_pkt_num_list = [0]
 for i, line in enumerate (log_dic["all_latency"]):
     if line.communicating_channel == line.sending_channel: 
         short_list += [(line)]
     if i:
-        max_bp_list += [max(line.PktNum, max_bp_list[i-1])] if (line.PktNum != 4294967295) else [max_bp_list[i-1]] 
+        max_bp_pkt_num_list += [max(line.PktNum, max_bp_pkt_num_list[i-1])] if (line.PktNum != 4294967295) else [max_bp_pkt_num_list[i-1]] 
 log_dic.update ({"latency": short_list})
 print ("After removing unnecessary lines, latency file lenght: {}".format (len(log_dic["latency"])))
 
@@ -335,7 +350,7 @@ while service_index < len(log_dic["service"]):
 
     # read a a going into service line
     service_line = log_dic["service"][service_index]
-    if (service_line.service_flag == 0): # not going into serivce
+    if (service_line.service_flag == 0): # not going into serivce, so ignore
         service_index += 1
         continue
 
@@ -344,71 +359,90 @@ while service_index < len(log_dic["service"]):
     index = bisect_left (log_dic["all_latency"], service_line.service_transition_TS, key=lambda a: a.bp_t2r_receive_TS)
     if (index):
         index -= 1 # since bisect_left will return index of first GE element
-    last_retired_pkt_num = max_bp_list[index]
-    last_retired_pkt_TS = log_dic["all_latency"][index].bp_t2r_receive_TS # this is closest bp to service_transition_TS
-    channel_x = [0]*3
-    channel_x_lindex = [0]*3 # index into all_latency array for debugging
-    channel_x_t2r = [0]*3
-    while (index >= 0) and (last_retired_pkt_num == max_bp_list[index]):
-        if (log_dic["all_latency"][index].PktNum != last_retired_pkt_num):
+
+    lrp_num = max_bp_pkt_num_list[index]
+    lrp_TS = log_dic["all_latency"][index].bp_t2r_receive_TS # this is closest bp pkt to service_transition_TS
+
+    channel = {"x": [0]*3, "t2r": [0]*3, "lrp_num": [0]*3, "lrp_TS": [0]*3, "lindex": [0]*3}
+
+    while (index >= 0) and (lrp_num == max_bp_pkt_num_list[index]):
+        line = log_dic["all_latency"][index]
+        if (line.PktNum != lrp_num):
             pass
-        elif (log_dic["all_latency"][index].bp_t2r_receive_TS == last_retired_pkt_TS):
+        elif (line.bp_t2r_receive_TS == lrp_TS):
             # multiple channels can retire the packet at the same time (at ealiiest_bp_TS)
-            channel_x [log_dic["all_latency"][index].sending_channel] = 1
-            channel_x_lindex [log_dic["all_latency"][index].sending_channel] = index
-            channel_x_t2r [log_dic["all_latency"][index].sending_channel] = log_dic["all_latency"][index].bp_t2r
-        elif (log_dic["all_latency"][index].bp_t2r_receive_TS < last_retired_pkt_TS):
+            set_channel (channel, line, lrp_num, lrp_TS, index)
+        elif (line.bp_t2r_receive_TS < lrp_TS):
             # found an earlier receive time for last retired packet
-            channel_x = [0]*3
-            channel_x_lindex = [0]*3
-            channel_x [log_dic["all_latency"][index].sending_channel] = 1
-            channel_x_lindex [log_dic["all_latency"][index].sending_channel] = index
-            channel_x_t2r [log_dic["all_latency"][index].sending_channel] = log_dic["all_latency"][index].bp_t2r
-            last_retired_pkt_TS = log_dic["all_latency"][index].bp_t2r_receive_TS
+            lrp_TS = line.bp_t2r_receive_TS
+            for item in channel: channel[item] = [0]*3
+            set_channel (channel, line, lrp_num, lrp_TS, index)
+        index -= 1
+    # while there are more entries max_bp_pkt_num_list equal to lrp
+
+    # find the last service transition prior to this resume
+    channel.update ({"found_last_state_x": [0]*3, "last_state_x": [0]*3, "last_state_x_TS": [0]*3})
+    index = service_index-1 # skip the resuming service state transition being processed
+    while ((index >= 0) and (sum(channel["found_last_state_x"]) != 3)):
+        line = log_dic["service"][index]
+        if (channel["found_last_state_x"][line.channel] == 0):
+            channel["last_state_x"][line.channel] = line.service_flag
+            channel["last_state_x_TS"][line.channel] = line.service_transition_TS
+            channel["found_last_state_x"][line.channel] = 1
         index -= 1
 
     # find if channel-x has remained in service since transmitting the last retired packet
-    index = service_index-1 # skip the resuming service state transition being processed
-    found_last_state_x = [0] *3
-    last_state_x = [0] *3
-    last_state_x_TS = [0]*3
-    while ((index >= 0) and (sum(found_last_state_x) != 3)):
-        line = log_dic["service"][index]
-        if (found_last_state_x[line.channel] == 0):
-            last_state_x[line.channel] = line.service_flag
-            last_state_x_TS[line.channel] = line.service_transition_TS
-            found_last_state_x[line.channel] = 1
-        index -= 1
-
-    channel_x_in_service = [0]*3
+    channel.update ({"IS": [0]*3})
     for i in range (3):
-        channel_x_in_service[i] = \
-            int (channel_x[i] and \
-            found_last_state_x[i] and last_state_x[i] and \
-            (last_state_x_TS[i] <= (last_retired_pkt_TS -30 - channel_x_t2r[i])))
+        channel["IS"][i] = \
+            int (channel["x"][i] and \
+            channel["found_last_state_x"][i] and channel["last_state_x"][i] and \
+            (channel["last_state_x_TS"][i] <= (lrp_TS -30 - channel["t2r"][i])))
 
     # compute the number of packets to be skipped
-    if (sum(channel_x_in_service) == 0) or (log_dic["skip"][skip_index].qsize==0):
+    if (sum(channel["IS"]) == 0) or (log_dic["skip"][skip_index].qsize==0):
         skip = 0
     else:
-        skip = int(1.5 * frame_sz_list[last_retired_pkt_num].frame_szP)
+        skip = int(1.5 * frame_sz_list[lrp_num].frame_szP)
     skip_diff = skip - log_dic["skip"][skip_index].skip
 
     # temporary deubgging filters
-    bug = 0
-    for i in range(3):
-        bug += int (channel_x[i] and \
-            (log_dic["all_latency"][channel_x_lindex[i]].sending_channel != log_dic["all_latency"][channel_x_lindex[i]].communicating_channel))
-        ignore = bug + int (log_dic["skip"][skip_index].resume_TS == log_dic["skip"][skip_index].lrp_TS)
+    ignore = int (log_dic["skip"][skip_index].resume_TS == log_dic["skip"][skip_index].lrp_TS)
 
     # outputs
-    fout.write ("ch,{c}, is_TS,{t}, skip,{sk}, err,{e}, bug,{b}, ig,{ig}, qsz,{q}, ch-x,{cx}, ch-lidx,{cxl}, ch-t2r,{t2r}, lrp,{lrp}, bp_TS,{bp},".format \
-        (c= service_line.channel, t=service_line.service_transition_TS, sk=skip, e=skip_diff, b=bug, ig=ignore, q=log_dic["skip"][skip_index].qsize, \
-        cx=channel_x, cxl=channel_x_lindex, t2r=channel_x_t2r, lrp=last_retired_pkt_num, bp=last_retired_pkt_TS))
-    fout.write ("last_x,{x}, last_x_TS,{t}, ch-x_IS,{i},".format(x=last_state_x, t=last_state_x_TS, i=channel_x_in_service))
-    fout.write ("f#,{f}, szP,{s},".format(f=frame_sz_list[last_retired_pkt_num].frame_num+1, \
-        s=frame_sz_list[last_retired_pkt_num].frame_szP))
+    fout.write ("ch,{c}, is_TS,{t}, skip,{sk}, err,{e}, ig,{ig}, qsz,{q}, ch-x,{cx}, ch-lidx,{cxl}, ch-t2r,{t2r}, lrp,{lrp}, lrp_TS,{bp},".format \
+        (c= service_line.channel, t=service_line.service_transition_TS, sk=skip, e=skip_diff, ig=ignore, q=log_dic["skip"][skip_index].qsize, \
+        cx=channel["x"], cxl=channel["lindex"], t2r=channel["t2r"], lrp=lrp_num, bp=lrp_TS))
+    fout.write ("last_x,{x}, last_x_TS,{t}, ch-x_IS,{i},".format(x=channel["last_state_x"], t=channel["last_state_x_TS"], i=channel["IS"]))
+    fout.write ("f#,{f}, szP,{s},".format(f=frame_sz_list[lrp_num].frame_num+1, \
+        s=frame_sz_list[lrp_num].frame_szP))
     fout.write ("\n")
+
+    #
+    # Revised algo 
+    # 
+
+    # relax channel_x to incldue other channels that transmitted packets neighboring lrp in porximity of lrp_TS
+    SERARCH_WINDOW = 20
+    SEARCH_PKTS = 2
+    start_TS = min (0, lrp_TS - SERARCH_WINDOW)
+    start_TS_index = bisect_left (log_dic["all_latency"], start_TS, key = lambda a: a.bp_t2r_receive_TS)
+    stop_TS = min (lrp_TS + SERARCH_WINDOW, resume_TS)
+    stop_TS_index = bisect_left (log_dic["all_latency"], stop_TS, key = lambda a: a.bp_t2r_receive_TS)
+
+    for i in range (3):
+        if channel["x"][i]:
+            continue # this channel is already supplying lrp
+        # otherwise search in proximity of lrp_TS
+        for j, line in enumerate (log_dic["all_latency"][start_TS_index:stop_TS_index:-1]):
+            if (line.sending_channel != i):
+                continue # not a candidate channe
+            if line.PktNum >= (lrp_num - SEARCH_PKTS): # candidate for channel_x
+                channel["x"][i] = 1
+                channel["t2r"][i] = line.bp_t2r
+                channel["lindex"][i] = j
+
+
 
     # process next service line
     if service_index % 1000 == 0: 
