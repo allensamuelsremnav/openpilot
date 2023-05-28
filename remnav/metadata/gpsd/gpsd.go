@@ -15,6 +15,8 @@ type Class struct {
 	Time  time.Time
 }
 
+const ClassHeartbeat = "HEARTBEATGPSD"
+
 type Device struct {
 	Path   string
 	Driver string
