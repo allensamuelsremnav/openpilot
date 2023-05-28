@@ -133,6 +133,7 @@ struct s_metadata {      // dedup meta data
     double      vx_epoch_ms;                // time since epoch in ms
     double      tx_epoch_ms;                // time since epoch in ms
     double      rx_epoch_ms;                // time sicne epoch in ms
+    double      bp_epoch_ms;                // time when bp info to retire this packet was received
     int         socc;                       // sampled occupancy. 31 if no information avaialble from the mdoem
     unsigned    video_packet_len;           // packet length in bytes
     unsigned    frame_start;                // 1-bit flag; set if this packet is the start of a new frame
@@ -162,7 +163,7 @@ struct frame {
     double      rx_epoch_ms_latest_packet;  // rx timestamp of the late-most packet of the frame (not necessarily last packet)
     unsigned    latest_packet_count;        // the latest packet count of the frame
     int         latest_packet_num;          // the latest packet number of the frame
-    unsigned    latest_retx;                // queue the latest packet came from
+    unsigned    latest_retx;                // 1 if the latest arriving packet is a retx
     unsigned    frame_rate;                 // in HZ
     unsigned    frame_resolution;           // HD or SD
     double      camera_epoch_ms;            // camera timestamp of this frame
@@ -172,6 +173,8 @@ struct frame {
     float       nm1_bit_rate;               // bit rate of previous (n-1) frame in Mbps
     unsigned    nm1_size;                   // size of the previous frame
     double      nm1_rx_epoch_ms_earliest_packet;    //rx time stamp of the earliest arriving packet for the previous (n-1) frame
+    float       EMbps;                      // encoder required bit rate for this frame duration
+    float       DMbps;                      // delivered bit rate for this frame
 
     double      cdisplay_epoch_ms;          // the time stamp (current) where this frame is expeceted to be displayed
     double      ndisplay_epoch_ms;          // the time stamp when this frame's display will end. Next frame should arrive by this itme.
@@ -325,6 +328,11 @@ void update_frame_packet_stats (
 
 // called after receiving the last packet of the frame and updates brm stats
 void update_brm (struct frame *fp);
+
+// calculates required and delivered bit rates 
+void calculate_Mbps (
+    struct frame *fp, 
+    struct frame *cfp);
 
 // calculates and update bit-rate of n-1 frame
 void update_bit_rate (                      // updates stats of the last frame
@@ -1010,19 +1018,20 @@ SKIP_FILE_LIST:
             // camera to display latency
             cfp->c2d_frames = (cfp->cdisplay_epoch_ms - cfp->camera_epoch_ms) / cfp->display_period_ms; 
 
-            // bit-rate of last to last frame
-            update_bit_rate (cfp, lmdp, cmdp);
-
-            // update bit-rate-modulation data
-            update_brm (cfp);
-
             //
             // call end of frame clients
             //
-            *fdp = *cfp; fdp++; len_fd++;
+
+            // update bit rates
+            update_bit_rate (cfp, lmdp, cmdp);
+            update_brm (cfp);
+            calculate_Mbps ((fdp-1), cfp); 
+
             emit_frame_stats (0, cfp);
+
+            *fdp = *cfp; len_fd++;
             if (have_carrier_metadata)
-                carrier_metadata_clients (0, ssp, (fdp-1), c0p, c1p, c2p); 
+                carrier_metadata_clients (0, ssp, fdp, c0p, c1p, c2p); 
             update_session_frame_stats (ssp, cfp);
 
 
@@ -1030,10 +1039,8 @@ SKIP_FILE_LIST:
             init_frame (cfp, lmdp, cmdp, 0);    
             get_gps_coord (cfp); 
             update_session_packet_stats (cfp, cmdp, ssp);
+            fdp++; 
         } // start of a new frame
-
-        if (cmdp->camera_epoch_ms == 0)
-            printf ("camera_epoch=0\n");
 
         md_index = (md_index + 1) % MD_BUFFER_SIZE; 
         lmdp = cmdp;
@@ -1046,17 +1053,21 @@ SKIP_FILE_LIST:
     } 
     
     // update stats for the last frame
+
     // check if the last frame of the file had any missing packets
     if (!lmdp->frame_end) // frame ended abruptly
        cfp->missing += 1; // not the correct number of missing packets but can't do better
     update_bit_rate (cfp, lmdp, cmdp); 
     update_brm (cfp);
+    calculate_Mbps (fdp, cfp); 
     update_session_frame_stats (ssp, cfp);
 
     // end of the file so emit both last frame and session stats
     emit_frame_stats(0, cfp);
+
+    *fdp = *cfp; len_fd++;
     if (have_carrier_metadata)
-        carrier_metadata_clients (0, ssp, cfp, c0p, c1p, c2p); 
+        carrier_metadata_clients (0, ssp, fdp, c0p, c1p, c2p); 
     emit_session_stats(ssp, cfp);
 
     my_free (); 
@@ -1513,6 +1524,9 @@ void my_free () {
     if (avgqd2 != NULL) free (avgqd2);
 
     if (brmdata != NULL) free (brmdata);
+    
+    fd = td0 = td1 = td2 = cd0 = cd1 = cd2 = cs0 = cs1 = cs2 = sd0 = sd1 = sd2 =
+    ld0 = ld1 = ld2 = ls0 = ls1 = ls2 = avgqd0 = avgqd1 = avgqd2 = brmdata = NULL; 
 
 	if (md_fp) fclose (md_fp);
 	if (an_fp) fclose (an_fp);
@@ -1530,6 +1544,12 @@ void my_free () {
 	if (avgqd_fp) fclose (avgqd_fp); 
 	if (warn_fp) fclose (warn_fp); 
     if (dbg_fp) fclose (dbg_fp); 
+
+	md_fp = an_fp = fs_fp = ss_fp = ps_fp = c0_fp = c1_fp = c2_fp = 
+	gps_fp = td_fp = ld_fp = sd_fp = brmd_fp = avgqd_fp = warn_fp = 
+    dbg_fp =  NULL; 
+
+    return; 
 } // end of my_free
 
 // free up storage before exiting
@@ -2317,11 +2337,11 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "CTS, ");
     fprintf (fp, "Late, ");
     fprintf (fp, "Miss, ");
-    fprintf (fp, "CMbps, ");
     fprintf (fp, "anno, ");
     fprintf (fp, "0fst, ");
     fprintf (fp, "SzB, ");
     fprintf (fp, "EMbps,");
+    fprintf (fp, "DMbps, ");
     fprintf (fp, "Lat, ");
     fprintf (fp, "Lon, ");
     fprintf (fp, "Spd, ");
@@ -2378,10 +2398,10 @@ void emit_packet_header (FILE *ps_fp) {
 	fprintf (ps_fp, "LPN, ");
     fprintf (ps_fp, "Late, ");
 	fprintf (ps_fp, "Miss, ");
-	fprintf (ps_fp, "CMbps, ");
 	fprintf (ps_fp, "SzP, ");
 	fprintf (ps_fp, "SzB, ");
     fprintf (ps_fp, "EMbps,");
+	fprintf (ps_fp, "DMbps, ");
 	fprintf (ps_fp, "Ft2r, ");
 	fprintf (ps_fp, "Fc2r, ");
 	fprintf (ps_fp, "Rpt, ");
@@ -2396,6 +2416,7 @@ void emit_packet_header (FILE *ps_fp) {
     fprintf (ps_fp, "MMbps, ");
     fprintf (ps_fp, "tx_TS, ");
     fprintf (ps_fp, "rx_TS, ");
+    fprintf (ps_fp, "bp_TS,");
     fprintf (ps_fp, "Pc2r, ");
     fprintf (ps_fp, "Pt2r, ");
     
@@ -2456,10 +2477,10 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
 	    if (fp->latest_packet_num == mdp->packet_num) fprintf (ps_fp, "%u, ", fp->latest_packet_num); else fprintf (ps_fp, ", "); 
         fprintf (ps_fp, "%u, ", fp->late);
 	    fprintf (ps_fp, "%u, ", fp->missing);
-	    fprintf (ps_fp, "%.1f, ", fp->nm1_bit_rate);
-	    fprintf (ps_fp, "%u, ", fp->packet_count);
-	    fprintf (ps_fp, "%u, ", mdp->video_packet_len);
-        fprintf (ps_fp, "%.1f,", (fp->size*8)/FRAME_PERIOD_MS/1000); 
+	    fprintf (ps_fp, "%u, ", fp->packet_count);          // SzP
+	    fprintf (ps_fp, "%u, ", mdp->video_packet_len);     // SzB
+        fprintf (ps_fp, "%.1f,", fp->EMbps); // EMbps
+	    fprintf (ps_fp, "%.1f, ", fp->DMbps); // DMbps
 	    // fprintf (ps_fp, "%.1f, ", fp->tx_epoch_ms_1st_packet - fp->camera_epoch_ms);
 	    fprintf (ps_fp, "%.1f, ", fp->rx_epoch_ms_latest_packet - fp->tx_epoch_ms_1st_packet);
 	    fprintf (ps_fp, "%.1f, ", fp->rx_epoch_ms_latest_packet - fp->camera_epoch_ms);
@@ -2477,6 +2498,7 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
         else fprintf (ps_fp, ","); 
         fprintf (ps_fp, "%.0lf, ", mdp->tx_epoch_ms);
         fprintf (ps_fp, "%.0lf, ", mdp->rx_epoch_ms);
+        fprintf (ps_fp, "%.0lf, ", mdp->bp_epoch_ms);
         fprintf (ps_fp, "%.1f, ", mdp->rx_epoch_ms - fp->camera_epoch_ms);
         fprintf (ps_fp, "%.1f, ", mdp->rx_epoch_ms - mdp->tx_epoch_ms);
 
@@ -2944,11 +2966,11 @@ void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1
     fprintf (fs_fp, "%.0lf, ", p->camera_epoch_ms);
     fprintf (fs_fp, "%u, ", p->late);
     fprintf (fs_fp, "%u, ", p->missing);
-    fprintf (fs_fp, "%.1f, ", p->nm1_bit_rate);
     fprintf (fs_fp, "%u, ", p->has_annotation);
     fprintf (fs_fp, "%d, ", (p->fast_channel_count != p->packet_count)); 
     fprintf (fs_fp, "%u, ", p->size);
-    fprintf (fs_fp, "%.1f,", (p->size*8)/FRAME_PERIOD_MS/1000); 
+    fprintf (fs_fp, "%.1f,", p->EMbps); 
+    fprintf (fs_fp, "%.1f, ", p->DMbps);
     fprintf (fs_fp, "%lf, ", p->coord.lat);
     fprintf (fs_fp, "%lf, ", p->coord.lon);
     fprintf (fs_fp, "%.1f, ", p->speed);
@@ -3649,6 +3671,12 @@ int read_md (int skip_header, FILE *fp, struct s_metadata *p) {
             return 1;
         } // successful scan
 
+        struct s_latency *ld = p->ch==0? ld0 : p->ch==1? ld1 : ld2;
+        int len_ld = p->ch==0? len_ld0 : p->ch==1? len_ld1 : len_ld2;
+        struct s_latency *ldp = find_ldp_by_packet_num (p->packet_num, p->rx_epoch_ms, 
+            ld, len_ld);
+        p->bp_epoch_ms = ldp->bp_epoch_ms;
+
     } // if were able to read a line from the file
     
     // get here at the end of the file
@@ -3702,6 +3730,25 @@ void update_bit_rate (struct frame *fp, struct s_metadata *lmdp, struct s_metada
         fp->nm1_bit_rate = (fp->nm1_size * 8) / 1000 / transit_time;
 
 } // end of update_bit_rate
+
+void calculate_Mbps (struct frame *fp, struct frame *cfp) {
+
+        cfp->EMbps = (cfp->size*8)/FRAME_PERIOD_MS/1000; 
+        
+        // delivered bit rate
+        if (cfp->frame_count < 3) // can't calculate average
+            cfp->DMbps = cfp->EMbps;
+        else {
+            int bytes = cfp->size + fp->size + (fp-1)->size;
+            double time = abs(cfp->rx_epoch_ms_latest_packet - (fp-1)->rx_epoch_ms_earliest_packet);
+            if (time > 10)
+                cfp->DMbps = (bytes*8)/time/1000; 
+            else // not computable reliably so use old value
+                cfp->DMbps = fp->DMbps;
+        }
+
+
+} // calculate Mbps
 
 // called after receiving the last packet of the frame and updates brm stats
 void update_brm (struct frame *fp) {
