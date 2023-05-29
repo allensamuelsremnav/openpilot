@@ -268,9 +268,23 @@ for i, line in enumerate (log_dic["dedup"]):
     else:
         frame_szP += 1
 
-# sort chrx arrays by tx_TS
+# clean chrx: remove duplicates not due to retx, sort chrx arrays by tx_TS
 for i in range(3):
-    log_dic["chrx"+str(i)].sort (key = lambda a: a.tx_TS) 
+    chrx_a = log_dic["chrx"+str(i)]
+    chrx_a.sort (key = lambda a: a.tx_TS) 
+    chrx_a.sort (key = lambda a: a.pkt_num)
+    count = 0
+    for j, line in enumerate (chrx_a):
+        if j+1 < len(chrx_a):
+            if line.retx == 0 and line.pkt_num == chrx_a[j+1].pkt_num: # network introduce duplicates
+               del chrx_a[j] 
+               count += 1
+    if (count): 
+        array_name = "chrx"+str(i)
+        print ("remvoved {n} duplicates from {s} metadata array".format (n=count, s=array_name))
+    # now sort it back by tx_TS
+    chrx_a.sort (key = lambda a: a.tx_TS) 
+    
     log_dic.update({"chrx_sorted_by_pkt_num"+str(i): sorted(log_dic["chrx"+str(i)], key = lambda a: a.pkt_num)})
 
 ########################################################################################
@@ -511,7 +525,7 @@ while service_index < len(log_dic["service"]):
     lrp_tx_index = channel["lrp_tx_index"][lrp_channel]
     lrp_tx_TS = channel["lrp_tx_TS"][lrp_channel]
     lrp_to_sx_delta = service_line.service_transition_TS - channel["lrp_bp_TS"][lrp_channel] if sum (channel["x_IS"]) != 0 else 0
-    lrp_tx_skip_TS = lrp_tx_TS + 60 + lrp_to_sx_delta
+    lrp_tx_skip_TS = lrp_tx_TS + 60 + lrp_to_sx_delta if sum (channel["x_IS"]) != 0 else 0
     skip_from_lrp_num = 0
     index = lrp_tx_index
     while index < len(chrx_a) and chrx_a[index].tx_TS <= lrp_tx_skip_TS:
