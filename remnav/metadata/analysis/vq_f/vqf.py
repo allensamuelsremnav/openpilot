@@ -360,8 +360,6 @@ while service_index < len(log_dic["service"]):
 
     channel = {"x": [0]*3, "t2r": [0]*3, "lrp_num": [0]*3, "lrp_bp_TS": [0]*3}
 
-    # if service_line.service_transition_TS == 1684791863076: 
-        # print ("debug")
     while (index >= 0) and (lrp_num == max_bp_pkt_num_list[index]):
         line = log_dic["all_latency"][index]
         if (line.PktNum == lrp_num):
@@ -431,12 +429,8 @@ while service_index < len(log_dic["service"]):
     stop_TS = min (lrp_bp_TS + SEARCH_TS_WINDOW, skip_line.resume_TS)
     stop_TS_index = bisect_left (log_dic["all_latency"], stop_TS, key = lambda a: a.bp_t2r_receive_TS)
 
-    channel.update({"x_debug": [0]*3, "lrp_tx_TS": [0]*3, "lrp_tx_index": [0]*3})
+    channel.update({"x_debug": [0]*3})
     for i in range (3):
-        tx_index = bisect_left (log_dic["chrx"+str(i)], channel["lrp_num"][i], key = lambda a: a.pkt_num)
-        channel["lrp_tx_index"][i] = tx_index
-        channel["lrp_tx_TS"][i] = log_dic["chrx"+str(i)][tx_index].tx_TS
-
         if channel["x"][i]:
             continue # only consider the channels that are not supplying lrp
         # consider new candidates for channel-x
@@ -453,10 +447,8 @@ while service_index < len(log_dic["service"]):
                     channel["x_debug"][i] = 1
         # for all the lines in the search window
     # for all channels
-
+    
     # relaxed in_service condition
-    if (service_line.service_transition_TS == 1684791711664):
-        print ("debug")
     channel["x_IS"] = [0]*3
     channel.update({"x_IS_debug": [0]*3})
     for i in range (3):
@@ -471,75 +463,115 @@ while service_index < len(log_dic["service"]):
             channel["last_state_x_TS"][i] <= (service_line.service_transition_TS - 30)  and 
             not (channel["last_state_x_TS"][i] <= (channel["lrp_bp_TS"][i] -30 - channel["t2r"][i])))
     
-    # if there are multiple candidates for lrp, pick the one that retired the largest pkt_num the earliest
-    lrp_channel = 0 # really defined for debug print out
-    found_a_candidate = False
-    for i in range (3):
-        if channel["x_IS"][i] and (found_a_candidate==False or channel["lrp_num"][i] > max_lrp_num): 
-            found_a_candidate = True
-            max_lrp_num = channel["lrp_num"][i]
-            lrp_channel = i
-    found_a_candidate = False
-    for i in range (3):
-        if channel["x_IS"][i] and (found_a_candidate==False or channel["lrp_tx_TS"][i] < min_lrp_tx_TS): 
-            found_a_candidate = True
-            min_lrp_tx_TS = channel["lrp_tx_TS"][i]
-            lrp_channel = i
+    # if there are multiple candidates for lrp, pick according the the table below
+    # pkt_nums  TS
+    #  eq       eq              send any
+    #  eq       not eq          send smaller TS
+    # not eq    eq              send larger pkt num
+    # not eq    not eq          send smaller TS
 
-    # revised skip calculation
-    if (sum(channel["x_IS"]) == 0) or (skip_line.qsize==0):
+    channel.update({"lrp_tx_TS": [0]*3, "lrp_tx_index": [0]*3})
+    for i in range (3):
+        if (channel["x_IS"][i]):
+            tx_index = bisect_left (log_dic["chrx"+str(i)], channel["lrp_num"][i], key = lambda a: a.pkt_num)
+            channel["lrp_tx_index"][i] = tx_index
+            channel["lrp_tx_TS"][i] = log_dic["chrx"+str(i)][tx_index].tx_TS
+
+    # if the lrp_tx_TS are not equal then the lrp channel is the one with the smallest TS
+    lrp_TS_are_equal = 1
+    found_a_candidate = 0
+    lrp_channel = 0 # defined just for debug print out so that skip=0 case does not overwrite it. 
+    for i in range (3):
+        if channel["x_IS"][i]: 
+            if (found_a_candidate == 0):
+                found_a_candidate = 1
+                min_lrp_tx_TS = channel["lrp_tx_TS"][i]
+                lrp_channel = i
+            else: # evaluate if current channel has the same TS as the ones already found so far
+                if channel["lrp_tx_TS"][i] < min_lrp_tx_TS: # this channel is better candidate
+                    min_lrp_tx_TS = channel["lrp_tx_TS"][i]
+                    lrp_channel = i
+                    lrp_TS_are_equal = 0
+                elif channel["lrp_tx_TS"][i] > min_lrp_tx_TS: 
+                    # this channel is not a candidate but different lrp_tx_TS exist
+                    lrp_TS_are_equal = 0
+
+    if lrp_TS_are_equal:
+        # if all candidates had same TS then select the channel one with largest lrp_num
+        found_a_candidate = 0
+        for i in range (3):
+            if channel["x_IS"][i] and (found_a_candidate==0 or channel["lrp_num"][i] > max_lrp_num): 
+                found_a_candidate = True
+                max_lrp_num = channel["lrp_num"][i]
+                lrp_channel = i
+
+    # revised skip calculation: skip packets transferred between lrp_tx_TS and lrp_tx_TS + 60 + (resume_TS-lrp_bp_TS)
+    # first calculate packets to be skipped relative to lrp_num (calculations are in valid if channel["x_IS"] = [0,0,0])
+    chrx_a = log_dic["chrx"+str(lrp_channel)]
+    lrp_tx_index = channel["lrp_tx_index"][lrp_channel]
+    lrp_tx_TS = channel["lrp_tx_TS"][lrp_channel]
+    lrp_to_sx_delta = service_line.service_transition_TS - channel["lrp_bp_TS"][lrp_channel] if sum (channel["x_IS"]) != 0 else 0
+    lrp_tx_skip_TS = lrp_tx_TS + 60 + lrp_to_sx_delta
+    skip_from_lrp_num = 0
+    index = lrp_tx_index
+    while index < len(chrx_a) and chrx_a[index].tx_TS <= lrp_tx_skip_TS:
+        skip_from_lrp_num += 1
+        index += 1
+    # skip_from_lrp_num = int (0.8 * skip_from_lrp_num) # guardbanded to not trigger too many retx
+    skip_from_lrp_num = int (skip_from_lrp_num) # debug guardbanded to not trigger too many retx
+    unconstrained_skip_pkt_num = chrx_a[lrp_tx_index].pkt_num + skip_from_lrp_num
+
+    # now calculate skip relative to resume pkt num
+    chrx_a = log_dic["chrx"+str(service_line.channel)]
+    resume_tx_index = bisect_left (chrx_a, service_line.service_transition_TS, key = lambda a: a.tx_TS)
+    resume_pkt_num = chrx_a[resume_tx_index].pkt_num
+    resume_tx_retx = chrx_a[resume_tx_index].retx # for debug only
+    resume_rx_TS = chrx_a[resume_tx_index].rx_TS # this is where the resuming channel will deliver its first packet
+    
+    if sum (channel["x_IS"]) == 0 or skip_line.qsize == 0:
         skip = 0
     else:
-        # skip packets transferred between lrp_tx_TS and lrp_tx_TS + 60 + (resume_TS-lrp_bp_TS)
-        if (channel["lrp_num"][lrp_channel] == 3421):
-            print ("debug")
-        chrx_a = log_dic["chrx"+str(lrp_channel)]
-        # lrp_tx_index below returns lrp number. Should really be lrp+1 but that may not exist
-        # as the lrp_channel may have gone out of service
-        lrp_tx_index = channel["lrp_tx_index"][lrp_channel]
-        lrp_tx_TS = channel["lrp_tx_TS"][lrp_channel]
-        lrp_to_sx_delta = service_line.service_transition_TS - channel["lrp_bp_TS"][lrp_channel]
-        lrp_tx_skip_TS = lrp_tx_TS + 60 + lrp_to_sx_delta
-        skip = 0
-        index = lrp_tx_index
-        while index < len(chrx_a) and chrx_a[index].tx_TS <= lrp_tx_skip_TS:
-            skip += 1
-            index += 1
-            # if (lrp_tx_skip_TS==1684791842928):
-                # print (chrx_a[index].tx_TS, index, chrx_a[index].pkt_num, skip)
-        # skip = int (0.8 * skip) # guardbanded to not trigger too many retx
-        skip = int (skip) # debug guardbanded to not trigger too many retx
+        skip = min (skip_line.qsize, max (0, unconstrained_skip_pkt_num - resume_pkt_num))
 
-        # now check if the resuming channel was effective
-        chrx_a = log_dic["chrx"+str(service_line.channel)]
-        if service_line.service_transition_TS == 1684791737187:
-            print ("debug")
-        resume_tx_index = bisect_left (chrx_a, service_line.service_transition_TS, key = lambda a: a.tx_TS)
-        resume_pkt_num = chrx_a[resume_tx_index].pkt_num
-        resume_tx_retx = chrx_a[resume_tx_index].retx
-        resume_rx_TS = chrx_a[resume_tx_index].rx_TS
-    
-        dd_new_resume_index = bisect_left (log_dic["dedup"], channel["lrp_num"][lrp_channel] + 1 + skip, key = lambda a: a.pkt_num)
-        try:
-            dd_new_resume_rx_TS = log_dic["dedup"][dd_new_resume_index].rx_TS
-        except:
-            print ("index out of range")
-        dd_new_resume_pkt_num = log_dic["dedup"][dd_new_resume_index].pkt_num
-        diff = resume_rx_TS - dd_new_resume_rx_TS
+    # now check if the resuming channel was effective
+    dd_new_resume_index = bisect_left (log_dic["dedup"], resume_pkt_num + skip, key = lambda a: a.pkt_num)
+    dd_new_resume_pkt_num = log_dic["dedup"][dd_new_resume_index].pkt_num
+    dd_new_resume_rx_TS = log_dic["dedup"][dd_new_resume_index].rx_TS # this is the current delivery time of the proposed first packet after resumption
+
+    diff = resume_rx_TS - dd_new_resume_rx_TS
 
     # debug print outs
+    # ch-x related
+    fout.write (",ch-x,{x}, x_IS,{x_IS},".format (x=channel["x"], x_IS=channel["x_IS"]))
+    # lrp related
+    fout.write ("lrp_TS_eq,{e}, lrp_num,{n}, lrp_bp_TS,{bp_t}, lrp_tx_TS,{tx_t}, lrp_ch,{l},".format (
+        e=lrp_TS_are_equal, n=channel["lrp_num"], bp_t=channel["lrp_bp_TS"], tx_t=channel["lrp_tx_TS"], l=lrp_channel))
+    # skip calculation 
+    fout.write ("rp_tx_idx,{i},".format (i=lrp_tx_index))
+    fout.write ("lrp_tx_TS,{strt}, delta,{d}, lrp_tx_skip_TS,{stpt},".format (strt=lrp_tx_TS, d=lrp_to_sx_delta, stpt=lrp_tx_skip_TS))
+    fout.write ("skip_from_lrp,{s}, un_skip_pkt_num,{n}, qsz,{q}, skip,{sk},".format (
+        s=skip_from_lrp_num, n=unconstrained_skip_pkt_num, q=skip_line.qsize, sk=skip))
+    # efficiency calculations
+    fout.write ("o_res_pkt,{rp}, o_res_TS,{rt}, n_res_pkt,{nrp}, n_res_TS,{nrt}, c-d,{d}, retx,{r}".format (
+        rp=resume_pkt_num, rt=resume_rx_TS, nrp=dd_new_resume_pkt_num, nrt=dd_new_resume_rx_TS, d=diff, r=resume_tx_retx))
+
+    """
     sum_ch_x = sum(channel["x"])
-    fout.write (",ch-x,{x}, sum_ch-x,{sx}, x_IS,{x_IS}, x_IS_dbg,{x_IS_d}, lrp_ch,{lrp_ch}, skip,{s},".format ( 
-       x=channel["x"], sx=sum_ch_x, x_IS=channel["x_IS"], x_IS_d=channel["x_IS_debug"], lrp_ch=lrp_channel, s=skip))
-    fout.write ("lrp_num,{n}, lrp_bp_TS,{bp_t}, lrp_tx_TS,{tx_t},".format (
-        n=channel["lrp_num"], bp_t=channel["lrp_bp_TS"], tx_t=channel["lrp_tx_TS"]))
-    fout.write ("x_debg,{x}, srch_strt_TS,{s1}, srch_stp_TS,{s2}, src_strt_idx,{i1}, srch_stp_idx,{i2},".format (
-        x=channel["x_debug"], s1=start_TS, s2=stop_TS, i1=start_TS_index, i2=stop_TS_index))
-    if (skip):
+    fout.write (",ch-x,{x}, sum_ch-x,{sx}, x_IS,{x_IS}, x_IS_dbg,{x_IS_d}, lrp_ch,{lrp_ch}, skip,{s}, min_sk_qsz,{sq},".format ( 
+       x=channel["x"], sx=sum_ch_x, x_IS=channel["x_IS"], x_IS_d=channel["x_IS_debug"], lrp_ch=lrp_channel, s=skip, sq=min_skip_qsize))
+    fout.write ("lrp_found,{f}, lrp_num,{n}, lrp_bp_TS,{bp_t}, lrp_tx_TS,{tx_t},".format (
+        f=lrp_channel_found, n=channel["lrp_num"], bp_t=channel["lrp_bp_TS"], tx_t=channel["lrp_tx_TS"]))
+    fout.write ("x_debg,{x}, srch_strt_TS,{s1}, srch_stp_TS,{s2}, res_TS,{s3}, srch_strt_idx,{i1}, srch_stp_idx,{i2},".format (
+        x=channel["x_debug"], s1=start_TS, s2=stop_TS, s3=skip_line.resume_TS, i1=start_TS_index, i2=stop_TS_index))
+    fout.write ("srch_strt_pkt,{p1}, srch_stop_pkt,{p2},".format (
+        p1=log_dic["all_latency"][start_TS_index].PktNum, p2=log_dic["all_latency"][stop_TS_index].PktNum))
+
+    if (sum(channel["x_IS"]) != 0) and (skip_line.qsize != 0):
         fout.write ("lrp,{l}, lrp_tx_idx,{i},".format (l=channel["lrp_num"][lrp_channel], i=lrp_tx_index))
         fout.write ("start_TS,{stt}, delta,{d}, skip_TS,{stpt},".format (stt=lrp_tx_TS, d=lrp_to_sx_delta, stpt=lrp_tx_skip_TS))
         fout.write ("o_res_pkt,{rp}, o_res_TS,{rt}, n_res_pkt,{nrp}, n_res_TS,{nrt}, c-d,{d}, retx,{r}".format (
             rp=resume_pkt_num, rt=resume_rx_TS, nrp=dd_new_resume_pkt_num, nrt=dd_new_resume_rx_TS, d=diff, r=resume_tx_retx))
+    """
 
     fout.write ("\n")
 
