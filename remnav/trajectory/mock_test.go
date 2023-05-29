@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestBasic(t *testing.T) {
+func TestVehicleMock(t *testing.T) {
 	var mock VehicleMock
 	mock.RTT = 115
 	mock.ApplicationDelay = 205

@@ -22,13 +22,9 @@ func main() {
 		rnnet.OperatorTrajectoryListen,
 		"port for trajectory requests and applied messages")
 
-	localApplied := flag.Int("local_applied",
-		rnnet.OperatorTrajectoryApplication,
-		"forward trajectory-appplication to this local port")
-	// Since we are mocking trajectory generation, we have to send the mocks to the display.
-	localTraj := flag.Int("local_trajectory",
-		rnnet.OperatorTrajectoryRequestDisplay,
-		"forward trajectory request to this local port")
+	localDisplay := flag.Int("local_display",
+		rnnet.OperatorTrajectoryDisplay,
+		"trajectories and trajectory-appplication to this local port")
 
 	bufSize := flag.Int("bufsize", 4096, "buffer size for incoming messages")
 	sleep := flag.Int("sleep", 50, "sleep between trajectories, ms")
@@ -53,31 +49,28 @@ func main() {
 	recvd := rnnet.BidiRW(*listen, *bufSize, send, *verbose)
 	deduped := trj.Dedup(recvd, *progress, *verbose)
 
+	localTrajCh := make(chan []byte)
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go rnlog.Binned(logCh, logDir, &wg)
 
 	// Application messages go to the display.
-	wg.Add(1)
-	applCh := make(chan []byte)
-	go rnnet.WritePort(applCh, *localApplied, &wg)
-
 	go func() {
 		for msg := range deduped {
-			applCh <- msg.Bytes()
+			localTrajCh <- msg.Bytes()
 
 			select {
 			case logCh <- msg:
 			default:
-				log.Printf("%s: log channel not ready (annotation)\n", progName)
+				log.Printf("%s: log channel not ready (application)\n", progName)
 			}
 		}
 	}()
 
 	// Trajectory requests go to the display as well as to the vehicle.
 	wg.Add(1)
-	localTrajCh := make(chan []byte)
-	go rnnet.WritePort(localTrajCh, *localTraj, &wg)
+	go rnnet.WritePort(localTrajCh, *localDisplay, &wg)
 
 	wg.Add(1)
 	go func() {
