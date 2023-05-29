@@ -92,11 +92,11 @@ def read_csv_file(filename, tuplename, tx_TS_index):
 in_dir = "C:/Users/gopal/Downloads/05_22_2023/"
 out_dir = "C:/Users/gopal/Downloads/analysis_output/"
 
-# rx_name_part = "2023_05_22_14_24_18_v_9_7_3_online"
-# tx_name_part = "2023_05_22_14_24_13_v11_8_4"
+rx_name_part = "2023_05_22_14_24_18_v_9_7_3_online"
+tx_name_part = "2023_05_22_14_24_13_v11_8_4"
 
-rx_name_part = "2023_05_22_14_41_50_v_9_7_3_online"
-tx_name_part = "2023_05_22_14_41_45_v11_8_4"
+# rx_name_part = "2023_05_22_14_41_50_v_9_7_3_online"
+# tx_name_part = "2023_05_22_14_41_45_v11_8_4"
 
 # rx_name_part = "2023_05_19_10_16_32_v_9_7_3_online"
 # tx_name_part = "2023_05_19_10_16_27_v11_8_4"
@@ -284,7 +284,7 @@ for i in range(3):
         print ("remvoved {n} duplicates from {s} metadata array".format (n=count, s=array_name))
     # now sort it back by tx_TS
     chrx_a.sort (key = lambda a: a.tx_TS) 
-    
+
     log_dic.update({"chrx_sorted_by_pkt_num"+str(i): sorted(log_dic["chrx"+str(i)], key = lambda a: a.pkt_num)})
 
 ########################################################################################
@@ -436,8 +436,10 @@ while service_index < len(log_dic["service"]):
     # 
 
     # relax channel_x to incldue other channels that transmitted packets neighboring lrp in porximity of lrp_bp_TS
-    SEARCH_TS_WINDOW = 20
-    SEARCH_PKT_WINDOW = 2
+    SEARCH_TS_WINDOW = 10
+    SEARCH_PKT_WINDOW = 3
+    IN_SERVICE_PERIOD = 15
+    MAX_SKIP_PACKETS = 15
     start_TS = lrp_bp_TS - SEARCH_TS_WINDOW
     start_TS_index = bisect_left (log_dic["all_latency"], start_TS, key = lambda a: a.bp_t2r_receive_TS)
     stop_TS = min (lrp_bp_TS + SEARCH_TS_WINDOW, skip_line.resume_TS)
@@ -471,10 +473,10 @@ while service_index < len(log_dic["service"]):
             channel["x"][i] and 
             # channel is in service now
             channel["last_state_x"][i] and 
-            # channel has been in service for atleast 30ms prior to resume time
-            channel["last_state_x_TS"][i] <= (service_line.service_transition_TS - 30))
+            # channel has been in service for atleast IN_SERVICE_PERIOD prior to resume time
+            channel["last_state_x_TS"][i] <= (service_line.service_transition_TS - IN_SERVICE_PERIOD))
         channel["x_IS_debug"][i] = int (
-            channel["last_state_x_TS"][i] <= (service_line.service_transition_TS - 30)  and 
+            channel["last_state_x_TS"][i] <= (service_line.service_transition_TS - IN_SERVICE_PERIOD)  and 
             not (channel["last_state_x_TS"][i] <= (channel["lrp_bp_TS"][i] -30 - channel["t2r"][i])))
     
     # if there are multiple candidates for lrp, pick according the the table below
@@ -545,8 +547,8 @@ while service_index < len(log_dic["service"]):
     if sum (channel["x_IS"]) == 0 or skip_line.qsize == 0:
         skip = 0
     else:
-        skip = min (skip_line.qsize, max (0, unconstrained_skip_pkt_num - resume_pkt_num))
-
+        skip = min (skip_line.qsize, MAX_SKIP_PACKETS, max (0, unconstrained_skip_pkt_num - resume_pkt_num))
+    
     # now check if the resuming channel was effective
     dd_new_resume_index = bisect_left (log_dic["dedup"], resume_pkt_num + skip, key = lambda a: a.pkt_num)
     dd_new_resume_pkt_num = log_dic["dedup"][dd_new_resume_index].pkt_num
