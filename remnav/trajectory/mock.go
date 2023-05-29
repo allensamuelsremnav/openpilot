@@ -7,7 +7,7 @@ import (
 )
 
 // Vehicle mock takes Trajectories and computes TrajectoryApplied messages with
-// realistic RTTs  and application delays.
+// realistic RTT  and application delays.
 
 // RTT is modeled as
 // operator -> vehicle
@@ -36,7 +36,7 @@ type VehicleMock struct {
 	ExecutionPeriod  int // ms
 }
 
-func (m VehicleMock) doit(trajBytes []byte) []byte {
+func (m VehicleMock) apply(trajBytes []byte) []byte {
 	var traj Trajectory
 	err := json.Unmarshal(trajBytes, &traj)
 	if err != nil {
@@ -73,7 +73,7 @@ func (m VehicleMock) run(trajectories <-chan []byte) <-chan []byte {
 			case <-startTimer.C:
 				tb := queue[0]
 				queue = queue[1:]
-				applicationCh <- m.doit(tb)
+				applicationCh <- m.apply(tb)
 				break startLoop
 			}
 		}
@@ -94,7 +94,7 @@ func (m VehicleMock) run(trajectories <-chan []byte) <-chan []byte {
 				if len(queue) > 0 {
 					tb := queue[0]
 					queue = queue[1:]
-					applicationCh <- m.doit(tb)
+					applicationCh <- m.apply(tb)
 					executionTimer.Reset(executionDuration)
 				}
 				if len(queue) == 0 && !trajOk {
