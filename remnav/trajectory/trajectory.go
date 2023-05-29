@@ -12,9 +12,9 @@ const ClassTrajectory = "TRAJECTORY"
 
 type Trajectory struct {
 	Class     string  `json:"class"`
-	Requested int64   `json:"requested"`  // μs since Unix epoch
-	Curvature float64 `json':"curvature"` // 1/m
-	Speed     float64 `json':"speed"`     // m/s
+	Requested int64   `json:"requested"` // μs since Unix epoch
+	Curvature float64 `json:"curvature"` // 1/m
+	Speed     float64 `json:"speed"`     // m/s
 }
 
 func (t Trajectory) Bytes() []byte {
