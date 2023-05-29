@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-var params Parameters
+var params PlannerParameters
 
 func setup() {
-	params = Parameters{Wheelbase: 4,
+	params = PlannerParameters{Wheelbase: 4,
 		GameWheelToTire: math.Pi, // One full turn lock-to-lock
 		TireMax:         math.Pi / 2,
 		DtireDtMax:      0.25,

@@ -40,7 +40,7 @@ func (s Speed) String() string {
 }
 
 // Parameters for the planner
-type Parameters struct {
+type PlannerParameters struct {
 	Wheelbase float64 // m
 	// Convert game wheel positions to tire angle.
 	GameWheelToTire float64 // radians/radians
@@ -53,7 +53,7 @@ type Parameters struct {
 }
 
 // Convert game wheel to tire angle.
-func (p Parameters) tire(gWheel float64) float64 {
+func (p PlannerParameters) tire(gWheel float64) float64 {
 	tire := gWheel * p.GameWheelToTire
 	if math.Abs(tire) > p.TireMax {
 		tire = math.Copysign(p.TireMax, tire)
@@ -63,7 +63,7 @@ func (p Parameters) tire(gWheel float64) float64 {
 
 // Limit tire angle rate of change (ω).
 // radians and seconds!!!
-func (p Parameters) limitDtireDt(tireState, tireRequested, dt float64) float64 {
+func (p PlannerParameters) limitDtireDt(tireState, tireRequested, dt float64) float64 {
 	dtire := tireRequested - tireState
 	if dt == 0 && dtire != 0 {
 		log.Fatalf("dt == 0 but dtire = %v", dtire)
@@ -77,7 +77,7 @@ func (p Parameters) limitDtireDt(tireState, tireRequested, dt float64) float64 {
 }
 
 // Compute curvature using front-axle bicycle model.
-func (p Parameters) curvature(tire float64) float64 {
+func (p PlannerParameters) curvature(tire float64) float64 {
 	sin := math.Sin(tire)
 	// Don't divide by zero
 	const eps = 1e-300
@@ -114,7 +114,7 @@ func tpvToSpeed(buf []byte) Speed {
 }
 
 // Make Trajectories from speed and g920.
-func Planner(param Parameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G920,
+func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G920,
 	logCh chan<- rnlog.Loggable) <-chan []byte {
 	trajectories := make(chan []byte)
 
