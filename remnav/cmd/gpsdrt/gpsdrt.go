@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	gpsd "remnav.com/remnav/metadata/gpsd"
 	"remnav.com/remnav/metadata/storage"
@@ -67,6 +68,7 @@ func main() {
 		"destination host:port, e.g. 96.64.247.70:"+strconv.Itoa(rnnet.OperatorGpsdListen))
 	devs := flag.String("devices", "eth0,eth0",
 		"comma-separated list of network devices, e.g. wlan0_1,wlan1_1,wlan2_1")
+	heartbeatInterval := flag.Int("heartbeat", 60000, "heartbeat interval ms")
 	vehicleRoot := flag.String("vehicle_root",
 		"/home/greg/remnav_log",
 		"vehicle storage directory, e.g. '/home/user/6TB/vehicle/remconnect'")
@@ -92,6 +94,10 @@ func main() {
 		devices = append(devices, t)
 	}
 
+	var tick <-chan time.Time
+	heartbeatDuration := time.Duration(*heartbeatInterval) * time.Millisecond
+	heartbeatTicker := time.NewTicker(heartbeatDuration)
+	tick = heartbeatTicker.C
 	gnssDir := gpsd.LogDir("gpsdrt", *vehicleRoot, storage.RawGNSSSubdir, *archiveServer, *archiveRoot)
 	// Get message stream from gpsd server.
 	msgs := watch(*gpsdAddress, *verbose)
@@ -100,12 +106,28 @@ func main() {
 	logCh := make(chan string)
 	udpCh := make(chan []byte)
 	go func() {
-		for msg := range msgs {
-			udpCh <- msg
-			logCh <- string(msg)
+		if tick != nil {
+			defer heartbeatTicker.Stop()
 		}
-		close(udpCh)
-		close(logCh)
+		defer close(udpCh)
+		defer close(logCh)
+
+		var heartbeat gpsd.Class
+		heartbeat.Class = gpsd.ClassHeartbeat
+		for {
+			select {
+			case msg, ok := <-msgs:
+				if !ok {
+					return
+				}
+				udpCh <- msg
+				logCh <- string(msg)
+			case <-tick:
+				heartbeat.Time = time.Now().UTC()
+				hb, _ := json.Marshal(heartbeat)
+				udpCh <- hb
+			}
+		}
 	}()
 
 	var wg sync.WaitGroup

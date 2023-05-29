@@ -77,7 +77,8 @@ func main() {
 	log.Printf("%s: forwarding to ports %v\n", progName, forwards)
 
 	logCh := make(chan string)
-	gnssDir := gpsd.LogDir("gpsdrt", *logRoot, storage.RawGNSSSubdir, "", "")
+	gnssDir := gpsd.LogDir(fmt.Sprintf("gpsdlisten:%d", *listenPort),
+		*logRoot, storage.RawGNSSSubdir, "", "")
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -99,15 +100,22 @@ func main() {
 	defer pc.Close()
 
 	for msg := range dedup(pc, *bufSize) {
-		for j := 0; j < len(forwardChannels); j++ {
-			select {
-			case forwardChannels[j] <- msg:
-			default:
-				log.Printf("%d channel not ready, packet dropped\n", forwards[j])
+		key := getter(msg)
+		if key.Type != gpsd.ClassHeartbeat {
+			for j := 0; j < len(forwardChannels); j++ {
+				select {
+				case forwardChannels[j] <- msg:
+				default:
+					log.Printf("%d channel not ready, packet dropped\n", forwards[j])
+				}
 			}
 		}
+		logstr := string(msg)
+		if key.Type == gpsd.ClassHeartbeat {
+			logstr += "\n"
+		}
 		select {
-		case logCh <- string(msg):
+		case logCh <- logstr:
 		default:
 			log.Printf("log channel not ready, packet dropped\n")
 		}

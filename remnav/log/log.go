@@ -30,7 +30,7 @@ func Binned(msgs <-chan Loggable, logDir string, wg *sync.WaitGroup) {
 			log.Fatal(err)
 		}
 
-		s := time.UnixMicro(ts).Format(binTimestampFmt)
+		s := time.UnixMicro(ts).UTC().Format(binTimestampFmt)
 		if ofile == nil || oTimestamp < s {
 			if ofile != nil {
 				ofile.Close()
