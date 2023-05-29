@@ -43,7 +43,7 @@ func (s Speed) String() string {
 type Parameters struct {
 	Wheelbase float64 // m
 	// Convert game wheel positions to tire angle.
-	GameWheelToTire float64
+	GameWheelToTire float64 // radians/radians
 	// Maximum allowed tire angle
 	TireMax float64 // radians
 	// Tire steering max angular velocity
@@ -113,6 +113,7 @@ func tpvToSpeed(buf []byte) Speed {
 
 }
 
+// Make Trajectories from speed and g920.
 func Planner(param Parameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G920,
 	logCh chan<- rnlog.Loggable) <-chan []byte {
 	trajectories := make(chan []byte)
@@ -127,9 +128,10 @@ func Planner(param Parameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G920,
 	var tirePrev float64     // at last trajectory
 
 	ticker := time.NewTicker(trajectoryInterval)
-	defer ticker.Stop()
 	// tickPrev := time.Now()
+
 	go func() {
+		defer ticker.Stop()
 		defer close(trajectories)
 		var okG920 bool
 		for {
@@ -150,10 +152,11 @@ func Planner(param Parameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G920,
 				const microsToSeconds = 1e-6
 				dt := float64(report.Requested-reportPrev.Requested) * microsToSeconds
 				if dt <= 0 {
-					log.Printf("dt <= 0 for G920 at %d", report.Requested)
+					log.Printf("dt <= 0 for G920 at %d - %d", report.Requested, reportPrev.Requested)
 					continue
 				}
 				newTire := param.limitDtireDt(tirePrev, tireRequested, dt)
+				// fmt.Printf("report wheel %.2f, tire requested %.2f, limited %.2f\n", report.Wheel, tireRequested, newTire)
 				curvature := param.curvature(newTire)
 
 				trajectory := Trajectory{Class: ClassTrajectory,
@@ -162,9 +165,24 @@ func Planner(param Parameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G920,
 					Speed:     speed.Speed}
 				trajectories <- trajectory.Bytes()
 
-				logCh <- speed
-				logCh <- report
-				logCh <- trajectory
+				select {
+				case logCh <- speed:
+				default:
+					log.Print("log channel not ready, packet dropped (speed)")
+				}
+
+				select {
+				case logCh <- report:
+				default:
+					log.Print("log channel not ready, packet dropped (g920)")
+				}
+
+				select {
+				case logCh <- trajectory:
+				default:
+					log.Print("log channel not ready, packet dropped (trajectory)")
+				}
+
 				tirePrev = newTire
 				reportPrev = report
 

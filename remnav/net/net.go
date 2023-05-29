@@ -64,7 +64,7 @@ func ReadFrom(pc net.PacketConn, bufSize int) (<-chan []byte, chan net.Addr) {
 }
 
 // Write msgs to this port.
-func WritePort(msgs chan []byte, port int, wg *sync.WaitGroup) {
+func WritePort(msgs <-chan []byte, port int, wg *sync.WaitGroup) {
 	defer wg.Done()
 	conn, err := net.Dial("udp", ":"+strconv.Itoa(port))
 	defer conn.Close()
