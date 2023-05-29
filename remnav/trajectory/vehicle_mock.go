@@ -54,7 +54,7 @@ func (m VehicleMock) apply(trajBytes []byte) []byte {
 }
 
 // Generate TrajectoryApplied messages for a stream of Trajectory messages.
-func (m VehicleMock) run(trajectories <-chan []byte) <-chan []byte {
+func (m VehicleMock) Run(trajectories <-chan []byte) <-chan []byte {
 	applicationCh := make(chan []byte)
 
 	executionDuration := time.Duration(m.ExecutionPeriod) * time.Millisecond

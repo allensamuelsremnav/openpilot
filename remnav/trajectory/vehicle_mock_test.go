@@ -14,7 +14,7 @@ func TestVehicleMock(t *testing.T) {
 	mock.ApplicationDelay = 205
 	mock.ExecutionPeriod = 50
 	trajectories := make(chan []byte)
-	applications := mock.run(trajectories)
+	applications := mock.Run(trajectories)
 	go func(n int) {
 		defer close(trajectories)
 		ticker := time.NewTicker(time.Duration(50) * time.Millisecond)
