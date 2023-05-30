@@ -91,33 +91,46 @@ func clone(trjCh <-chan []byte) (<-chan []byte, <-chan []byte) {
 	return out0, out1
 }
 
-// Merge two channels into one.
-func merge(ch0, ch1 <-chan []byte) <-chan []byte {
+// Merge two channels into one; log the result.
+func merge(trajCh, applCh <-chan []byte, logCh chan<- rnlog.Loggable) <-chan []byte {
 	out := make(chan []byte)
 	go func() {
 		defer close(out)
-		ok0 := true
-		ok1 := true
+		okTraj := true
+		okAppl := true
 	forloop:
 		for {
 			var bytes []byte
 			select {
-			case bytes, ok0 = <-ch0:
-				if !ok0 {
-					ch0 = nil
-					if !ok1 {
+			case bytes, okTraj = <-trajCh:
+				if !okTraj {
+					trajCh = nil
+					if !okAppl {
 						break forloop
 					}
 				}
 				out <- bytes
-			case bytes, ok1 = <-ch1:
-				if !ok1 {
-					ch1 = nil
-					if !ok0 {
+				var traj trj.Trajectory
+				err := json.Unmarshal(bytes, &traj)
+				if err != nil {
+					log.Fatal(err)
+				}
+				logCh <- traj
+			case bytes, okAppl = <-applCh:
+				if !okAppl {
+					applCh = nil
+					if !okTraj {
 						break forloop
 					}
 				}
 				out <- bytes
+				var appl trj.TrajectoryApplication
+				err := json.Unmarshal(bytes, &appl)
+				if err != nil {
+					log.Fatal(err)
+				}
+				logCh <- appl
+
 			}
 		}
 	}()
@@ -150,9 +163,8 @@ func main() {
 	trajCh := trj.Planner(params, speeds, gs, logCh)
 	trajCh0, trajCh1 := clone(trajCh)
 	applCh := applications(trajCh0)
-	// On Linux, at least, we can't open two connections to the same local port,
-	// so we merge the applications and the trajectories.
-	displayCh := merge(trajCh1, applCh)
+
+	displayCh := merge(trajCh1, applCh, logCh)
 
 	var wg sync.WaitGroup
 
