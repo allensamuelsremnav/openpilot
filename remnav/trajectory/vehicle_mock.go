@@ -79,7 +79,7 @@ func (m VehicleMock) Run(trajectories <-chan []byte) <-chan []byte {
 		}
 
 		// Force subsequent reports every ExecutionPeriod.
-		var executionTimer = time.NewTimer(executionDuration)
+		var executionTicker = time.NewTicker(executionDuration)
 		trajOk := true
 		for {
 			var traj []byte
@@ -90,12 +90,11 @@ func (m VehicleMock) Run(trajectories <-chan []byte) <-chan []byte {
 					break
 				}
 				queue = append(queue, traj)
-			case <-executionTimer.C:
+			case <-executionTicker.C:
 				if len(queue) > 0 {
 					tb := queue[0]
 					queue = queue[1:]
 					applicationCh <- m.apply(tb)
-					executionTimer.Reset(executionDuration)
 				}
 				if len(queue) == 0 && !trajOk {
 					return
