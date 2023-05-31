@@ -7,7 +7,7 @@ import (
 )
 
 // Vehicle mock takes Trajectories and computes TrajectoryApplied messages with
-// realistic RTTs  and application delays.
+// realistic RTT  and application delays.
 
 // RTT is modeled as
 // operator -> vehicle
@@ -36,11 +36,10 @@ type VehicleMock struct {
 	ExecutionPeriod  int // ms
 }
 
-func (m VehicleMock) doit(trajBytes []byte) []byte {
-	var traj Trajectory
-	err := json.Unmarshal(trajBytes, &traj)
-	if err != nil {
-		log.Fatal(err)
+// Generate TrajectoryApplication with delayed application time.
+func (m VehicleMock) apply(traj Trajectory) []byte {
+	if traj.Class != ClassTrajectory {
+		log.Fatalf("expected class %s, go %s", ClassTrajectory, traj.Class)
 	}
 	var appl TrajectoryApplication
 	appl.Class = ClassTrajectoryApplication
@@ -53,51 +52,72 @@ func (m VehicleMock) doit(trajBytes []byte) []byte {
 	return applBytes
 }
 
-// Generate TrajectoryApplied messages for a stream of Trajectory messages.
-func (m VehicleMock) run(trajectories <-chan []byte) <-chan []byte {
+// Convert cmd to Trajectory if possible.
+func maybeTrajectory(cmd []byte) *Trajectory {
+	var probe Trajectory
+	err := json.Unmarshal(cmd, &probe)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if probe.Class == ClassTrajectory {
+		return &probe
+	}
+	return nil
+}
+
+// Generate TrajectoryApplied messages for a stream of commands.
+func (m VehicleMock) Run(cmds <-chan []byte) <-chan []byte {
 	applicationCh := make(chan []byte)
 
 	executionDuration := time.Duration(m.ExecutionPeriod) * time.Millisecond
 
 	go func() {
 		defer close(applicationCh)
-		var queue [][]byte
-		queue = append(queue, <-trajectories)
+		var queue []Trajectory
+		for {
+			if maybe := maybeTrajectory(<-cmds); maybe != nil {
+				queue = append(queue, *maybe)
+				break
+			}
+		}
 		// Force RTT delay for first delivered TrajectoryApplication.
 		startTimer := time.NewTimer(time.Duration(m.RTT) * time.Millisecond)
 	startLoop:
 		for {
 			select {
-			case traj := <-trajectories:
-				queue = append(queue, traj)
+			case cmd := <-cmds:
+				if maybe := maybeTrajectory(cmd); maybe != nil {
+					queue = append(queue, *maybe)
+				}
 			case <-startTimer.C:
 				tb := queue[0]
 				queue = queue[1:]
-				applicationCh <- m.doit(tb)
+				applicationCh <- m.apply(tb)
 				break startLoop
 			}
 		}
 
 		// Force subsequent reports every ExecutionPeriod.
-		var executionTimer = time.NewTimer(executionDuration)
-		trajOk := true
+		var executionTicker = time.NewTicker(executionDuration)
+		cmdOk := true
 		for {
-			var traj []byte
+			var cmd []byte
 			select {
-			case traj, trajOk = <-trajectories:
-				if !trajOk {
-					trajectories = nil
+			case cmd, cmdOk = <-cmds:
+				if !cmdOk {
+					cmds = nil
 					break
 				}
-				queue = append(queue, traj)
-			case <-executionTimer.C:
-				if len(queue) > 0 {
-					tb := queue[0]
-					queue = queue[1:]
-					applicationCh <- m.doit(tb)
-					executionTimer.Reset(executionDuration)
+				if maybe := maybeTrajectory(cmd); maybe != nil {
+					queue = append(queue, *maybe)
 				}
-				if len(queue) == 0 && !trajOk {
+			case <-executionTicker.C:
+				if len(queue) > 0 {
+					t := queue[0]
+					queue = queue[1:]
+					applicationCh <- m.apply(t)
+				}
+				if len(queue) == 0 && !cmdOk {
 					return
 				}
 			}

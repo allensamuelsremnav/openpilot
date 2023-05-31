@@ -14,7 +14,7 @@ func TestVehicleMock(t *testing.T) {
 	mock.ApplicationDelay = 205
 	mock.ExecutionPeriod = 50
 	trajectories := make(chan []byte)
-	applications := mock.run(trajectories)
+	applications := mock.Run(trajectories)
 	go func(n int) {
 		defer close(trajectories)
 		ticker := time.NewTicker(time.Duration(50) * time.Millisecond)
@@ -39,11 +39,14 @@ func TestVehicleMock(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		fmt.Printf("RTT %d μs = %d - %d, applied - trajectory = %d μs = %d - %d\n", now-appl.Trajectory, now, appl.Trajectory, appl.Applied-appl.Trajectory, appl.Applied, appl.Trajectory)
+		fmt.Printf("RTT %d μs = %d - %d, observed applied - trajectory = %d μs = %d - %d\n", now-appl.Trajectory, now, appl.Trajectory, appl.Applied-appl.Trajectory, appl.Applied, appl.Trajectory)
 		eps := 7500.0
-		checkRTT := math.Abs((float64)(now - appl.Trajectory - int64(mock.RTT*1000)))
+		nominal := int64(mock.RTT * 1000)
+		checkRTT := math.Abs((float64)(now - appl.Trajectory - nominal))
 		if checkRTT > eps {
-			t.Fatalf("%f, now-appl.Trajectory %d = %d - %d > %f", checkRTT, now-appl.Trajectory, now, appl.Trajectory, eps)
+			t.Fatalf("RTT error %f > %f, observed RTT now - appl.Trajectory = %d μs = %d - %d, nominal %d μs",
+				checkRTT, eps,
+				now-appl.Trajectory, now, appl.Trajectory, nominal)
 		}
 		checkDelay := math.Abs((float64)(appl.Applied - appl.Trajectory - int64(mock.ApplicationDelay*1000)))
 		epsDelay := 0.0 // Delay is fixed.
