@@ -11,6 +11,16 @@ from copy import deepcopy
 # function definitions
 #########################################################################################
 
+def schedule (list, new):
+    """ schedules a new entry at the right place in the list using TS """
+    if len (list) == 0:
+        list.insert(0, new)
+        return
+    for i, line in enumerate(list):
+        if new.TS < line.TS:
+            list.insert (i, new)
+    return
+
 def init_channel_x (num):
     """ initializes speicified lists to 3 elements to 0 """
     a = []
@@ -92,11 +102,11 @@ def read_csv_file(filename, tuplename, tx_TS_index):
 in_dir = "C:/Users/gopal/Downloads/05_22_2023/"
 out_dir = "C:/Users/gopal/Downloads/analysis_output/"
 
-rx_name_part = "2023_05_22_14_24_18_v_9_7_3_online"
-tx_name_part = "2023_05_22_14_24_13_v11_8_4"
+# rx_name_part = "2023_05_22_14_24_18_v_9_7_3_online"
+# tx_name_part = "2023_05_22_14_24_13_v11_8_4"
 
-# rx_name_part = "2023_05_22_14_41_50_v_9_7_3_online"
-# tx_name_part = "2023_05_22_14_41_45_v11_8_4"
+rx_name_part = "2023_05_22_14_41_50_v_9_7_3_online"
+tx_name_part = "2023_05_22_14_41_45_v11_8_4"
 
 # rx_name_part = "2023_05_19_10_16_32_v_9_7_3_online"
 # tx_name_part = "2023_05_19_10_16_27_v11_8_4"
@@ -139,7 +149,6 @@ log_dic = {}
 #
 # log files
 #
-"""
 # uplink log
 # uplink_queue. ch: 1, timestamp: 1681947064182, queue_size: 316, elapsed_time_since_last_queue_update: 9, actual_rate: 0
 uplink_fields = namedtuple ("uplink_fields", "channel, queue_size_sample_TS, queue_size, \
@@ -147,7 +156,6 @@ uplink_fields = namedtuple ("uplink_fields", "channel, queue_size_sample_TS, que
 files_dic.update ({"uplink":  files_dic_fields._make ([in_dir+"uplink_queue_"+tx_name_part+".log", uplink_fields])})
 uplink_array = []
 log_dic.update ({"uplink": uplink_array})
-"""
 
 # latency log
 # ch: 0, received a latency, numCHOut:2, packetNum: 4294967295, latency: 40, time: 1681947064236, sent from ch: 0
@@ -172,15 +180,20 @@ files_dic.update ({"skip": files_dic_fields._make ([in_dir+"skip_decision_"+tx_n
 skip_array = []
 log_dic.update ({"skip": skip_array})
 
-"""
-# retx log
-# ch: 2, received a retx, numCHOut:2, startPacketNum: 39753, run: 1, time: 1681946093091
-
 # bitrate log
 # send_bitrate: 830000, encoder state: 2, ch0 quality state: 1, ch1 quality state: 1, ch2 quality state: 1, time: 1681947065306
+brm_fields = namedtuple ("brm_fields", "send_bitrate, encoder_state, ch0_quality_state, ch1_quality_state, ch2_quality_state, TS")
+files_dic.update ({"brm": files_dic_fields._make ([in_dir+"bitrate_"+tx_name_part+".log", brm_fields])})
+brm_array = []
+log_dic.update ({"brm": brm_array})
 
 # avgQ log
 # RollingAvg75. Probe. CH: 2, RollingAvg75: 0.000000, qualityState: 1, queue size: 0, time: 1681947064175
+# avgq_fields 
+
+"""
+# retx log
+# ch: 2, received a retx, numCHOut:2, startPacketNum: 39753, run: 1, time: 1681946093091
 
 # probe log
 # ch: 0, receive_a_probe_packet. sendTime: 1681946022261, latency: 45, receivedTime: 1681946022306
@@ -227,8 +240,6 @@ if (files_dic_keys != log_dic_keys):
 #########################################################################################
 # read all the log data files. Each log is stored as list of namedtuples defined earlier
 #########################################################################################
-
-fout = open (out_dir + "skip_eff_chk_" + tx_name_part + ".csv", "w")
 
 # read all the log and csv files
 for item in files_dic:
@@ -288,8 +299,202 @@ for i in range(3):
     log_dic.update({"chrx_sorted_by_pkt_num"+str(i): sorted(log_dic["chrx"+str(i)], key = lambda a: a.pkt_num)})
 
 ########################################################################################
+# channel quality state and bit rate modulation checks
+########################################################################################
+
+fout = open (out_dir + "brm_chk" + tx_name_part + ".csv", "w")
+
+# channel quality state machine states
+GOOD_QUALITY = 0
+POOR_QUALITY = 1
+quality_state = [GOOD_QUALITY]*3
+next_quality_state = [GOOD_QUALITY]*3
+ms_since_in_service_x = [0]*3
+
+# encoder bit rate modulation state machine
+HIGH_BIT_RATE = 0
+LOW_BIT_RATE = 2
+WAITING_TO_GO_TO_HIGH_BIT_RATE = 99 # arbitrary
+encoder_state = LOW_BIT_RATE
+next_encoder_state = LOW_BIT_RATE
+encoder_state_x_TS = 0
+
+
+uplink_index = 0
+service_index = 0
+brm_index = 0
+next_uplink_index = 0
+next_service_index = 0
+next_brm_index = 0
+itr_count = 0
+
+scheduler_fields = namedtuple("scheduler_fields", "reason, TS")
+HEAD = 0
+REASON_WAITING_TO_GO_GOOD = 0
+REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE = 1
+internal_scheduling_list = [] # list of time stamps which the state machines will like to be updated
+
+# structures for to hold the inputs from sample to sample 
+IN_SERVICE = 1
+OUT_OF_SERVICE = 0
+queue_size = [0]*3
+queue_size_monitor_working = [0]*3
+in_service_state = [IN_SERVICE] *3
+in_service_state_x_TS = [0]*3
+est_t2r = [30]*3
+
+
+while uplink_index < len (log_dic["uplink"]) and service_index < len (log_dic["service"]) and \
+    brm_index < len (log_dic["brm"]):
+
+    uplink_line = log_dic["uplink"][uplink_index]
+    service_line = log_dic["service"][service_index]
+    brm_line = log_dic["brm"][brm_index]
+
+    # advance time to what needs to be evaluated first next
+    if len (internal_scheduling_list): 
+        current_TS = min (
+            uplink_line.queue_size_sample_TS, service_line.service_transition_TS, brm_line.TS,
+            internal_scheduling_list[HEAD].TS
+        )
+    else: 
+        current_TS = min ( uplink_line.queue_size_sample_TS, service_line.service_transition_TS, brm_line.TS)
+    
+    if current_TS == 1684791711650:
+        print ("debug")
+    
+    #
+    # read external inputs
+    #
+    next_uplink_index = uplink_index # assume it is not moving
+    # uplink log
+    while current_TS == uplink_line.queue_size_sample_TS: 
+        queue_size[uplink_line.channel] = uplink_line.queue_size
+        next_uplink_index += 1 # current line was consumed
+        # check if there multiple lines in the log with with the same TS
+        if next_uplink_index < len (log_dic["uplink"]) and log_dic["uplink"][next_uplink_index].queue_size_sample_TS == current_TS:
+            uplink_index = next_uplink_index
+            uplink_line = log_dic["uplink"][uplink_index]
+        else: break
+    
+    # service log
+    next_service_index = service_index
+    while current_TS == service_line.service_transition_TS:
+        queue_size_monitor_working[service_line.channel] = int (service_line.zeroUplinkQueue == 0)
+        in_service_state[service_line.channel] = service_line.service_flag
+        in_service_state_x_TS[service_line.channel] = service_line.service_transition_TS
+        est_t2r[service_line.channel] = service_line.est_t2r
+        next_service_index += 1 # current line was consumed
+        # check if there multiple lines in the log file with the same TS
+        if next_service_index < len (log_dic["service"]) and log_dic["service"][next_service_index].service_transition_TS == current_TS: 
+            service_index = next_service_index
+            service_line = log_dic["service"][service_index]
+        else: break
+
+    # bit rate modulation log
+    next_brm_index = brm_index
+    while current_TS == brm_line.TS: 
+        next_brm_index = brm_index + 1
+        # check if there multiple lines in the log file with the same TS
+        if next_brm_index < len (log_dic["brm"]) and log_dic["brm"][next_brm_index].TS == current_TS: 
+            brm_index = next_brm_index
+            brm_line = log_dic["brm"][brm_index]
+        else: break
+
+    #
+    # quality state machine 
+    #
+    next_quality_state = deepcopy (quality_state)
+
+    for channel in range(3): 
+        if not queue_size_monitor_working[channel]:
+            next_quality_state[channel] = POOR_QUALITY
+
+        elif quality_state[channel] == GOOD_QUALITY:
+            if queue_size[channel] > 10 or est_t2r[channel] > 120:
+                next_quality_state[channel] = POOR_QUALITY
+
+        else: # in POOR_QUALITY
+            ms_since_in_service_x[channel] = current_TS - in_service_state_x_TS[channel]
+            if in_service_state[channel] == IN_SERVICE and \
+                ms_since_in_service_x[channel] > 35 and \
+                queue_size[channel] < 5 and \
+                est_t2r[channel] < 80:
+                next_quality_state[channel] = GOOD_QUALITY
+    # for each channel 
+
+    #
+    # encoder bit rate modulation state machine
+    #
+    num_of_channels_in_poor_quality_state = sum (int (state == POOR_QUALITY) for state in quality_state)
+    ms_since_encoder_state_x = current_TS - encoder_state_x_TS
+
+    if encoder_state == HIGH_BIT_RATE: 
+        next_encoder_state = LOW_BIT_RATE if num_of_channels_in_poor_quality_state == 3 else HIGH_BIT_RATE
+        encoder_state_x_TS = current_TS
+
+    elif encoder_state == LOW_BIT_RATE: 
+        if num_of_channels_in_poor_quality_state < 3:
+            if ms_since_encoder_state_x > 60:
+                next_encoder_state = HIGH_BIT_RATE 
+            else:
+                next_encoder_state = WAITING_TO_GO_TO_HIGH_BIT_RATE
+                new_entry = scheduler_fields (REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE, current_TS+60)
+                schedule (internal_scheduling_list, new_entry)
+    
+    else: # WAITING_TO_GO_TO_HIGH_BIT_RATE
+        head = internal_scheduling_list[HEAD]
+        if num_of_channels_in_poor_quality_state == 3:
+            next_encoder_state = LOW_BIT_RATE
+            encoder_state_x_TS = current_TS
+            del internal_scheduling_list[HEAD]
+        elif head.TS == current_TS and head.reason == REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE:
+            next_encoder_state = HIGH_BIT_RATE
+            del internal_scheduling_list[HEAD]
+    
+
+    # debug print outs
+
+    i_TS = internal_scheduling_list[HEAD].TS \
+        if len (internal_scheduling_list) else service_line.service_transition_TS # arbitrary else clause
+    fout.write (",TS,{t}, u_TS,{ut}, u_TS_i,{uti}, s_TS,{st}, s_TS_i,{sti}, b_TS,{bt}, b_TS_i,{bti}, i_TS,{it}".format (
+        t=current_TS, ut=uplink_line.queue_size_sample_TS, uti=uplink_index,
+        st=service_line.service_transition_TS, sti=service_index, bt=brm_line.TS, bti=brm_index, it=i_TS))
+    fout.write (",ch_st,{c}, n_ch_st,{nc}, e_st,{e}, n_e_st,{ne}".format (
+        c=quality_state, nc=next_quality_state, e=encoder_state, ne=next_encoder_state))
+    fout.write (",qsz,{q}, qsz_m,{qm}, IS_st,{i}, ms_IS_x,{mx}, IS_st_x,{ix}, est_t2r,{t}".format (
+        q=queue_size, qm=queue_size_monitor_working, i=in_service_state, mx=ms_since_in_service_x, ix=in_service_state_x_TS, t=est_t2r))
+    fout.write (",ch_pq,{p}, ms_e_st_x,{m}".format (
+        p=num_of_channels_in_poor_quality_state, m=ms_since_encoder_state_x))
+    fout.write (", brm,{b}".format (b=brm_line))
+    fout.write (", sched,{s}".format (s=internal_scheduling_list))
+    fout.write ("\n")
+
+
+    # check against reported brm
+
+    # update states 
+    quality_state = deepcopy (next_quality_state)
+    encoder_state = deepcopy (next_encoder_state)
+
+    uplink_index = next_uplink_index
+    service_index = next_service_index
+    brm_index = next_brm_index
+
+    itr_count += 1
+    if (itr_count % 1000) == 0: 
+        print ("itr count: ", itr_count)
+    if itr_count == 10_000: break
+# while have not exhausted at least one file
+
+fout.close ()
+exit ()
+
+########################################################################################
 # resume effectiveness checks
 ########################################################################################
+
+fout = open (out_dir + "skip_eff_chk_" + tx_name_part + ".csv", "w")
 
 for i, is_line in enumerate (log_dic["service"] if log_dic["skip"] == None else log_dic["skip"]):
     if log_dic["skip"] == None: # skip_decision file does not exist, so use service file
@@ -436,10 +641,10 @@ while service_index < len(log_dic["service"]):
     # 
 
     # relax channel_x to incldue other channels that transmitted packets neighboring lrp in porximity of lrp_bp_TS
-    SEARCH_TS_WINDOW = 10
-    SEARCH_PKT_WINDOW = 3
+    SEARCH_TS_WINDOW = 0
+    SEARCH_PKT_WINDOW = 0
     IN_SERVICE_PERIOD = 15
-    MAX_SKIP_PACKETS = 15
+    MAX_SKIP_PACKETS = 20
     start_TS = lrp_bp_TS - SEARCH_TS_WINDOW
     start_TS_index = bisect_left (log_dic["all_latency"], start_TS, key = lambda a: a.bp_t2r_receive_TS)
     stop_TS = min (lrp_bp_TS + SEARCH_TS_WINDOW, skip_line.resume_TS)
@@ -472,9 +677,14 @@ while service_index < len(log_dic["service"]):
             # channel supplied lrp
             channel["x"][i] and 
             # channel is in service now
-            channel["last_state_x"][i] and 
-            # channel has been in service for atleast IN_SERVICE_PERIOD prior to resume time
-            channel["last_state_x_TS"][i] <= (service_line.service_transition_TS - IN_SERVICE_PERIOD))
+            channel["last_state_x"][i] and (
+                # channel has been in service for atleast IN_SERVICE_PERIOD prior to resume time
+                channel["last_state_x_TS"][i] <= (service_line.service_transition_TS - IN_SERVICE_PERIOD)
+                or
+                # channel has been in service since it transmitted lrp
+                channel["last_state_x_TS"][i] <= (channel["lrp_bp_TS"][i] -30 - channel["t2r"][i])
+                )
+        )
         channel["x_IS_debug"][i] = int (
             channel["last_state_x_TS"][i] <= (service_line.service_transition_TS - IN_SERVICE_PERIOD)  and 
             not (channel["last_state_x_TS"][i] <= (channel["lrp_bp_TS"][i] -30 - channel["t2r"][i])))
@@ -485,7 +695,6 @@ while service_index < len(log_dic["service"]):
     #  eq       not eq          send smaller TS
     # not eq    eq              send larger pkt num
     # not eq    not eq          send smaller TS
-
     channel.update({"lrp_tx_TS": [0]*3, "lrp_tx_index": [0]*3})
     for i in range (3):
         if (channel["x_IS"][i]):
@@ -548,7 +757,7 @@ while service_index < len(log_dic["service"]):
         skip = 0
     else:
         skip = min (skip_line.qsize, MAX_SKIP_PACKETS, max (0, unconstrained_skip_pkt_num - resume_pkt_num))
-    
+
     # now check if the resuming channel was effective
     dd_new_resume_index = bisect_left (log_dic["dedup"], resume_pkt_num + skip, key = lambda a: a.pkt_num)
     dd_new_resume_pkt_num = log_dic["dedup"][dd_new_resume_index].pkt_num
@@ -572,6 +781,7 @@ while service_index < len(log_dic["service"]):
         rp=resume_pkt_num, rt=resume_rx_TS, nrp=dd_new_resume_pkt_num, nrt=dd_new_resume_rx_TS, d=diff, r=resume_tx_retx))
 
     """
+    
     sum_ch_x = sum(channel["x"])
     fout.write (",ch-x,{x}, sum_ch-x,{sx}, x_IS,{x_IS}, x_IS_dbg,{x_IS_d}, lrp_ch,{lrp_ch}, skip,{s}, min_sk_qsz,{sq},".format ( 
        x=channel["x"], sx=sum_ch_x, x_IS=channel["x_IS"], x_IS_d=channel["x_IS_debug"], lrp_ch=lrp_channel, s=skip, sq=min_skip_qsize))
@@ -615,11 +825,6 @@ IN_SERVICE = 1
 OUT_OF_SERVICE = 0
 WAITING_TO_GO_OUT_OF_SERVICE = 2
 
-# channel quality state machine states
-GOOD_QUALITY = 0
-POOR_QUALITY = 2
-WAITING_TO_GO_GOOD = 3
-
 #
 # set epoch times and other initial conditions 
 #
@@ -644,10 +849,7 @@ channel_service_state_x_TS = [next_external_eval_TS]*3
 queue_size_monitor_working = [True]*3
 queue_size = [0]*3
 
-channel_quality_state = [GOOD_QUALITY]*3
-
 current_TS = next_external_eval_TS
-channel_quality_state_x_TS = [next_external_eval_TS]*3
 # end of start of processing initialization
 
 #
@@ -707,11 +909,6 @@ while latency_index < len(log_dic["latency"]) and uplink_index < len(log_dic["up
             service_index += 1
             if (service_index < len(log_dic["service"])): service_line = log_dic["service"][service_index]
     
-    """
-    print ("current_TS: ", current_TS)
-    if (current_TS == 1683927095731):
-        print ("current_TS: ", 1683927095731)
-    """
     #
     # synthesized inputs
     #
@@ -788,176 +985,4 @@ while latency_index < len(log_dic["latency"]) and uplink_index < len(log_dic["up
     channel_service_state = deepcopy(next_channel_service_state)
     # channel_service_state = [st for st in next_channel_service_state]
 
-    """
-    ########################################################################################
-    # channel quality state machine
-    ########################################################################################
-    next_channel_quality_state = deepcopy(channel_quality_state)
-    for i in range(3):
-
-        if (queue_size_monitor_working[i] == False):
-            channel_quality_state[i] = POOR_QUALITY    
-
-        elif channel_quality_state[i] == GOOD_QUALITY:
-            if (queue_size[i] > 10) or (est_t2r[i] > 120):
-                channel_quality_state[i], channel_service_state_x_TS[i] = [POOR_QUALITY, current_TS]
-        
-        elif channel_quality_state[i] == POOR_QUALITY:
-            
-
-    # for channel quality state machine of each channel
-
-    if itr_count == 200:
-        break
-    """
-
 # while have not exhausted at least one input log file
-
-
-"""
-for i, line in enumerate (log_dic["latency"]):
-    print (line)
-    print (new_list[i])
-    if i == 3:
-        break
-
-fout = open (out_dir+"delete_me_test.csv", "w")
-for line in log_dic["latency"]:
-    fout.write("communicating_channel, {}, sending_channel, {}, PktNum, {}, receive_TS, {}\n".format ( \
-        line.communicating_channel, line.sending_channel, line.PktNum, line.receive_TS))
-fout.close()
-
-
-##################################################
-# start of scratch
-##################################################
-# print ("uplink len: ", len(log_dic["uplink"]), type (len(log_dic["uplink"])))
-# print ("service len: ", len(log_dic["service"]))
-
-fieldname = "uplink"
-print ("uplink len2: ", len(log_dic[fieldname]))
-
-print ("reading from generator")
-r = read_line (log_dic["service"])
-# while (line := next (r, None)) is not None:
-    # print (line)
-
-
-line = (next(r, None))
-print (line)
-print ("channel: ", line.channel)
-print ("bp_t2r: ", line.bp_t2r)
-
-print (next(r, None))
-print (next(r, None))
-print (next(r, None))
-
-for line in r:
-    print (type(line))
-    print (line)
-print (type(line))
-print (line)
-
-
-exit ()
-
-for i in files_dic:
-    print ("\n PRINTING file: ", files_dic[i].filename, " length: ", len(log_dic[i]), "\n")
-    for j, log_data in enumerate (log_dic[i]):
-        print (log_data)
-        if j>3:
-            break
-##################################################
-# end of scratch
-##################################################
-"""
-
-"""
-##################################################
-# IN_SERVICE state machine
-##################################################
-
-STATE == IN_SERVICE
-    transition to OUT_OF_SERVICE
-    if (
-        (occupancy_monitor_working && (occupancy > 10)) 
-        || 
-        (est_bp_t2r > 80ms)) 
-        && (3 channels in IN_SERVICE_STATES 
-        ||
-     	// only one channel besides this one is IN_SERVICE
-     	Remaining channel has been in service for at least 5ms)
-    )
-STATE == OUT_OF_SERVICE
-    transition to IN_SERVICE 
-    if (
-        (!occupancy_monitor_working_correctly || (occupancy < 5))
-        &&
-        ((est_bp_t2r < 50ms))
-   )
-"""
-
-"""
-#
-# initialize states to be out of service
-#
-# current_state 
-OUT_OF_SERVICE = 0
-IN_SERVICE = 1
-# transition reason
-# 1 if t2r, 2 if queue size, 3 if both, 0 if undefined 
-computed_service_state_fields = namedtuple ("computed_service_state_fields", 
-    "current_state, transition_TS, transition_reason")
-computed_service_state = {"att": (OUT_OF_SERVICE, 0, 0),
-                          "vz":  (OUT_OF_SERVICE, 0, 0),
-                          "tm":  (OUT_OF_SERVICE, 0, 0)}
-
-# while there are more entries in uplink and latency log to process
-read_uplink_line = read_log_file (log_dic["uplink"], "queue_size_sample_TS")
-read_latency_line = read_log_file (log_dic["latency"], "bp_t2r_receive_TS")
-
-uplink_line = next (read_uplink_line, None)
-latency_line = next (read_latency_line, None)
-
-while (uplink_line is not None) and (latency_line is not None):
-    if uplink_line.queue_size_sample_TS < latency_line.receive_TS:
-        # process queue
-        pass
-    
-    # obtain a valid feedback line 
-    # if queue size feedback is earlier than t2r feedbback
-        # process queue size feedback
-        # increment uplink array index
-    # else
-        # process t2r feedback
-        # increment service array index
-    # if state change then record the event and the reason
-    # find closest (smaller or bigger) state change in the service log
-    # generate warning if state change is further than the threshold
-    # generate warning if computed state does not match the expected state
-
-for item in files_dic:
-    print ("printing file: ", files_dic[item][0])
-    for i in files_dic[item][2]:
-        print (i)
-
-latency_log = open ("latency.txt", "r")
-latency_array = read_log_file (latency_log, files_dic["latency"][1])
-
-print ("latency log", "id=", id(latency_array))
-for i, line in enumerate(latency_array):
-    print (i, latency_array[i])
-
-# namedtuple_list = [latency_fields, probe_fields]
-# print (namedtuple_list)
-
-print ("latency log", "id=", id(latency_array))
-for i, line in enumerate(latency_array):
-    print(i, line.PktNum)
-
-probe_log = open ("probe.txt", "r")
-probe_array = read_log_file (probe_log)
-print ("probe log", "id=", id(probe_array))
-for line in probe_array:
-    print (line)
-"""
