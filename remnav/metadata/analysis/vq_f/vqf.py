@@ -11,15 +11,30 @@ from copy import deepcopy
 # function definitions
 #########################################################################################
 
-def schedule (list, new):
-    """ schedules a new entry at the right place in the list using TS """
-    if len (list) == 0:
-        list.insert(0, new)
+def schedule (lst, new):
+    """ schedules a new entry at the right place in the lst using TS.
+        assumes lst of named tuples with TS field """
+    if len (lst) == 0:
+        lst.insert(0, new)
         return
-    for i, line in enumerate(list):
+    for i, line in enumerate(lst):
         if new.TS < line.TS:
-            list.insert (i, new)
+            lst.insert (i, new)
+            return
+    lst.insert (len(lst), new)
     return
+# end of schedule
+
+def unschedule (lst, id, reason):
+    """ removes the first entry that matches the id and the reason.
+        assumes the lst of namedtuples with id and reason fields.
+        returns -1 if no removal, else 0"""
+    for i, line in enumerate (lst):
+        if lst[i].id == id and lst[i].reason == reason:
+            del lst[i]
+            return 0
+    return -1
+# end of unschedule
 
 def init_channel_x (num):
     """ initializes speicified lists to 3 elements to 0 """
@@ -307,6 +322,7 @@ fout = open (out_dir + "brm_chk" + tx_name_part + ".csv", "w")
 # channel quality state machine states
 GOOD_QUALITY = 0
 POOR_QUALITY = 1
+WAITING_TO_GO_GOOD = 99
 quality_state = [GOOD_QUALITY]*3
 next_quality_state = [GOOD_QUALITY]*3
 ms_since_in_service_x = [0]*3
@@ -323,13 +339,12 @@ encoder_state_x_TS = 0
 uplink_index = 0
 service_index = 0
 brm_index = 0
-next_uplink_index = 0
-next_service_index = 0
-next_brm_index = 0
+latency_index = 0
 itr_count = 0
 
-scheduler_fields = namedtuple("scheduler_fields", "reason, TS")
+scheduler_fields = namedtuple("scheduler_fields", "reason, TS, id")
 HEAD = 0
+ENCODER_ID = 3 # channels use 0..2 channel id as their id
 REASON_WAITING_TO_GO_GOOD = 0
 REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE = 1
 internal_scheduling_list = [] # list of time stamps which the state machines will like to be updated
@@ -341,24 +356,29 @@ queue_size = [0]*3
 queue_size_monitor_working = [0]*3
 in_service_state = [IN_SERVICE] *3
 in_service_state_x_TS = [0]*3
+s_est_t2r = [30]*3 # est_t2r read from service log 
+bp_t2r = [30]*3
+bp_t2r_receive_TS = [0]*3
 est_t2r = [30]*3
 
-
 while uplink_index < len (log_dic["uplink"]) and service_index < len (log_dic["service"]) and \
-    brm_index < len (log_dic["brm"]):
+    latency_index < len (log_dic["latency"]) and brm_index < len (log_dic["brm"]):
 
     uplink_line = log_dic["uplink"][uplink_index]
     service_line = log_dic["service"][service_index]
     brm_line = log_dic["brm"][brm_index]
+    latency_line = log_dic["latency"][latency_index]
 
     # advance time to what needs to be evaluated first next
     if len (internal_scheduling_list): 
         current_TS = min (
             uplink_line.queue_size_sample_TS, service_line.service_transition_TS, brm_line.TS,
-            internal_scheduling_list[HEAD].TS
+            latency_line.bp_t2r_receive_TS, internal_scheduling_list[HEAD].TS
         )
     else: 
-        current_TS = min ( uplink_line.queue_size_sample_TS, service_line.service_transition_TS, brm_line.TS)
+        current_TS = min (
+            uplink_line.queue_size_sample_TS, service_line.service_transition_TS, brm_line.TS, 
+            latency_line.bp_t2r_receive_TS)
     
     if current_TS == 1684791711650:
         print ("debug")
@@ -383,7 +403,7 @@ while uplink_index < len (log_dic["uplink"]) and service_index < len (log_dic["s
         queue_size_monitor_working[service_line.channel] = int (service_line.zeroUplinkQueue == 0)
         in_service_state[service_line.channel] = service_line.service_flag
         in_service_state_x_TS[service_line.channel] = service_line.service_transition_TS
-        est_t2r[service_line.channel] = service_line.est_t2r
+        s_est_t2r[service_line.channel] = service_line.est_t2r
         next_service_index += 1 # current line was consumed
         # check if there multiple lines in the log file with the same TS
         if next_service_index < len (log_dic["service"]) and log_dic["service"][next_service_index].service_transition_TS == current_TS: 
@@ -401,12 +421,28 @@ while uplink_index < len (log_dic["uplink"]) and service_index < len (log_dic["s
             brm_line = log_dic["brm"][brm_index]
         else: break
 
+    # latency log
+    next_latency_index = latency_index
+    while current_TS == latency_line.bp_t2r_receive_TS:
+        bp_t2r[latency_line.sending_channel] = latency_line.bp_t2r
+        bp_t2r_receive_TS[latency_line.sending_channel] = latency_line.bp_t2r_receive_TS
+        next_latency_index = latency_index + 1
+        # check if there are multiple line in the log file with the same TS as current_TS
+        if next_latency_index < len (log_dic["latency"]) and log_dic["latency"][next_latency_index].bp_t2r_receive_TS == current_TS:
+            latency_index = next_latency_index
+            latency_line = log_dic["latency"][latency_index]
+        else: break
+    # compute current est_t2r
+    for i in range (3):
+        est_t2r[i] = bp_t2r[i] + (current_TS - bp_t2r_receive_TS[i])
+
     #
     # quality state machine 
     #
     next_quality_state = deepcopy (quality_state)
 
     for channel in range(3): 
+        ms_since_in_service_x[channel] = current_TS - in_service_state_x_TS[channel]
         if not queue_size_monitor_working[channel]:
             next_quality_state[channel] = POOR_QUALITY
 
@@ -414,65 +450,96 @@ while uplink_index < len (log_dic["uplink"]) and service_index < len (log_dic["s
             if queue_size[channel] > 10 or est_t2r[channel] > 120:
                 next_quality_state[channel] = POOR_QUALITY
 
-        else: # in POOR_QUALITY
-            ms_since_in_service_x[channel] = current_TS - in_service_state_x_TS[channel]
+        elif quality_state[channel] == POOR_QUALITY: 
             if in_service_state[channel] == IN_SERVICE and \
-                ms_since_in_service_x[channel] > 35 and \
                 queue_size[channel] < 5 and \
                 est_t2r[channel] < 80:
-                next_quality_state[channel] = GOOD_QUALITY
+                if ms_since_in_service_x[channel] > 35: 
+                    next_quality_state[channel] = GOOD_QUALITY
+                else:
+                    next_quality_state[channel] = WAITING_TO_GO_GOOD
+                    new_entry = scheduler_fields (
+                        reason=REASON_WAITING_TO_GO_GOOD, TS=35 + current_TS - ms_since_in_service_x[channel], id=channel)
+                    schedule (internal_scheduling_list, new_entry)
+        
+        else: # WAITING_TO_GO_GOOD
+            head = internal_scheduling_list[HEAD]
+            if in_service_state == OUT_OF_SERVICE or queue_size[channel] >= 5 or est_t2r[channel] >= 80:
+                next_quality_state[channel] = POOR_QUALITY
+                unschedule (internal_scheduling_list, id=channel, reason=REASON_WAITING_TO_GO_GOOD)
+            elif head.id == channel and head.TS == current_TS and head.reason == REASON_WAITING_TO_GO_GOOD:
+                    next_quality_state[channel] = GOOD_QUALITY
+                    unschedule (internal_scheduling_list, id=channel, reason=REASON_WAITING_TO_GO_GOOD)
     # for each channel 
 
     #
     # encoder bit rate modulation state machine
     #
-    num_of_channels_in_poor_quality_state = sum (int (state == POOR_QUALITY) for state in quality_state)
+    num_of_channels_in_poor_quality_state = sum (int (
+        state == POOR_QUALITY or state == WAITING_TO_GO_TO_HIGH_BIT_RATE) for state in quality_state)
     ms_since_encoder_state_x = current_TS - encoder_state_x_TS
 
     if encoder_state == HIGH_BIT_RATE: 
-        next_encoder_state = LOW_BIT_RATE if num_of_channels_in_poor_quality_state == 3 else HIGH_BIT_RATE
-        encoder_state_x_TS = current_TS
+        if num_of_channels_in_poor_quality_state == 3:
+            next_encoder_state = LOW_BIT_RATE 
+            encoder_state_x_TS = current_TS
+        else:
+            next_encoder_state = HIGH_BIT_RATE
 
     elif encoder_state == LOW_BIT_RATE: 
         if num_of_channels_in_poor_quality_state < 3:
             if ms_since_encoder_state_x > 60:
                 next_encoder_state = HIGH_BIT_RATE 
+                encoder_state_x_TS = current_TS
             else:
                 next_encoder_state = WAITING_TO_GO_TO_HIGH_BIT_RATE
-                new_entry = scheduler_fields (REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE, current_TS+60)
+                new_entry = scheduler_fields (
+                    reason=REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE, 
+                    TS=current_TS - ms_since_encoder_state_x + 60, 
+                    id=ENCODER_ID) 
                 schedule (internal_scheduling_list, new_entry)
     
     else: # WAITING_TO_GO_TO_HIGH_BIT_RATE
         head = internal_scheduling_list[HEAD]
         if num_of_channels_in_poor_quality_state == 3:
             next_encoder_state = LOW_BIT_RATE
-            encoder_state_x_TS = current_TS
-            del internal_scheduling_list[HEAD]
-        elif head.TS == current_TS and head.reason == REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE:
+            unschedule (internal_scheduling_list, id=ENCODER_ID, reason=REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE)
+        elif head.id == ENCODER_ID and head.TS == current_TS and head.reason == REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE:
             next_encoder_state = HIGH_BIT_RATE
-            del internal_scheduling_list[HEAD]
+            unschedule (internal_scheduling_list, id=ENCODER_ID, reason=REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE)
     
-
     # debug print outs
+
+    qst_err = 0
+    est_err = 0
+    brm_qst = [brm_line.ch0_quality_state, brm_line.ch1_quality_state, brm_line.ch2_quality_state]
+    int_qst = [GOOD_QUALITY]*3
+    nxt_int_qst = [GOOD_QUALITY]*3
+    for i in range (3): # convert WAITING_TO_GO_GOOD to POOR_QUALITY
+        if (quality_state[i] != GOOD_QUALITY): int_qst[i] =  POOR_QUALITY
+        if (next_quality_state[i] != GOOD_QUALITY): nxt_int_qst[i] =  POOR_QUALITY
+
+    if current_TS == brm_line.TS: # check errors only at brm tick
+        for i in range (3): qst_err += int (brm_qst[i] != int_qst[i] and brm_qst[i] != nxt_int_qst[i])
+        est_err = int (brm_line.encoder_state != encoder_state and brm_line.encoder_state != next_encoder_state)
 
     i_TS = internal_scheduling_list[HEAD].TS \
         if len (internal_scheduling_list) else service_line.service_transition_TS # arbitrary else clause
-    fout.write (",TS,{t}, u_TS,{ut}, u_TS_i,{uti}, s_TS,{st}, s_TS_i,{sti}, b_TS,{bt}, b_TS_i,{bti}, i_TS,{it}".format (
+    fout.write (",TS,{t}, u_TS,{ut}, u_TS_i,{uti}, s_TS,{st}, s_TS_i,{sti}, l_TS,{lt}, l_TS_i,{lti}, b_TS,{bt}, b_TS_i,{bti}, i_TS,{it}".format (
         t=current_TS, ut=uplink_line.queue_size_sample_TS, uti=uplink_index,
-        st=service_line.service_transition_TS, sti=service_index, bt=brm_line.TS, bti=brm_index, it=i_TS))
-    fout.write (",ch_st,{c}, n_ch_st,{nc}, e_st,{e}, n_e_st,{ne}".format (
-        c=quality_state, nc=next_quality_state, e=encoder_state, ne=next_encoder_state))
-    fout.write (",qsz,{q}, qsz_m,{qm}, IS_st,{i}, ms_IS_x,{mx}, IS_st_x,{ix}, est_t2r,{t}".format (
-        q=queue_size, qm=queue_size_monitor_working, i=in_service_state, mx=ms_since_in_service_x, ix=in_service_state_x_TS, t=est_t2r))
+        st=service_line.service_transition_TS, sti=service_index, lt=latency_line.bp_t2r_receive_TS, lti=latency_index, 
+        bt=brm_line.TS, bti=brm_index, it=i_TS))
+    fout.write (",qst,{c}, n_qst,{nc}, b_qst,{bc}, qst_err,{qe}, est,{e}, n_est,{ne}, b_est,{be}, est_err,{ee}".format (
+        c=quality_state, nc=next_quality_state, bc=brm_qst, qe=qst_err, e=encoder_state, ne=next_encoder_state, be=brm_line.encoder_state, ee=est_err))
+    fout.write (",qsz,{q}, qsz_m,{qm}, IS_st,{i}, ms_IS_x,{mx}, IS_st_x,{ix}, est_t2r,{t}, s_est_t2r,{st}".format (
+        q=queue_size, qm=queue_size_monitor_working, i=in_service_state, mx=ms_since_in_service_x, ix=in_service_state_x_TS, 
+        t=est_t2r, st=s_est_t2r))
     fout.write (",ch_pq,{p}, ms_e_st_x,{m}".format (
         p=num_of_channels_in_poor_quality_state, m=ms_since_encoder_state_x))
     fout.write (", brm,{b}".format (b=brm_line))
     fout.write (", sched,{s}".format (s=internal_scheduling_list))
+
     fout.write ("\n")
-
-
-    # check against reported brm
-
     # update states 
     quality_state = deepcopy (next_quality_state)
     encoder_state = deepcopy (next_encoder_state)
@@ -480,11 +547,12 @@ while uplink_index < len (log_dic["uplink"]) and service_index < len (log_dic["s
     uplink_index = next_uplink_index
     service_index = next_service_index
     brm_index = next_brm_index
+    latency_index = next_latency_index
 
     itr_count += 1
-    if (itr_count % 1000) == 0: 
+    if (itr_count % 10_000) == 0: 
         print ("itr count: ", itr_count)
-    if itr_count == 10_000: break
+    # if itr_count == 10_000: break
 # while have not exhausted at least one file
 
 fout.close ()
