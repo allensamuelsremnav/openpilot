@@ -9,7 +9,6 @@ import (
 	"time"
 
 	g920 "remnav.com/remnav/g920"
-	rnlog "remnav.com/remnav/log"
 	gpsd "remnav.com/remnav/metadata/gpsd"
 )
 
@@ -115,8 +114,13 @@ func tpvToSpeed(buf []byte) Speed {
 
 // Make Trajectories from speed and g920.
 func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G920,
-	logCh chan<- rnlog.Loggable) <-chan []byte {
+	logging bool) (<-chan []byte, <-chan []byte, <-chan []byte) {
 	trajectories := make(chan []byte)
+	vehicleCommands := make(chan []byte)
+	var logCh chan []byte
+	if logging {
+		logCh = make(chan []byte)
+	}
 
 	intervalSetpoint := time.Duration(param.Interval) * time.Millisecond
 	trajectoryInterval := intervalSetpoint
@@ -133,6 +137,10 @@ func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G
 	go func() {
 		defer ticker.Stop()
 		defer close(trajectories)
+		defer close(vehicleCommands)
+		if logCh != nil {
+			defer close(logCh)
+		}
 		var okG920 bool
 		for {
 			select {
@@ -155,35 +163,38 @@ func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G
 					log.Printf("dt <= 0 for G920 at %d - %d", report.Requested, reportPrev.Requested)
 					continue
 				}
-				newTire := param.limitDtireDt(tirePrev, tireRequested, dt)
-				// fmt.Printf("report wheel %.2f, tire requested %.2f, limited %.2f\n", report.Wheel, tireRequested, newTire)
-				curvature := param.curvature(newTire)
+				tireLimited := param.limitDtireDt(tirePrev, tireRequested, dt)
+				// fmt.Printf("report wheel %.2f, tire requested %.2f, limited %.2f\n", report.Wheel, tireRequested, tireLimited)
+				curvature := param.curvature(tireLimited)
 
 				trajectory := Trajectory{Class: ClassTrajectory,
 					Requested: time.Now().UnixMicro(),
 					Curvature: curvature,
 					Speed:     speed.Speed}
-				trajectories <- trajectory.Bytes()
+				tb := trajectory.Bytes()
+				trajectories <- tb
+				vehicleCommands <- tb
+				vehicleCommands <- report.Bytes()
+				if logCh != nil {
+					select {
+					case logCh <- speed.bytes():
+					default:
+						log.Print("log channel not ready, packet dropped (speed)")
+					}
 
-				select {
-				case logCh <- speed:
-				default:
-					log.Print("log channel not ready, packet dropped (speed)")
+					select {
+					case logCh <- report.Bytes():
+					default:
+						log.Print("log channel not ready, packet dropped (g920)")
+					}
+
+					select {
+					case logCh <- trajectory.Bytes():
+					default:
+						log.Print("log channel not ready, packet dropped (trajectory)")
+					}
 				}
-
-				select {
-				case logCh <- report:
-				default:
-					log.Print("log channel not ready, packet dropped (g920)")
-				}
-
-				select {
-				case logCh <- trajectory:
-				default:
-					log.Print("log channel not ready, packet dropped (trajectory)")
-				}
-
-				tirePrev = newTire
+				tirePrev = tireLimited
 				reportPrev = report
 
 				/*
@@ -196,5 +207,5 @@ func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G
 			}
 		}
 	}()
-	return trajectories
+	return trajectories, vehicleCommands, logCh
 }

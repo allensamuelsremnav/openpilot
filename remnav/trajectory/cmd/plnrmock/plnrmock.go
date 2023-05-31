@@ -17,6 +17,13 @@ import (
 	trj "remnav.com/remnav/trajectory"
 )
 
+func sink(ch <-chan []byte) {
+	go func() {
+		for _ = range ch {
+		}
+	}()
+}
+
 // Drive steering wheel between += maxAngle with angSpeed sin wave (radians/s)
 func g920s(intervalMs int, maxAngle, angSpeed float64) <-chan g920.G920 {
 	ch := make(chan g920.G920)
@@ -77,13 +84,13 @@ func applications(trajCh <-chan []byte) <-chan []byte {
 }
 
 // Clone a channel.
-func clone(trjCh <-chan []byte) (<-chan []byte, <-chan []byte) {
+func clone(ch <-chan []byte) (<-chan []byte, <-chan []byte) {
 	out0 := make(chan []byte)
 	out1 := make(chan []byte)
 	go func() {
 		defer close(out0)
 		defer close(out1)
-		for t := range trjCh {
+		for t := range ch {
 			out0 <- t
 			out1 <- t
 		}
@@ -92,49 +99,27 @@ func clone(trjCh <-chan []byte) (<-chan []byte, <-chan []byte) {
 }
 
 // Merge two channels into one; log the result.
-func merge(trajCh, applCh <-chan []byte, logCh chan<- rnlog.Loggable) <-chan []byte {
+func merge(trajCh, applCh <-chan []byte) (<-chan []byte, <-chan []byte) {
 	out := make(chan []byte)
-	go func() {
-		defer close(out)
-		okTraj := true
-		okAppl := true
-	forloop:
-		for {
-			var bytes []byte
-			select {
-			case bytes, okTraj = <-trajCh:
-				if !okTraj {
-					trajCh = nil
-					if !okAppl {
-						break forloop
-					}
-				}
-				out <- bytes
-				var traj trj.Trajectory
-				err := json.Unmarshal(bytes, &traj)
-				if err != nil {
-					log.Fatal(err)
-				}
-				logCh <- traj
-			case bytes, okAppl = <-applCh:
-				if !okAppl {
-					applCh = nil
-					if !okTraj {
-						break forloop
-					}
-				}
-				out <- bytes
-				var appl trj.TrajectoryApplication
-				err := json.Unmarshal(bytes, &appl)
-				if err != nil {
-					log.Fatal(err)
-				}
-				logCh <- appl
-
-			}
+	log := make(chan []byte)
+	var wg sync.WaitGroup
+	output := func(msgs <-chan []byte) {
+		for msg := range msgs {
+			out <- msg
+			log <- msg
 		}
+		wg.Done()
+	}
+	wg.Add(1)
+	go output(trajCh)
+	wg.Add(1)
+	go output(applCh)
+	go func() {
+		wg.Wait()
+		close(out)
+		close(log)
 	}()
-	return out
+	return out, log
 }
 
 func main() {
@@ -157,22 +142,30 @@ func main() {
 	const sinSpeed = 2 * math.Pi / 4.0
 	gs := g920s(5, maxSteeringWheel, sinSpeed)
 
-	logDir := gpsd.LogDir("plnrmock", *logRoot, storage.TrajectorySubdir, "", "")
-	logCh := make(chan rnlog.Loggable, 6)
+	trajCh, vehicleCh, _ := trj.Planner(params, speeds, gs, false)
+	// Our vehicle mock doesn't log, so remember what we sent it.
+	vehicleMockCh, vehicleLogCh := clone(vehicleCh)
+	applCh := applications(vehicleMockCh)
 
-	trajCh := trj.Planner(params, speeds, gs, logCh)
-	trajCh0, trajCh1 := clone(trajCh)
-	applCh := applications(trajCh0)
-
-	displayCh := merge(trajCh1, applCh, logCh)
+	displayCh, displayLogCh := merge(trajCh, applCh)
 
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	go rnlog.Binned(logCh, logDir, &wg)
+	cmdsLogDir := gpsd.LogDir("plnrmock", *logRoot, storage.VehicleCmdSubdir, "", "")
+	go rnlog.StringBinned(vehicleLogCh, cmdsLogDir, &wg)
+
+	log.Printf("display port :%d", *display)
+	if *display >= 0 {
+		wg.Add(1)
+		go rnnet.WritePort(displayCh, *display, &wg)
+	} else {
+		sink(displayCh)
+	}
 
 	wg.Add(1)
-	go rnnet.WritePort(displayCh, *display, &wg)
+	displayLogDir := gpsd.LogDir("plnrmock", *logRoot, storage.TrajectorySubdir, "", "")
+	go rnlog.StringBinned(displayLogCh, displayLogDir, &wg)
 
 	wg.Wait()
 }

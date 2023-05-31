@@ -15,5 +15,5 @@ var TrajectorySubdir = "trajectory"
 // G920 reports are stored in this subdirectory.
 var G920Subdir = "g920"
 
-
-
+// Trajectory and pedal commands sent to the vehicle are stored in this subdirectory.
+var VehicleCmdSubdir = "vehiclecmds"
