@@ -476,39 +476,43 @@ while uplink_index < len (log_dic["uplink"]) and service_index < len (log_dic["s
     # encoder bit rate modulation state machine
     #
     num_of_channels_in_poor_quality_state = sum (int (
-        state == POOR_QUALITY or state == WAITING_TO_GO_TO_HIGH_BIT_RATE) for state in quality_state)
+        state == POOR_QUALITY or state == WAITING_TO_GO_TO_HIGH_BIT_RATE) for state in next_quality_state)
     ms_since_encoder_state_x = current_TS - encoder_state_x_TS
 
-    if encoder_state == HIGH_BIT_RATE: 
-        if num_of_channels_in_poor_quality_state == 3:
-            next_encoder_state = LOW_BIT_RATE 
-            encoder_state_x_TS = current_TS
-        else:
-            next_encoder_state = HIGH_BIT_RATE
-
-    elif encoder_state == LOW_BIT_RATE: 
-        if num_of_channels_in_poor_quality_state < 3:
-            if ms_since_encoder_state_x > 60:
-                next_encoder_state = HIGH_BIT_RATE 
+    if current_TS == brm_line.TS: # evaluate at brm sample (frame) intervals
+        if encoder_state == HIGH_BIT_RATE: 
+            if num_of_channels_in_poor_quality_state == 3:
+                next_encoder_state = LOW_BIT_RATE 
                 encoder_state_x_TS = current_TS
             else:
-                next_encoder_state = WAITING_TO_GO_TO_HIGH_BIT_RATE
-                new_entry = scheduler_fields (
-                    reason=REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE, 
-                    TS=current_TS - ms_since_encoder_state_x + 60, 
-                    id=ENCODER_ID) 
-                schedule (internal_scheduling_list, new_entry)
+                next_encoder_state = HIGH_BIT_RATE
     
-    else: # WAITING_TO_GO_TO_HIGH_BIT_RATE
-        head = internal_scheduling_list[HEAD]
-        if num_of_channels_in_poor_quality_state == 3:
-            next_encoder_state = LOW_BIT_RATE
-            unschedule (internal_scheduling_list, id=ENCODER_ID, reason=REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE)
-        elif head.id == ENCODER_ID and head.TS == current_TS and head.reason == REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE:
-            next_encoder_state = HIGH_BIT_RATE
-            unschedule (internal_scheduling_list, id=ENCODER_ID, reason=REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE)
-    
-    # debug print outs
+        elif encoder_state == LOW_BIT_RATE: 
+            if num_of_channels_in_poor_quality_state < 3:
+                if ms_since_encoder_state_x > 60:
+                    next_encoder_state = HIGH_BIT_RATE 
+                    encoder_state_x_TS = current_TS
+                else:
+                    next_encoder_state == LOW_BIT_RATE
+
+                    """
+                    next_encoder_state = WAITING_TO_GO_TO_HIGH_BIT_RATE
+                    new_entry = scheduler_fields (
+                        reason=REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE, 
+                        TS=current_TS - ms_since_encoder_state_x + 60, 
+                        id=ENCODER_ID) 
+                    schedule (internal_scheduling_list, new_entry)
+        
+        else: # WAITING_TO_GO_TO_HIGH_BIT_RATE
+            head = internal_scheduling_list[HEAD]
+            if num_of_channels_in_poor_quality_state == 3:
+                next_encoder_state = LOW_BIT_RATE
+                unschedule (internal_scheduling_list, id=ENCODER_ID, reason=REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE)
+            elif head.id == ENCODER_ID and head.TS == current_TS and head.reason == REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE:
+                next_encoder_state = HIGH_BIT_RATE
+                unschedule (internal_scheduling_list, id=ENCODER_ID, reason=REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE)
+                    """
+    # end of encoder state machine
 
     qst_err = 0
     est_err = 0
@@ -523,6 +527,7 @@ while uplink_index < len (log_dic["uplink"]) and service_index < len (log_dic["s
         for i in range (3): qst_err += int (brm_qst[i] != int_qst[i] and brm_qst[i] != nxt_int_qst[i])
         est_err = int (brm_line.encoder_state != encoder_state and brm_line.encoder_state != next_encoder_state)
 
+    # debug print outs
     i_TS = internal_scheduling_list[HEAD].TS \
         if len (internal_scheduling_list) else service_line.service_transition_TS # arbitrary else clause
     fout.write (",TS,{t}, u_TS,{ut}, u_TS_i,{uti}, s_TS,{st}, s_TS_i,{sti}, l_TS,{lt}, l_TS_i,{lti}, b_TS,{bt}, b_TS_i,{bti}, i_TS,{it}".format (
