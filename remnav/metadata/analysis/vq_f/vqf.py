@@ -109,7 +109,6 @@ def read_csv_file(filename, tuplename, tx_TS_index):
         except:
             err_str = "WARNING read_csv_file: incorrect number of filelds: " + filename  + " Line " + str(line_num) + ": " + " ".join (str(e) for e in field_list) +"\n"
             sys.stderr.write (err_str)
-            print (len(field_list), len (tuplename))
             # exit ()
 
     return array
@@ -848,6 +847,7 @@ while service_index < len(log_dic["service"]) and skip_index < len(log_dic["skip
             # channel has been in service transmitting lrp
             (channel["last_state_x_TS"][i] <= (lrp_bp_TS -30 - channel["t2r"][i])))
 
+    """
     # compute the number of packets to be skipped
     if (sum(channel["x_IS"]) == 0) or (skip_line.qsize==0):
         skip = 0
@@ -859,7 +859,6 @@ while service_index < len(log_dic["service"]) and skip_index < len(log_dic["skip
     # temporary deubgging filters
     ignore = int (skip_line.resume_TS == skip_line.lrp_bp_TS)
 
-    """
     # outputs
     fout.write ("ch,{c}, is_TS,{t}, skip,{sk}, err,{e}, ig,{ig}, qsz,{q}, ch-x,{cx}, ch-t2r,{t2r}, lrp,{lrp}, lrp_bp_TS,{bp},".format \
         (c=service_line.channel, t=service_line.service_transition_TS, sk=skip, e=skip_diff, ig=ignore, q=skip_line.qsize, \
@@ -923,12 +922,7 @@ while service_index < len(log_dic["service"]) and skip_index < len(log_dic["skip
             channel["last_state_x_TS"][i] <= (service_line.service_transition_TS - IN_SERVICE_PERIOD)  and 
             not (channel["last_state_x_TS"][i] <= (channel["lrp_bp_TS"][i] -30 - channel["t2r"][i])))
     
-    # if there are multiple candidates for lrp, pick according the the table below
-    # pkt_nums  TS
-    #  eq       eq              send any
-    #  eq       not eq          send smaller TS
-    # not eq    eq              send larger pkt num
-    # not eq    not eq          send smaller TS
+    # compute lrp_tx_TS and find the index in the carrier csv file that corresponds to that tx_TS
     channel.update({"lrp_tx_TS": [0]*3, "lrp_tx_index": [0]*3})
     for i in range (3):
         if (channel["x_IS"][i]):
@@ -938,10 +932,26 @@ while service_index < len(log_dic["service"]) and skip_index < len(log_dic["skip
             channel["lrp_tx_TS"][i] = channel["lrp_bp_TS"][i] -30 - channel["t2r"][i]
             channel["lrp_tx_index"][i] = bisect_left (log_dic["chrx"+str(i)], channel["lrp_tx_TS"][i], key = lambda a: a.tx_TS)
 
+    #
+    # if there are multiple candidates for lrp, then select final as lrp_channel. lrp_channel is invalid if x_IS is all 0s
+    #
+
+    # initialize lrp_channel to one of channel_x so in case x_IS is 000, rest of the code does not go haywire
+    for i in channel["x"]:
+        lrp_channel = i
+        if i: break
+
+    """
+    # LRP_channel selection Algo 1: DEPRECATED TO MATCH THE IMPLEMENTATION
+    # pick according the the table below. 
+    # lrp_num  tx_TS
+    #  eq       eq              send any
+    #  eq       not eq          send smaller TS
+    # not eq    eq              send larger pkt num
+    # not eq    not eq          send smaller TS
     # if the lrp_tx_TS are not equal then the lrp channel is the one with the smallest TS
     lrp_TS_are_equal = 1
     found_a_candidate = 0
-    lrp_channel = 0 # defined just for debug print out so that skip=0 case does not overwrite it. 
     for i in range (3):
         if channel["x_IS"][i]: 
             if (found_a_candidate == 0):
@@ -964,6 +974,20 @@ while service_index < len(log_dic["service"]) and skip_index < len(log_dic["skip
             if channel["x_IS"][i] and (found_a_candidate==0 or channel["lrp_num"][i] > max_lrp_num): 
                 found_a_candidate = True
                 max_lrp_num = channel["lrp_num"][i]
+                lrp_channel = i
+    """
+    #
+    # LRP channel selection Algo 2: pick the channel with the smallest t2r
+    #  
+    found_a_candidate = 0
+    for i in range (3):
+        if channel["x_IS"][i]: 
+            if (found_a_candidate == 0):
+                found_a_candidate = 1
+                min_t2r = channel["t2r"][i]
+                lrp_channel = i
+            elif channel["t2r"][i] <= min_t2r: # this channel is better candidate
+                min_t2r = channel["t2r"][i]
                 lrp_channel = i
 
     # revised skip calculation: skip packets transferred between lrp_tx_TS and lrp_tx_TS + 60 + (resume_TS-lrp_bp_TS)
