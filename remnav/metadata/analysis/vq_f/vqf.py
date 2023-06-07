@@ -1001,7 +1001,7 @@ while service_index < len(log_dic["service"]) and skip_index < len(log_dic["skip
         print ("debug")
     index = lrp_tx_index
     index_no_retx = index
-    while index < len(chrx_a) and chrx_a[index].tx_TS <= last_skip_TS:
+    while index < len(chrx_a) and chrx_a[index].tx_TS <= min (skip_line.resume_TS, last_skip_TS):
         retx = chrx_a[index].retx
         index += 1
         if retx == 0:
