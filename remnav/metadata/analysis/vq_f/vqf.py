@@ -611,14 +611,12 @@ for capture in file_list:
                 not (channel["last_state_x_TS"][i] <= (channel["lrp_bp_TS"][i] -30 - channel["t2r"][i])))
         
         # compute lrp_tx_TS and find the index in the carrier csv file that corresponds to that lrp_tx_TS
-        channel.update({"lrp_tx_TS": [0]*3, "lrp_tx_index": [0]*3})
+        channel.update({"lrp_tx_TS": [0]*3})
         for i in range (3):
             if (channel["x_IS"][i]):
                 # tx_index = bisect_left (log_dic["chrx_sorted_by_pkt_num"+str(i)], channel["lrp_num"][i], key = lambda a: a.pkt_num)
-                # channel["lrp_tx_index"][i] = tx_index
                 # channel["lrp_tx_TS"][i] = log_dic["chrx"+str(i)][tx_index].tx_TS
                 channel["lrp_tx_TS"][i] = channel["lrp_bp_TS"][i] -30 - channel["t2r"][i]
-                channel["lrp_tx_index"][i] = bisect_left (log_dic["chrx"+str(i)], channel["lrp_tx_TS"][i], key = lambda a: a.tx_TS)
     
         #
         # if there are multiple candidates for lrp, then select final as lrp_channel. lrp_channel is invalid if x_IS is all 0s
@@ -674,32 +672,53 @@ for capture in file_list:
                     found_a_candidate = 1
                     min_t2r = channel["t2r"][i]
                     lrp_channel = i
-                elif channel["t2r"][i] <= min_t2r: # this channel is better candidate
+                elif channel["t2r"][i] < min_t2r: # this channel is better candidate
                     min_t2r = channel["t2r"][i]
                     lrp_channel = i
     
+
+        #
         # revised skip calculation: skip packets transferred between lrp_tx_TS and lrp_tx_TS + 60 + (resume_TS-lrp_bp_TS)
+        #
         # first calculate packets to be skipped relative to lrp_num (calculations are invalid if channel["x_IS"] = [0,0,0])
-        chrx_a = log_dic["chrx"+str(lrp_channel)]
+        chrx_a = log_dic["chrx_sorted_by_pkt_num"+str(lrp_channel)]
         lrp_tx_TS = channel["lrp_tx_TS"][lrp_channel]
         lrp_bp_to_sx_delta = skip_line.resume_TS - channel["lrp_bp_TS"][lrp_channel] if sum (channel["x_IS"]) != 0 else 0 # changed resume TS from service to skip to match implementation
         last_skip_tx_TS = lrp_tx_TS + 60 + lrp_bp_to_sx_delta if sum (channel["x_IS"]) != 0 else 0
-        lrp_tx_index = channel["lrp_tx_index"][lrp_channel]
-        index = lrp_tx_index
-        index_no_retx = index
-        while index < len(chrx_a) and chrx_a[index].tx_TS <= min (skip_line.resume_TS, last_skip_tx_TS):
-            retx = chrx_a[index].retx
+        qhead_index = bisect_left (chrx_a, skip_line.first_pkt_in_Q, key = lambda a: a.pkt_num)
+        qhead_tx_TS = chrx_a[qhead_index].tx_TS
+        index = qhead_index
+        while index < len(chrx_a) and skip_line.qsize != 0 and (
+            chrx_a[index].retx or chrx_a[index].tx_TS <= min (skip_line.resume_TS, last_skip_tx_TS)):
             index += 1
-            if retx == 0:
-                index_no_retx = index
-        last_skip_pkt_num = chrx_a[index_no_retx-1].pkt_num
-        skip_from_lrp_num = index_no_retx - lrp_tx_index
-        unretired_skippable_packets = max (0, last_skip_pkt_num + 1 - skip_line.first_pkt_in_Q)
+        index = index - 1 # since while exits when chrx_a[index].tx_TS is strictly GT
+        while index >=0 and chrx_a[index].retx: index -= 1 # get rid of trailing retx
+
+        # now adjust to match implementation
+        # match dynamics
+        s_skip_index = bisect_left (chrx_a, skip_line.last_skip_pkt_num, key = lambda a: a.pkt_num)
+        next_smaller_tx_TS_index = bisect_left (chrx_a, chrx_a[index].tx_TS, key = lambda a: a.tx_TS) - 1
+        possible_implementation_stop_TS = min (chrx_a[s_skip_index].tx_TS, skip_line.resume_TS)
+        if possible_implementation_stop_TS == chrx_a[index].tx_TS or \
+           possible_implementation_stop_TS == chrx_a[next_smaller_tx_TS_index].tx_TS: 
+           index = s_skip_index # override computed index to match dynamics
+        # match for missing packets in carrier csv because they were skipped
+        if skip_line.first_pkt_in_Q == 49805:
+            print ("debug")
+        if lrp_channel == skip_line.ch and chrx_a[qhead_index].pkt_num != skip_line.first_pkt_in_Q and chrx_a[index].pkt_num == (skip_line.first_pkt_in_Q - 1):
+            last_skip_pkt_num = skip_line.last_skip_pkt_num
+        else:
+            last_skip_pkt_num = chrx_a[index].pkt_num
+
+        # final results
+        skippable_packets_in_q = max (0, last_skip_pkt_num - skip_line.first_pkt_in_Q + 1)
+        # unretired_skippable_packets = max (0, last_skip_pkt_num + 1 - skip_line.first_pkt_in_Q)
         # skip_from_lrp_num = int (0.8 * skip_from_lrp_num) # guardbanded to not trigger too many retxi
         if sum (channel["x_IS"]) == 0: 
             skip = 0
         else: 
-            skip = min (skip_from_lrp_num, skip_line.qsize, MAX_SKIP_PACKETS, unretired_skippable_packets)
+            skip = min (skippable_packets_in_q, skip_line.qsize, MAX_SKIP_PACKETS)
+        err = skip - skip_line.skip
     
         """
         algo_resume_pkt_num = skip_line.qhead + skip if skip_line.qsize else 0
@@ -736,9 +755,10 @@ for capture in file_list:
             l=lrp_channel, sl=skip_line.lrp_channel, n=channel["lrp_num"], sn=skip_line.lrp_num, bp_t=channel["lrp_bp_TS"], sbp_t=skip_line.lrp_bp_TS, 
             tx_t=channel["lrp_tx_TS"], stx_t=s_lrp_tx_TS, t2r=channel["t2r"][lrp_channel], st2r=skip_line.t2r))
         # skip related 
-        fout.write ("skip_from_lrp,{s}, last_skip_pkt,{n}, s_last_skip_pkt,{sn}, last_skip_tx_TS,{t}, s_last_skip_tx_TS,{st}, s_qsz,{q}, s_first_pkt_in_Q,{f},".format (
-            s=skip_from_lrp_num, n=last_skip_pkt_num, sn=skip_line.last_skip_pkt_num, t=last_skip_tx_TS, st=skip_line.last_skip_tx_TS, q=skip_line.qsize, f=skip_line.first_pkt_in_Q))
-        fout.write ("skip,{s}, s_skip,{ss},".format (s=skip, ss=skip_line.skip))
+        fout.write ("skip_from_q,{s}, last_skip_pkt,{n}, s_last_skip_pkt,{sn}, last_skip_tx_TS,{t}, s_last_skip_tx_TS,{st}, s_qsz,{q}, s_1st_pkt_in_Q,{f}, s_1st_pkt_tx_TS,{ft},".format (
+            s=skippable_packets_in_q, n=last_skip_pkt_num, sn=skip_line.last_skip_pkt_num, t=last_skip_tx_TS, st=skip_line.last_skip_tx_TS, q=skip_line.qsize, f=skip_line.first_pkt_in_Q,
+            ft=qhead_tx_TS))
+        fout.write ("skip,{s}, s_skip,{ss}, err,{e},".format (s=skip, ss=skip_line.skip, e=err))
         #
         # Skip effectiveness
         #
