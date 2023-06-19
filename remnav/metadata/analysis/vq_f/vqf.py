@@ -1,4 +1,3 @@
-import sys
 import math
 import time
 from pathlib import Path
@@ -6,463 +5,33 @@ from operator import itemgetter
 from bisect import bisect_left, bisect_right
 from collections import namedtuple
 from copy import deepcopy
+from support import *
 
 #########################################################################################
-# function definitions
+# local function definitions
 #########################################################################################
 
-def schedule (lst, new):
-    """ schedules a new entry at the right place in the lst using TS.
-        assumes lst of named tuples with TS field """
-    if len (lst) == 0:
-        lst.insert(0, new)
-        return
-    for i, line in enumerate(lst):
-        if new.TS < line.TS:
-            lst.insert (i, new)
-            return
-    lst.insert (len(lst), new)
-    return
-# end of schedule
-
-def unschedule (lst, id, reason):
-    """ removes the first entry that matches the id and the reason.
-        assumes the lst of namedtuples with id and reason fields.
-        returns -1 if no removal, else 0"""
-    for i, line in enumerate (lst):
-        if lst[i].id == id and lst[i].reason == reason:
-            del lst[i]
-            return 0
-    return -1
-# end of unschedule
-
-def init_channel_x (num):
-    """ initializes speicified lists to 3 elements to 0 """
-    a = []
-    for x in range(num):
-        a += [[0]*3]
-    return a
-
-def set_channel (channel, line, index):
-    channel["x"][line.sending_channel] = 1
-    channel["t2r"][line.sending_channel] = line.bp_t2r
-    channel["lrp_num"][line.sending_channel] = line.PktNum
-    channel["lrp_bp_TS"][line.sending_channel] = line.bp_t2r_receive_TS
-    channel["lindex"][line.sending_channel] = index
-    return
-
-def read_log_file (filename, tuplename):
-    """ returns an array (list) of specified namedtuples from the data in the filename"""
-
-    path = Path(filename)
-    if path.is_file () == False: 
-        print ("Could not find file " + filename)
-        exit ()
-
-    array = []
-    file = open (filename, "r")
-    for line_num, line in enumerate (file):
-        field_list = []
-        for fields in line.split(","):
-            try: # collect all integer values following ":"
-                field_list += [(int(fields.split(":")[1]))]
-            except: # skip if no numerical value following ":"
-                pass
-
-        try: 
-            array += [tuplename._make(field_list)]
-        except:
-            err_str = "WARNING read_log_file: incorrect number of filelds: " + filename  + " Line " + str(line_num) + ": " + " ".join (str(e) for e in field_list) +"\n"
-            sys.stderr.write (err_str)
-            # exit ()
-
-    return array
-# end of read_log_file
-
-def read_csv_file(filename, tuplename, tx_TS_index):
-    """ returns an array (list) of specified namedtuples from the data in the filename"""
-
-    path = Path(filename)
-    if path.is_file () == False: 
-        print ("Could not find file " + filename)
-        exit ()
-
-    array = []
-    file = open (filename, "r")
-    for line_num, line in enumerate (file):
-
-        if line_num == 0: # skip header
-            continue
-
-        field_list = []
-        for fields in line.split(","):
-            try: # collect all integer values following ":"
-                field_list += [int(fields)]
-            except: # skip if no numerical value following ":"
-                pass
-
-        # fix the tx time
-        field_list[tx_TS_index] = int (field_list[tx_TS_index]/512)
-
-        try: 
-            array += [tuplename._make(field_list)]
-        except:
-            err_str = "WARNING read_csv_file: incorrect number of filelds: " + filename  + " Line " + str(line_num) + ": " + " ".join (str(e) for e in field_list) +"\n"
-            sys.stderr.write (err_str)
-            # exit ()
-
-    return array
-# end of read_csv_file
-
-#########################################################################################
-# in/out directory and file prefix/suffix
-#########################################################################################
+#
+# main 
+#
 out_dir = "C:/Users/gopal/Downloads/analysis_output/"
 
-file_list_fields = namedtuple ("file_list_fields", "in_dir, rx_infix, tx_infix")
-file_list = []
+# capture_list = read_worklist ("C:/Users/gopal/Downloads/06_13_2023/file_list.txt")
+capture_list = read_worklist ("todo_list.txt")
 
-
-in_dir = "C:/Users/gopal/Downloads/06_12_2023/"
-
-# Alg: in_service_period=0 and 06_01 BRM modulation
-# seg	high bitrate	low bitrate	log			              comments
-# 3	6mbps		1.5mbps		2023_06_12_16_37_38_v_9_7_3_online
-rx_infix = "2023_06_12_16_37_38_v_9_7_3_online" 
-tx_infix = "2023_06_12_16_37_33_v11_8_4"
-file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-# Alg: ignore in_service constraint and 06_01 BRM modulation
-# seg	high bitrate	low bitrate	log			              comments
-# 3	6mbps		1.5mbps		2023_06_12_16_50_31_v_9_7_3_online
-rx_infix = "2023_06_12_16_50_31_v_9_7_3_online" 
-tx_infix = "2023_06_12_16_50_26_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-# 
-# Alg: no-skipping  and 06_01 BRM modulation
-# seg	high bitrate	low bitrate	log			              comments
-# 3	6mbps		1.5mbps		2023_06_12_17_03_51_v_9_7_3_online
-rx_infix = "2023_06_12_17_03_51_v_9_7_3_online" 
-tx_infix = "2023_06_12_17_03_46_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-# Alg: normal skipping  and 06_01 BRM modulation
-# seg	high bitrate	low bitrate	log			              comments
-# 3	6mbps		1.5mbps		2023_06_12_17_18_28_v_9_7_3_online
-# 
-rx_infix = "2023_06_12_17_18_28_v_9_7_3_online" 
-tx_infix = "2023_06_12_17_18_23_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-# Alg: normal skipping  and 06_01 BRM modulation
-# seg	high bitrate	low bitrate	log			              comments
-# 3	3mbps		1.5mbps		2023_06_12_17_30_56_v_9_7_3_online    
-rx_infix = "2023_06_12_17_30_56_v_9_7_3_online" 
-tx_infix = "2023_06_12_17_30_51_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-
-in_dir = "C:/Users/gopal/Downloads/06_09_2023/"
-
-#  Increase encoder queue to 1000 with skip and 06_01 BRM modulation
-#  3	6mbps		1.5mbps		2023_06_09_19_13_54_v_9_7_3_online    no packet throwing away occurred
-rx_infix = "2023_06_09_19_13_54_v_9_7_3_online"
-tx_infix = "2023_06_09_19_13_49_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-# Increase encoder queue to 1000 with no skip and 06_01 BRM modulation
-# 3	6mbps		1.5mbps		2023_06_09_19_25_37_v_9_7_3_online    no packet throwing away occurred
-rx_infix = "2023_06_09_19_25_37_v_9_7_3_online"
-tx_infix = "2023_06_09_19_25_31_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-rx_infix = "2023_06_09_12_05_05_v_9_7_3_online"
-tx_infix = "2023_06_09_12_05_00_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-rx_infix = "2023_06_09_12_15_11_v_9_7_3_online"
-tx_infix = "2023_06_09_12_15_06_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-rx_infix = "2023_06_09_12_24_43_v_9_7_3_online"
-tx_infix = "2023_06_09_12_24_38_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-in_dir = "C:/Users/gopal/Downloads/06_08_2023/"
-
-# 1	6mbps	  	1.5mbps		2023_06_08_14_16_23_v_9_7_3_online
-rx_infix = "2023_06_08_14_16_23_v_9_7_3_online"
-tx_infix = "2023_06_08_14_16_18_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-# 2	6mbps		1.5mbps		2023_06_08_14_25_46_v_9_7_3_online
-rx_infix = "2023_06_08_14_25_46_v_9_7_3_online"
-tx_infix = "2023_06_08_14_25_41_v11_8_4"
-
-# 3	6mbps		1.5mbps		2023_06_08_14_35_07_v_9_7_3_online
-rx_infix = "2023_06_08_14_35_07_v_9_7_3_online"
-tx_infix = "2023_06_08_14_35_02_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-in_dir = "C:/Users/gopal/Downloads/skip_unit_test/"
-rx_infix = "2023_06_06_15_54_37_v_9_7_3_online"
-tx_infix = "2023_06_06_15_54_32_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-in_dir = "C:/Users/gopal/Downloads/skip_unit_test/"
-rx_infix = "2023_06_05_21_48_41_v_9_7_3_online"
-tx_infix = "2023_06_05_21_48_36_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-rx_infix = "2023_06_05_14_06_14_v_9_7_3_online"
-tx_infix = "2023_06_05_14_06_09_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-in_dir = "C:/Users/gopal/Downloads/brm_06_01/"
-rx_infix = "2023_06_02_22_11_09_v_9_7_3_online"
-tx_infix = "2023_06_02_22_11_04_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-in_dir = "C:/Users/gopal/Downloads/06_02_2023/"
-rx_infix = "2023_06_02_14_06_43_v_9_7_3_online"
-tx_infix = "2023_06_02_14_06_38_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-rx_infix = "2023_05_22_14_24_18_v_9_7_3_online"
-tx_infix = "2023_05_22_14_24_13_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-rx_infix = "2023_05_22_14_41_50_v_9_7_3_online"
-tx_infix = "2023_05_22_14_41_45_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-rx_infix = "2023_05_19_10_16_32_v_9_7_3_online"
-tx_infix = "2023_05_19_10_16_27_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-rx_infix = "2023_05_19_10_25_42_v_9_7_3_online"
-tx_infix = "2023_05_19_10_25_37_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-rx_infix = "2023_05_19_10_42_40_v_9_7_3_online"
-tx_infix = "2023_05_19_10_42_35_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-rx_infix = "2023_05_19_10_55_32_v_9_7_3_online"
-tx_infix = "2023_05_19_10_55_27_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-rx_infix = "2023_05_19_11_20_37_v_9_7_3_online"
-tx_infix =  "2023_05_19_11_20_31_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-rx_infix = "2023_05_19_11_29_52_v_9_7_3_online"
-tx_infix =  "2023_05_19_11_29_47_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-rx_infix = "2023_05_19_11_38_43_v_9_7_3_online"
-tx_infix = "2023_05_19_11_38_37_v11_8_4"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-tx_infix = "2023_05_19_11_03_57_v11_8_4"
-rx_infix = "2023_05_19_11_04_02_v_9_7_3_online"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-tx_infix = "2023_05_19_10_34_26_v11_8_4"
-rx_infix = "2023_05_19_10_34_31_v_9_7_3_online"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-tx_infix = "2023_05_12_14_31_29_v11_8_4"
-rx_infix = "2023_05_12_14_31_34_v_9_7_3_online"
-# file_list += [file_list_fields (in_dir, rx_infix, tx_infix)]
-
-for capture in file_list:
-    tx_infix = capture.tx_infix
-    rx_infix = capture.rx_infix
-    in_dir = capture.in_dir
-    
-    #########################################################################################
-    # log and csv file structures
-    #########################################################################################
-    files_dic_fields = namedtuple ("files_dic_fields", "filename, fields")
-    files_dic = {}
-    log_dic = {}
-    
-    #
-    # log files
-    #
-    # uplink log
-    # uplink_queue. ch: 1, timestamp: 1681947064182, queue_size: 316, elapsed_time_since_last_queue_update: 9, actual_rate: 0
-    uplink_fields = namedtuple ("uplink_fields", "channel, queue_size_sample_TS, queue_size, \
-                                 elapsed_time_since_last_queue_update, actual_rate")
-    files_dic.update ({"uplink":  files_dic_fields._make ([in_dir+"uplink_queue_"+tx_infix+".log", uplink_fields])})
-    uplink_array = []
-    log_dic.update ({"uplink": uplink_array})
-    
-    # latency log
-    # ch: 0, received a latency, numCHOut:2, packetNum: 4294967295, latency: 40, time: 1681947064236, sent from ch: 0
-    # receive_TS is the time when the back propagated t2r info is received by the vehicle
-    latency_fields = namedtuple ("latency_fields", "communicating_channel, numCHOut, PktNum, bp_t2r, bp_t2r_receive_TS, sending_channel")
-    files_dic.update ({"all_latency": files_dic_fields._make ([in_dir+"latency_"+tx_infix+".log", latency_fields])})
-    all_latency_array = []
-    log_dic.update ({"all_latency": all_latency_array})
-    
-    # service log
-    # CH: 2, change to out-of-service state, latency: 0, latencyTime: 0, estimated latency: 2614851439, stop_sending flag: 0 , uplink queue size: 0, zeroUplinkQueue: 0, service flag: 0, numCHOut: 1, Time: 1681947064175, packetNum: 0
-    service_fields = namedtuple ("service_fields", "channel, bp_t2r, bp_t2r_receive_TS, est_t2r, stop_sending_flag, \
-                                 uplink_queue_size, zeroUplinkQueue, service_flag, numCHOut, service_transition_TS, bp_t2r_packetNum")
-    files_dic.update ({"service": files_dic_fields._make ([in_dir+"service_"+tx_infix+".log", service_fields])})
-    service_array = []
-    log_dic.update ({"service": service_array})
-    
-    """
-    # skip decision log
-    # CH: 0, Skip  packets. Method: 0, packetSent[lastPacketRetired]: 1, skip: 0, qsize: 10, framePacketNum: 0,  lastRetiredCH: 1, lastPacketRetired: 0, lastPacketRetiredTIme: 0, ch0 service: 1, ch1 service: 1, ch2 service: 0, ch0In: 1, ch1In : 1, ch2In: 0, ch0Matched:1, ch1Matched:1, ch2Matched:1, ch0-x:1, ch1-x:1, ch2-x:1, ch0InTime:1684521522628, ch1InTime: 1684521522572, ch2InTime:1684521517919, time: 1684521522628
-    skip_fields = namedtuple ("skip_fields", "ch, method, ignore1, skip, qsize, szP,  ignore2, lrp, lrp_bp_TS, ch0_IS_now, ch1_IS_now, ch2_IS_now, ch0_IS, ch1_IS, ch2_IS, ch0Matched, ch1Matched, ch2Matched, ch0_x, ch1_x, ch2_x, ch0InTime, ch1InTime, ch2InTime, resume_TS")
-    files_dic.update ({"skip": files_dic_fields._make ([in_dir+"skip_decision_"+tx_infix+".log", skip_fields])})
-    skip_array = []
-    log_dic.update ({"skip": skip_array})
-    """
-    
-    # skip decision log - new format
-    # CH: 1, Skip  packets. Method: 0, t2r: 0, lastPacketNumber to throwaway: 0, qsize: 313, framePacketNum: 0,  lastRetiredCH: 1, lastPacketRetired: 0, lastPacketRetiredTIme: 0, lastPacketSearchTime: 18446742387968496066, ch0 service: 1, ch1 service: 1, ch2 service: 0, ch0In: 1, ch1In : 1, ch2In: 0, ch0Matched:1, ch1Matched:1, ch2Matched:0, ch0-x:1, ch1-x:1, ch2-x:1, ch0InTime:1685741053515, ch1InTime: 1685741055610, ch2InTime:1685741053515, time: 1685741055610
-    skip_fields = namedtuple ("skip_fields", 
-                             # CH: 1,  Method: 0, t2r: 0, lastPacketNumber to throwaway: 0, qsize: 313, framePacketNum: 0,  lastRetiredCH: 2, lastPacketRetired: 0, lastPacketRetiredTIme: 0, lastPacketSearchTime: xxx, i
-                             # ch0 service: 0, ch1 service: 1, ch2 service: 1, ch0In: 0, ch1In : 1, ch2In: 1, ch0Matched:1, ch1Matched:1, ch2Matched:0, i
-                             # ch0-x:1, ch1-x:1, ch2-x:1, ch0InTime:1685999169730, ch1InTime: 1685999171821, ch2InTime:1685999169730, time: 1685999171821, skip: 0, firstPacketinQ: 0
-                              "ch,     method,    t2r,    last_skip_pkt_num,                qsize,       szP,               lrp_channel,       lrp_num,               lrp_bp_TS,               last_skip_tx_TS, \
-                               ch0_IS_now,    ch1_IS_now,      ch2_IS_now,    ch0_IS,    ch1_IS,     ch2_IS,   ch0Matched,  ch1Matched,    ch2Matched, \
-                               ch0_x,    ch1_x,    ch2_x,   ch0_IS_x_TS,             ch1_IS_x_TS,              ch2_IS_x_TS,              resume_TS,        skip,    first_pkt_in_Q, \
-                               ch0_lrp, ch1_lrp, ch2_lrp, ch0_lrp_bp_ts, ch1_lrp_bp_ts, ch2_lrp_bp_ts")
-    
-    files_dic.update ({"skip": files_dic_fields._make ([in_dir+"skip_decision_"+tx_infix+".log", skip_fields])})
-    skip_array = []
-    log_dic.update ({"skip": skip_array})
-    
-    # bitrate log
-    # send_bitrate: 830000, encoder state: 2, ch0 quality state: 1, ch1 quality state: 1, ch2 quality state: 1, time: 1681947065306
-    brm_fields = namedtuple ("brm_fields", "send_bitrate, encoder_state, ch0_quality_state, ch1_quality_state, ch2_quality_state, TS")
-    files_dic.update ({"brm": files_dic_fields._make ([in_dir+"bitrate_"+tx_infix+".log", brm_fields])})
-    brm_array = []
-    log_dic.update ({"brm": brm_array})
-    
-    # avgQ log
-    # RollingAvg75. Probe. CH: 2, RollingAvg75: 0.000000, qualityState: 1, queue size: 0, time: 1681947064175
-    # avgq_fields 
-    
-    """
-    # retx log
-    # ch: 2, received a retx, numCHOut:2, startPacketNum: 39753, run: 1, time: 1681946093091
-    
-    # probe log
-    # ch: 0, receive_a_probe_packet. sendTime: 1681946022261, latency: 45, receivedTime: 1681946022306
-    probe_fields = namedtuple ("probe_fields", "sending_channel, send_TS, latency, receive_TS")
-    files_dic.update ({"probe":   files_dic_fields._make ([in_dir+"probe_"+rx_infix+".log",probe_fields])})
-    # print (files_dic)
-    probe_array = []
-    log_dic.update ({"probe": probe_array})
-    """
-    
-    #
-    # csv files
-    #
-    TX_TS_INDEX = 1
-    # carrier csv
-    # packe_number	 sender_timestamp	 receiver_timestamp	 video_packet_len	 frame_start	 frame_number	 frame_rate	 frame_resolution	 frame_end	 camera_timestamp	 retx	 chPacketNum
-    # 0	             8.62473E+14	     1.68452E+12	     1384	              1	              0	             0	          0	                 0	         1.68452E+12	     0	      0
-    
-    chrx_fields = namedtuple ("chrx_fields", "pkt_num, tx_TS, rx_TS, pkt_len, frame_start, frame_number, \
-                               frame_rate, frame_res, frame_end, camera_TS, retx, chk_pkt")
-    for i in range (3):
-        files_dic.update ({"chrx"+str(i): files_dic_fields._make ([in_dir+rx_infix+"_ch"+ str(i) + ".csv", chrx_fields])})
-        chrx_array = []
-        log_dic.update ({"chrx"+str(i): chrx_array})
-    
-    # dedup csv
-    # packe_number	 sender_timestamp	 receiver_timestamp	 video_packet_len	 frame_start	 frame_number	 frame_rate	 frame_resolution	 frame_end	 camera_timestamp	 retx	 ch	 latency
-    # 0	             8.61156E+14	     1.68195E+12	     1384	             1	             0	             0	         0	                 0	         1.68195E+12	     0	     2	    37
-    dedup_fields = namedtuple ("dedup_fields", "pkt_num, tx_TS, rx_TS, pkt_len, frame_start, frame_number, \
-                               frame_rate, frame_res, frame_end, camera_TS, retx, ch, latency")
-    files_dic.update ({"dedup": files_dic_fields._make ([in_dir+rx_infix+".csv", dedup_fields])})
-    dedup_array = []
-    log_dic.update ({"dedup": dedup_array})
-    
-    # check that files_dic and log_dic are consistent
-    files_dic_keys = set (list (files_dic.keys()))
-    log_dic_keys = set (list (log_dic.keys()))
-    if (files_dic_keys != log_dic_keys): 
-        print ("keys don't match")
-        print ("files_dic_keys: ", files_dic_keys)
-        print ("log_dic keys:   ", log_dic_keys)
-        exit ()
-    
-    #########################################################################################
-    # read all the log data files. Each log is stored as list of namedtuples defined earlier
-    #########################################################################################
-    
-    # read all the log and csv files
-    for item in files_dic:
-        print ("reading file: ", files_dic[item].filename)
-        if item == "dedup" or item.startswith("chrx"):
-            log_dic[item] = read_csv_file (files_dic[item].filename, files_dic[item].fields, TX_TS_INDEX)
-        else:
-            log_dic[item] = read_log_file (files_dic[item].filename, files_dic[item].fields)
-        if (log_dic[item] != None):
-            print ("\t file length = {}".format (len(log_dic[item])))
-    
-    # create cleaned up latency file to retain channel to channel communication only
-    # create max pcaket list - largest packet number that has been back propagated up to each latency array line
-    print ("Removing unnecessary lines from the latency file")
-    print ("Original latency file length: {}".format (len(log_dic["all_latency"])))
-    short_list = []
-    max_bp_pkt_num_list = [0]
-    for i, line in enumerate (log_dic["all_latency"]):
-        if line.communicating_channel == line.sending_channel: 
-            short_list += [(line)]
-        if i:
-            max_bp_pkt_num_list += [max(line.PktNum, max_bp_pkt_num_list[i-1])] if (line.PktNum != 4294967295) else [max_bp_pkt_num_list[i-1]] 
-    log_dic.update ({"latency": short_list})
-    print ("After removing unnecessary lines, latency file lenght: {}".format (len(log_dic["latency"])))
-    
-    # create array indexable by packet number that returns frame number and frame size in packets
-    frame_sz_list_fields = namedtuple ("frame_sz_list_fields", "frame_num, frame_szP")
-    frame_sz_list = []
-    frame_num = 0
-    frame_szP = 0
-    for i, line in enumerate (log_dic["dedup"]):
-        if i and line.frame_start:
-            for j in range(frame_szP):
-                frame_sz_list += [frame_sz_list_fields(frame_num, frame_szP)]
-            frame_szP = 1
-            frame_num += 1
-        else:
-            frame_szP += 1
-    
-    # clean chrx: remove duplicates not due to retx, sort chrx arrays by tx_TS
-    chrx_a_sorted_by_pkt_num = []
-    for i in range(3):
-        chrx_a = log_dic["chrx"+str(i)]
-        chrx_a.sort (key = lambda a: a.tx_TS) 
-        chrx_a_sorted_by_pkt_num = sorted (chrx_a, key = lambda a: a.pkt_num)
-        count = 0
-        for j, line in enumerate (chrx_a):
-            if j+1 < len(chrx_a):
-                if i==0 and line.pkt_num == 24061:
-                    print ("deubg")
-                if line.retx == chrx_a[j+1].retx and line.pkt_num == chrx_a[j+1].pkt_num: # network introduce duplicates
-                   del chrx_a[j] 
-                   count += 1
-        if (count): 
-            array_name = "chrx"+str(i)
-            print ("remvoved {n} duplicates from {s} metadata array".format (n=count, s=array_name))
-        log_dic.update ({"chrx_sorted_by_pkt_num"+str(i): chrx_a_sorted_by_pkt_num})
-    
+for capture in capture_list:
+    files_dic, log_dic = create_dic (tx_infix = capture.tx_infix, rx_infix = capture.rx_infix, in_dir = capture.in_dir) 
+    read_files (log_dic = log_dic, files_dic = files_dic)
+    create_self_bp_list (log_dic)
+    create_max_bp_list (log_dic)
+    create_chrx_sorted_by_pkt_num (log_dic)
+    remove_network_duplicates (log_dic)
     
     ########################################################################################
     # Resume algo checks
     ########################################################################################
     
-    fout = open (out_dir + "skip_algo_chk_" + tx_infix + ".csv", "w")
+    fout = open (out_dir + "skip_algo_chk_" + capture.tx_infix + ".csv", "w")
     
     print ("Running resume algo checks")
     
@@ -483,12 +52,11 @@ for capture in file_list:
         if (index):
             index -= 1 # since bisect_left will return index of element with bp_t2r_recevive_TS GE service_transition_TS
     
-        lrp_num = max_bp_pkt_num_list[index]
-        lrp_bp_TS = log_dic["all_latency"][index].bp_t2r_receive_TS # this is closest bp pkt to service_transition_TS
-    
         channel = {"x": [0]*3, "t2r": [0]*3, "lrp_num": [0]*3, "lrp_bp_TS": [0]*3}
-    
-        while (index >= 0) and (lrp_num == max_bp_pkt_num_list[index]):
+
+        lrp_num = log_dic["max_bp_pkt_num"][index]
+        lrp_bp_TS = log_dic["all_latency"][index].bp_t2r_receive_TS # this is closest bp pkt to service_transition_TS
+        while (index >= 0) and (lrp_num == log_dic["max_bp_pkt_num"][index]):
             line = log_dic["all_latency"][index]
             if (line.PktNum == lrp_num):
                 if (line.bp_t2r_receive_TS < lrp_bp_TS):
@@ -605,7 +173,7 @@ for capture in file_list:
                     # channel has been in service since it transmitted lrp
                     channel["last_state_x_TS"][i] <= (channel["lrp_bp_TS"][i] -30 - channel["t2r"][i])
                     )
-            )
+            ) 
             channel["x_IS_debug"][i] = int (
                 channel["last_state_x_TS"][i] <= (service_line.service_transition_TS - IN_SERVICE_PERIOD)  and 
                 not (channel["last_state_x_TS"][i] <= (channel["lrp_bp_TS"][i] -30 - channel["t2r"][i])))
