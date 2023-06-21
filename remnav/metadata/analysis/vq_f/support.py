@@ -8,6 +8,11 @@ from collections import namedtuple
 from copy import deepcopy
 
 #########################################################################################
+# Global constants
+#########################################################################################
+FRAME_PERIOD = 33.33
+
+#########################################################################################
 # field definitions
 #########################################################################################
 
@@ -69,6 +74,17 @@ frame_sz_list_fields = namedtuple ("frame_sz_list_fields", "frame_num, frame_szP
 #########################################################################################
 # function definitions
 #########################################################################################
+def WARN (s):
+    " prints warning string on stderr"
+    sys.stderr.write (s+"\n")
+    # exit ()
+    return
+
+def FATAL (s):
+    " prints error string on stderr and exits"
+    sys.stderr.write (s+"\n")
+    exit ()
+    return
 
 def read_worklist (file_name):
     """ returns a list of file_list_fields tuples by reading file_name """
@@ -197,11 +213,12 @@ def create_dic (in_dir, tx_infix, rx_infix):
 def read_files (files_dic, log_dic):
     " reads all the log/csv file specified in files dictionary and stores them in the log dictonary"
     TX_TS_INDEX = 1
+    CAMERA_TS_INDEX = 9
     # read all the log and csv files
     for item in files_dic:
         print ("reading file: ", files_dic[item].filename)
         if item == "dedup" or item.startswith("chrx"):
-            log_dic[item] = read_csv_file (files_dic[item].filename, files_dic[item].fields, TX_TS_INDEX)
+            log_dic[item] = read_csv_file (files_dic[item].filename, files_dic[item].fields, TX_TS_INDEX, CAMERA_TS_INDEX)
         else:
             log_dic[item] = read_log_file (files_dic[item].filename, files_dic[item].fields)
         if (log_dic[item] != None):
@@ -261,7 +278,7 @@ def read_log_file (filename, tuplename):
     return array
 # end of read_log_file
 
-def read_csv_file(filename, tuplename, tx_TS_index):
+def read_csv_file(filename, tuplename, tx_TS_index, camera_TS_index):
     """ returns an array (list) of specified namedtuples from the data in the filename"""
 
     path = Path(filename)
@@ -283,8 +300,9 @@ def read_csv_file(filename, tuplename, tx_TS_index):
             except: # skip if no numerical value following ":"
                 pass
 
-        # fix the tx time
+        # fix the tx time and camera TS
         field_list[tx_TS_index] = int (field_list[tx_TS_index]/512)
+        if field_list[camera_TS_index]==0: field_list[camera_TS_index] = array[-1].camera_TS 
 
         try: 
             array += [tuplename._make(field_list)]
