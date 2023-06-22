@@ -50,7 +50,8 @@
 // #define FRAME_PERIOD_MS 33.34 33.34049421
 // #define FRAME_PERIOD_MS 33.36490893
 // #define FRAME_PERIOD_MS 33.34136441
-#define FRAME_PERIOD_MS 33.3656922228
+// #define FRAME_PERIOD_MS 33.3656922228
+#define FRAME_PERIOD_MS 33.34067086
 #define MAX_GPS			25000				// maximum entries in the gps file. fatal if there are more.
 #define TX_BUFFER_SIZE (20*60*1000)
 #define CD_BUFFER_SIZE (20*60*1000)
@@ -825,19 +826,19 @@ SKIP_FILE_LIST:
     // open remaining input and output files
 
     // output files
-    sprintf (bp, "%s%s_packet_vqfilter.csv",opath, rx_prep); 
+    sprintf (bp, "%spacket_%s_vqfilter.csv",opath, rx_prep); 
     ps_fp = open_file (bp, "w");
 
-    sprintf (bp, "%s%s_frame_vqfilter.csv", opath, rx_prep);
+    sprintf (bp, "%sframe_%s_vqfilter.csv", opath, rx_prep);
     fs_fp = open_file (bp, "w");
             
-    sprintf (bp, "%s%s_session_vqfilter.csv", opath, rx_prep);
+    sprintf (bp, "%ssession_%s_vqfilter.csv", opath, rx_prep);
     ss_fp = open_file (bp, "w");
 
-    sprintf (bp, "%s%s_warnings_vqfilter.txt", opath, rx_prep);
+    sprintf (bp, "%swarnings_%s_vqfilter.txt", opath, rx_prep);
     warn_fp = open_file (bp, "w");
     if (debug)
-        sprintf (bp, "%s%s_debug_vqfilter.txt", opath, rx_prep);
+        sprintf (bp, "%sdebug_%s_vqfilter.txt", opath, rx_prep);
         dbg_fp = open_file (bp, "w");
 
     // bit-rate modulation log file
