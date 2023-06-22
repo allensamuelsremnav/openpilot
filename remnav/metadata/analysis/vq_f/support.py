@@ -302,7 +302,7 @@ def read_csv_file(filename, tuplename, tx_TS_index, camera_TS_index):
 
         # fix the tx time and camera TS
         field_list[tx_TS_index] = int (field_list[tx_TS_index]/512)
-        if field_list[camera_TS_index]==0: field_list[camera_TS_index] = array[-1].camera_TS 
+        if field_list[camera_TS_index]==0 and len (array) != 0 : field_list[camera_TS_index] = array[-1].camera_TS 
 
         try: 
             array += [tuplename._make(field_list)]

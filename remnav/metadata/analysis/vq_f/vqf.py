@@ -16,8 +16,8 @@ from support import *
 #
 out_dir = "C:/Users/gopal/Downloads/analysis_output/"
 
-# capture_list = read_worklist ("C:/Users/gopal/Downloads/06_13_2023/file_list.txt")
-capture_list = read_worklist ("todo_list.txt")
+capture_list = read_worklist ("C:/Users/gopal/Downloads/06_17_2023/file_list.txt")
+# capture_list = read_worklist ("todo_list.txt")
 
 for capture in capture_list:
     files_dic, log_dic = create_dic (tx_infix = capture.tx_infix, rx_infix = capture.rx_infix, in_dir = capture.in_dir) 
@@ -132,7 +132,7 @@ for capture in capture_list:
         # relax channel_x to incldue other channels that transmitted packets neighboring lrp in porximity of lrp_bp_TS
         SEARCH_TS_WINDOW = 0
         SEARCH_PKT_WINDOW = 0
-        IN_SERVICE_PERIOD = 0
+        IN_SERVICE_PERIOD = 15
         MAX_SKIP_PACKETS = 20
         start_TS = lrp_bp_TS - SEARCH_TS_WINDOW
         start_TS_index = bisect_left (log_dic["all_latency"], start_TS, key = lambda a: a.bp_t2r_receive_TS)
