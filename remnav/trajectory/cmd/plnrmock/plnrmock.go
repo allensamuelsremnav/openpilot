@@ -63,7 +63,7 @@ func tpvs() <-chan []byte {
 		for {
 			tNow := <-ticker.C
 			var tpv gpsd.TPV
-			tpv.Class = "TPV"
+			tpv.Class = gpsd.ClassTPV
 			tpv.Time = tNow
 			tpv.Speed = speed
 			bytes, err := json.Marshal(tpv)

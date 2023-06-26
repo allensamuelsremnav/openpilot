@@ -16,6 +16,7 @@ type Class struct {
 }
 
 const ClassHeartbeat = "HEARTBEATGPSD"
+const ClassTPV = "TPV"
 
 type Device struct {
 	Path   string

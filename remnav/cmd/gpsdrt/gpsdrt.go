@@ -42,7 +42,7 @@ func watch(gpsdAddr string, verbose bool) chan []byte {
 				log.Fatal(err)
 			}
 			// Clients only need TPV contents.
-			if probe.Class == "TPV" {
+			if probe.Class == gpsd.ClassTPV {
 				msgs <- []byte(line)
 				if verbose {
 					var tpv gpsd.TPV
