@@ -6,6 +6,9 @@ import (
 	"flag"
 	"log"
 	"math"
+	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +20,7 @@ import (
 	trj "remnav.com/remnav/trajectory"
 )
 
+// Drain a channel (to keep it from blocking).
 func sink(ch <-chan []byte) {
 	go func() {
 		for _ = range ch {
@@ -24,8 +28,32 @@ func sink(ch <-chan []byte) {
 	}()
 }
 
+// Make channels for the packets from a local UDP source.
+func read(localPort, bufSize int) <-chan []byte {
+	msgs := make(chan []byte)
+
+	pc, err := net.Dial("udp", ":"+strconv.Itoa(localPort))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	go func() {
+		buf := make([]byte, bufSize)
+		for {
+			n, err := pc.Read(buf)
+			if err != nil {
+				log.Print(err)
+				break
+			}
+			msgs <- buf[:n]
+		}
+		close(msgs)
+	}()
+	return msgs
+}
+
 // Drive steering wheel between += maxAngle with angSpeed sin wave (radians/s)
-func g920s(intervalMs int, maxAngle, angSpeed float64) <-chan g920.G920 {
+func g920Mock(intervalMs int, maxAngle, angSpeed float64) <-chan g920.G920 {
 	ch := make(chan g920.G920)
 
 	tStart := time.Now().UnixMicro()
@@ -50,8 +78,12 @@ func g920s(intervalMs int, maxAngle, angSpeed float64) <-chan g920.G920 {
 	return ch
 }
 
+func g920Device(vid, pid uint64) <-chan g920.G920 {
+	return nil
+}
+
 // Generate TPV messages with speed.
-func tpvs() <-chan []byte {
+func tpvMock() <-chan []byte {
 	ch := make(chan []byte)
 
 	const speed = 4.69
@@ -77,8 +109,13 @@ func tpvs() <-chan []byte {
 	return ch
 }
 
+// Read tpv messages from gpsdlistener.
+func tpvPort(localPort, bufSize int) <-chan []byte {
+	return read(localPort, bufSize)
+}
+
 // Use VehicleMock to convert trajectories into applications.
-func applications(trajCh <-chan []byte) <-chan []byte {
+func vehicleListenMock(trajCh <-chan []byte) <-chan []byte {
 	vehicleMock := trj.VehicleMock{RTT: 115, ApplicationDelay: 155, ExecutionPeriod: 50}
 	return vehicleMock.Run(trajCh)
 }
@@ -129,7 +166,36 @@ func main() {
 
 	logRoot := flag.String("log_root", "D:/remnav_log", "root for log storage")
 
+	tpvPort_ := flag.Int("tpv_port",
+		rnnet.OperatorGpsdTrajectory,
+		"receive TPV messages from this local port (gpsdlisten)")
+	vidPID := flag.String("vidpid", "046d:c262", "colon-separated g920 hex vid and pid")
+
+	vehiclePort := flag.Int("vehicle_port",
+		rnnet.OperatorTrajectoryListen,
+		"send trajectory requests and received applied messages using bidi")
+	bufSize := flag.Int("bufsize",
+		4096,
+		"buffer size for network packets")
+
+	progress := flag.Bool("progress", false, "show progress indicator")
+	verbose := flag.Bool("verbose", false, "verbosity on")
+
 	flag.Parse()
+
+	// g920 ids
+	ids := strings.Split(*vidPID, ":")
+	vid, err := strconv.ParseUint(ids[0], 16, 16)
+	if err != nil {
+		log.Fatal(err)
+	}
+	pid, err := strconv.ParseUint(ids[1], 16, 16)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Printf("vid:pid %04x:%04x (%d:%d)\n", vid, pid, vid, pid)
+
 	params := trj.PlannerParameters{Wheelbase: 4,
 		GameWheelToTire: 1.0, // Game wheel maps directly to tire angle.
 		TireMax:         math.Pi / 4,
@@ -137,15 +203,37 @@ func main() {
 		Interval:        50,
 	}
 
-	speeds := tpvs()
-	const maxSteeringWheel = math.Pi / 8
-	const sinSpeed = 2 * math.Pi / 4.0
-	gs := g920s(5, maxSteeringWheel, sinSpeed)
+	// Set up live or mocks for speed, gpsd, vehicle bidi
+	var speeds <-chan []byte
+	if *tpvPort_ == 0 {
+		speeds = tpvMock()
+	} else {
+		speeds = tpvPort(*tpvPort_, *bufSize)
+	}
+
+	var gs <-chan g920.G920
+	if vid == 0 {
+		const maxSteeringWheel = math.Pi / 8
+		const sinSpeed = 2 * math.Pi / 4.0
+		gs = g920Mock(5, maxSteeringWheel, sinSpeed)
+	} else {
+		gs = g920Device(vid, pid)
+	}
+
+	var vehicleListen func(<-chan []byte) <-chan []byte
+	if *vehiclePort == 0 {
+		vehicleListen = vehicleListenMock
+	} else {
+		vehicleListen = func(trajCh <-chan []byte) <-chan []byte {
+			recvd := rnnet.BidiRW(*vehiclePort, *bufSize, trajCh, *verbose)
+			return trj.Dedup(recvd, *progress, *verbose)
+		}
+	}
 
 	trajCh, vehicleCh, _ := trj.Planner(params, speeds, gs, false)
-	// Our vehicle mock doesn't log, so remember what we sent it.
-	vehicleMockCh, vehicleLogCh := clone(vehicleCh)
-	applCh := applications(vehicleMockCh)
+	// Our vehicle doesn't log, so remember what we sent it.
+	vehicleCh, vehicleLogCh := clone(vehicleCh)
+	applCh := vehicleListen(vehicleCh)
 
 	displayCh, displayLogCh := merge(trajCh, applCh)
 

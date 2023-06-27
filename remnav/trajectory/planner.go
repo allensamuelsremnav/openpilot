@@ -174,7 +174,7 @@ func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G
 				tb := trajectory.Bytes()
 				trajectories <- tb
 				vehicleCommands <- tb
-				vehicleCommands <- report.Bytes()
+				vehicleCommands <- report.Bytes() // include G920 report for braking and accelerator
 				if logCh != nil {
 					select {
 					case logCh <- speed.bytes():

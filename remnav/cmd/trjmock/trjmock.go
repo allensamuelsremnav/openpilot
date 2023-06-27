@@ -58,7 +58,7 @@ func main() {
 	// Application messages go to the display.
 	go func() {
 		for msg := range deduped {
-			localTrajCh <- msg.Bytes()
+			localTrajCh <- msg
 
 			select {
 			case logCh <- msg:
