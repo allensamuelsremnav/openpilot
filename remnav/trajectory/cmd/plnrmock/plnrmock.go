@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,8 +79,10 @@ func g920Mock(intervalMs int, maxAngle, angSpeed float64) <-chan g920.G920 {
 	return ch
 }
 
-func g920Device(vid, pid uint64) <-chan g920.G920 {
-	return nil
+func g920Device(vid, pid uint64, verbose, progress bool) <-chan g920.G920 {
+	dev := g920.Open(vid, pid, verbose)
+	return g920.Read(dev, progress)
+
 }
 
 // Generate TPV messages with speed.
@@ -178,6 +181,7 @@ func main() {
 		4096,
 		"buffer size for network packets")
 
+	mock := flag.Bool("mock", false, "use mocks")
 	progress := flag.Bool("progress", false, "show progress indicator")
 	verbose := flag.Bool("verbose", false, "verbosity on")
 
@@ -194,7 +198,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("vid:pid %04x:%04x (%d:%d)\n", vid, pid, vid, pid)
+	log.Printf("%s: vid:pid %04x:%04x (%d:%d)\n", os.Args[0], vid, pid, vid, pid)
 
 	params := trj.PlannerParameters{Wheelbase: 4,
 		GameWheelToTire: 1.0, // Game wheel maps directly to tire angle.
@@ -205,23 +209,23 @@ func main() {
 
 	// Set up live or mocks for speed, gpsd, vehicle bidi
 	var speeds <-chan []byte
-	if *tpvPort_ == 0 {
+	if *tpvPort_ == 0 || *mock {
 		speeds = tpvMock()
 	} else {
 		speeds = tpvPort(*tpvPort_, *bufSize)
 	}
 
 	var gs <-chan g920.G920
-	if vid == 0 {
+	if vid == 0  || *mock {
 		const maxSteeringWheel = math.Pi / 8
 		const sinSpeed = 2 * math.Pi / 4.0
 		gs = g920Mock(5, maxSteeringWheel, sinSpeed)
 	} else {
-		gs = g920Device(vid, pid)
+		gs = g920Device(vid, pid, *verbose, *progress)
 	}
 
 	var vehicleListen func(<-chan []byte) <-chan []byte
-	if *vehiclePort == 0 {
+	if *vehiclePort == 0  || *mock {
 		vehicleListen = vehicleListenMock
 	} else {
 		vehicleListen = func(trajCh <-chan []byte) <-chan []byte {
@@ -230,6 +234,7 @@ func main() {
 		}
 	}
 
+	// Wire up the planner channels.
 	trajCh, vehicleCh, _ := trj.Planner(params, speeds, gs, false)
 	// Our vehicle doesn't log, so remember what we sent it.
 	vehicleCh, vehicleLogCh := clone(vehicleCh)
@@ -243,7 +248,7 @@ func main() {
 	cmdsLogDir := gpsd.LogDir("plnrmock", *logRoot, storage.VehicleCmdSubdir, "", "")
 	go rnlog.StringBinned(vehicleLogCh, cmdsLogDir, &wg)
 
-	log.Printf("display port :%d", *display)
+	log.Printf("%s: display port %d", os.Args[0], *display)
 	if *display >= 0 {
 		wg.Add(1)
 		go rnnet.WritePort(displayCh, *display, &wg)
