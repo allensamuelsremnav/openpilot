@@ -47,7 +47,7 @@ func Decode(buf []byte) (Report, error) {
 	if buf[Unknown3] != 0 {
 		log.Fatalf("unexpected byte 3 %v", buf)
 	}
-	if buf[Unknown9] != 5 {
+	if buf[Unknown9] != 4 && buf[Unknown9] != 5 {
 		log.Fatalf("unexpected byte 9 %v", buf)
 	}
 

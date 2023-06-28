@@ -32,8 +32,11 @@ func sink(ch <-chan []byte) {
 // Make channels for the packets from a local UDP source.
 func read(localPort, bufSize int) <-chan []byte {
 	msgs := make(chan []byte)
-
-	pc, err := net.Dial("udp", ":"+strconv.Itoa(localPort))
+	addr, err := net.ResolveUDPAddr("udp", ":"+strconv.Itoa(localPort))
+	if err != nil {
+		log.Fatal(err)
+	}
+	pc, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		log.Fatal(err)
 	}
