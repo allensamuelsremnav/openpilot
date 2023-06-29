@@ -1,4 +1,4 @@
-# Generate language-appropriate files for port assignments.
+# Generate language-appropriate files for port assignments, i.e. python portassignments.py
 import collections
 import sys
 
@@ -20,24 +20,15 @@ all_assignments = [
          Assignment(
             "Operator_Trajectory_Listen", 6002,
             "Bidi listener for trajectories and trajectory-applied messages."),
-         Assignment(
-            "Operator_G920_Listen", 6003,
-            "Bidi listener for G920 HID reports."),
-         Assignment(
-            "Operator_G920_Trajectory", 7000,
-            "G920 HID reports to trajectory planner. localhost"),
+         # Previously used 6003
+         # Previously used 7000
          Assignment(
             "Operator_Gpsd_Trajectory", 7001,
             "Gpsd messages from the gpsd listener to trajectory planner. localhost"),
-         Assignment(
-            "Operator_Trajectory_Request", 7002,
-            "Trajectory messages from trajectory planner to trajectory listener for forwarding. localhost"),
-         Assignment(
-            "Operator_Trajectory_Display", 7003,
-            "Trajectory and TrajectoryApplication messages to display. localhost"),
+         # Previously used 7003
          Assignment(
             "Operator_Overlay_Listen", 7777,
-            "Overlay messages from decoder and gpsd listener to operator (display)."),
+            "Overlay messages from decoder, trajectory planner, and gpsd listener to operator (display)."),
          Assignment(
             "Operator_Video_Listen", 8888,
             "Decoded video messages from decoder to operator (display)."),
@@ -49,10 +40,6 @@ all_assignments = [
             "Trajectory requests from trajectory dialer to "
             "trajectory execution; trajectory-applied messages from trajectory execution "
             "to trajectory dialer for forwarding. localhost"),
-         Assignment(
-            "Vehicle_G920", 7001,
-            "G920 reports to trajectory execution; heartbeats to keep bidi alive. "
-            "localhost"),
          ]),
 ]
 

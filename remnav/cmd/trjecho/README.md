@@ -3,19 +3,9 @@ requests and send trajectory-applied messages.
 
 # Running a mock environment
 
-## ```trjmock.exe```
-This is a mock that sends trajectory requests to the vehicle and
-listens for trajectory-applied messages.
-It also provides an application to send circle trajectories for
-debugging vehicle controllers.
-
-* Build Windows executable in ```rn1/remnav/cmd/trjmock/```.  (```GOOS=windows GOARCH=amd64 go build```.)
-* Copy executable to Windows operator station.
-* Start ```.\trjmock -sleep 50 -log_root D:\remnav_log```
-
-```--progress``` and ```--verbose``` switches are useful for
-debugging.  The former should show a sequence of `a`'s and `t`'s to indicate
-that applied (trajectory) messages have been received (sent).
+## ```remnav/cmd/plnr/plnr.exe```
+The trajectory planner can be configured to use gpsd and g920 mocks
+with a live bidi channel to the vehicle: use ```--tpv_port 0 -vidpid 0```
 
 ## ```bidiwr```
 This is a shim that makes the bidirectional UDP channel accessible via
@@ -47,7 +37,7 @@ will see a sequence of `a`'s and `t`'s indicating that applied
 
 ## Restarts
 
-```trjmock.exe``` > ```bidiwr``` > ```trjecho```
+```plnr.exe``` > ```bidiwr``` > ```trjecho```
 
 ```x > y``` means "restart y after restarting x".
 
