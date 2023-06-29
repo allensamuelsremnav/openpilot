@@ -157,13 +157,10 @@ func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G
 				}
 			case <-ticker.C:
 				tireRequested := param.tire(report.Wheel)
-				const microsToSeconds = 1e-6
-				dt := float64(report.Requested-reportPrev.Requested) * microsToSeconds
-				if dt <= 0 {
-					log.Printf("dt <= 0 for G920 at %d - %d", report.Requested, reportPrev.Requested)
-					continue
+				if report.Requested < reportPrev.Requested {
+					log.Fatalf("out-of-order G920 reports at %d - %d", report.Requested, reportPrev.Requested)
 				}
-				tireLimited := param.limitDtireDt(tirePrev, tireRequested, dt)
+				tireLimited := param.limitDtireDt(tirePrev, tireRequested, intervalSetpoint.Seconds())
 				// fmt.Printf("report wheel %.2f, tire requested %.2f, limited %.2f\n", report.Wheel, tireRequested, tireLimited)
 				curvature := param.curvature(tireLimited)
 
