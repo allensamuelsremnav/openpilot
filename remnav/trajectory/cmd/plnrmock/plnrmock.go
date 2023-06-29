@@ -4,6 +4,7 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"io/ioutil"
 	"log"
 	"math"
 	"net"
@@ -166,6 +167,7 @@ func merge(trajCh, applCh <-chan []byte) (<-chan []byte, <-chan []byte) {
 }
 
 func main() {
+	config := flag.String("config", "", "configuration file")
 	display := flag.Int("display",
 		rnnet.OperatorOverlayListen,
 		"trajectories and trajectory-appplication to this local port")
@@ -203,12 +205,18 @@ func main() {
 
 	log.Printf("%s: vid:pid %04x:%04x (%d:%d)\n", os.Args[0], vid, pid, vid, pid)
 
-	params := trj.PlannerParameters{Wheelbase: 4,
-		GameWheelToTire: 1.0, // Game wheel maps directly to tire angle.
-		TireMax:         math.Pi / 4,
-		DtireDtMax:      0.25, // 0.25 is sluggish
-		Interval:        50,
+	// Planner configuration
+	var configBuf []byte
+	if *config != "" {
+		var err error
+		configBuf, err = ioutil.ReadFile(*config)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("%s: parameter configuration %s\n", os.Args[0], *config)
 	}
+	params := trj.Parameters(configBuf)
+	log.Printf("%s: params: %v\n", os.Args[0], params)
 
 	// Set up live or mocks for speed, gpsd, vehicle bidi
 	var speeds <-chan []byte

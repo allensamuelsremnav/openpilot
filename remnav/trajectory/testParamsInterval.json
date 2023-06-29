@@ -1,0 +1,6 @@
+{
+    "Wheelbase": 8.0,
+    "GameWheelToTire": 1.125,
+    "TireMax":  0.5,
+    "DtireDtMax": 0.75
+}

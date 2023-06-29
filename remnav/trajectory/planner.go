@@ -86,6 +86,42 @@ func (p PlannerParameters) curvature(tire float64) float64 {
 	return p.Wheelbase / sin
 }
 
+
+// Initialize PlannerParams, possibly from data.
+func Parameters(buf []byte) PlannerParameters {
+	var params PlannerParameters
+	var defaultInterval int64 = 50
+	params.Interval = defaultInterval
+
+	if buf != nil {
+		err := json.Unmarshal(buf, &params)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	if params.Wheelbase == 0 {
+		params.Wheelbase = 4.0
+	}
+	if params.GameWheelToTire == 0 {
+		params.GameWheelToTire = 1.0
+	}
+	if params.TireMax == 0 {
+		params.TireMax = math.Pi / 4
+	}
+	if params.DtireDtMax == 0 {
+		params.DtireDtMax = 0.25
+	}
+
+	// Don't allow configuring this from JSON
+	if params.Interval != defaultInterval {
+		log.Printf("force planner interval to %d, not %v", defaultInterval, params.Interval)
+		params.Interval = defaultInterval
+	}
+
+	return params
+}
+
+
 // Probably need something better, like a PI controller.
 func intervalController(setpoint time.Duration, tickPrev, tickNow time.Time) time.Duration {
 	actual := tickNow.Sub(tickPrev).Microseconds()
