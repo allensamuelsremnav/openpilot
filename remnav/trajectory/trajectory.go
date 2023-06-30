@@ -13,7 +13,7 @@ const ClassTrajectory = "TRAJECTORY"
 type Trajectory struct {
 	Class     string  `json:"class"`
 	Requested int64   `json:"requested"` // μs since Unix epoch
-	Curvature float64 `json:"curvature"` // 1/m
+	Curvature float64 `json:"curvature"` // 1/m; positive left turn, counterclockwise turn
 	Speed     float64 `json:"speed"`     // m/s
 }
 

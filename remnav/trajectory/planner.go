@@ -77,13 +77,7 @@ func (p PlannerParameters) limitDtireDt(tireState, tireRequested, dt float64) fl
 
 // Compute curvature using front-axle bicycle model.
 func (p PlannerParameters) curvature(tire float64) float64 {
-	sin := math.Sin(tire)
-	// Don't divide by zero
-	const eps = 1e-300
-	if math.Abs(sin) < eps {
-		sin = math.Copysign(eps, sin)
-	}
-	return p.Wheelbase / sin
+	return math.Sin(tire) / p.Wheelbase
 }
 
 
