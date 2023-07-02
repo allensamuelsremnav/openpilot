@@ -256,7 +256,7 @@ func main() {
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	cmdsLogDir := gpsd.LogDir("plnrmock", *logRoot, storage.VehicleCmdSubdir, "", "")
+	cmdsLogDir := gpsd.LogDir("plnr", *logRoot, storage.VehicleCmdSubdir, "", "")
 	go rnlog.StringBinned(vehicleLogCh, cmdsLogDir, &wg)
 
 	log.Printf("%s: display port %d", os.Args[0], *display)
@@ -268,7 +268,7 @@ func main() {
 	}
 
 	wg.Add(1)
-	displayLogDir := gpsd.LogDir("plnrmock", *logRoot, storage.TrajectorySubdir, "", "")
+	displayLogDir := gpsd.LogDir("plnr", *logRoot, storage.TrajectorySubdir, "", "")
 	go rnlog.StringBinned(displayLogCh, displayLogDir, &wg)
 
 	wg.Wait()

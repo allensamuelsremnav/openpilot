@@ -194,6 +194,10 @@ func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G
 				// fmt.Printf("report wheel %.2f, tire requested %.2f, limited %.2f\n", report.Wheel, tireRequested, tireLimited)
 				curvature := param.curvature(tireLimited)
 
+				// We had a bug; be sure it doesn't come back.
+				if math.Abs(curvature) > 6000 {
+					log.Printf("tireRequested %f, tirePrev %f, tireLimited %f", tireRequested, tirePrev, tireLimited)
+				}
 				trajectory := Trajectory{Class: ClassTrajectory,
 					Requested: time.Now().UnixMicro(),
 					Curvature: curvature,
