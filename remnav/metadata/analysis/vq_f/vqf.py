@@ -10,13 +10,14 @@ from support import *
 #
 # main 
 #
+out_dir = "C:/Users/gopal/Downloads/analysis_output/"
+capture_list = read_worklist ("C:/Users/gopal/Downloads/06_29_2023/readme.md")
+
 do_spike_analysis = 0
 do_resume_algo_checks = 0
 do_brm_algo_checks = 1
-do_skip_effecitiveness_checks = 1
-
-out_dir = "C:/Users/gopal/Downloads/analysis_output/"
-capture_list = read_worklist ("C:/Users/gopal/Downloads/06_17_2023/file_list.txt")
+do_skip_effecitiveness_checks = 0
+do_max_burst_check = 0
 
 for capture in capture_list:
     # read log/csv files and cleanse the data
@@ -31,5 +32,6 @@ for capture in capture_list:
     if (do_resume_algo_checks): resume_algo_check (log_dic=log_dic, capture=capture, out_dir=out_dir)
     if (do_brm_algo_checks): brm_algo_check (log_dic=log_dic, capture=capture, out_dir=out_dir)
     if (do_skip_effecitiveness_checks): skip_effectiveness_check (log_dic=log_dic, capture=capture, out_dir=out_dir)
+    if (do_max_burst_check): max_burst_check (log_dic=log_dic, capture=capture, out_dir=out_dir)
     
 exit ()
