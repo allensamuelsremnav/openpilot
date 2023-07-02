@@ -59,8 +59,8 @@ func (a TrajectoryApplication) String() string {
 }
 
 // Return a channel of deduped application messages with log time.
-func Dedup(recvd <-chan []byte, progress, verbose bool) <-chan TrajectoryApplication {
-	deduped := make(chan TrajectoryApplication)
+func Dedup(recvd <-chan []byte, progress, verbose bool) <-chan []byte {
+	deduped := make(chan []byte)
 	go func() {
 		defer close(deduped)
 		var latest int64
@@ -83,7 +83,11 @@ func Dedup(recvd <-chan []byte, progress, verbose bool) <-chan TrajectoryApplica
 				if verbose {
 					fmt.Println(applied.String())
 				}
-				deduped <- applied
+				bytes, err := json.Marshal(applied)
+				if err != nil {
+					log.Fatal(err)
+				}
+				deduped <- bytes
 			}
 		}
 	}()

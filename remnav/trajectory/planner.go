@@ -86,6 +86,42 @@ func (p PlannerParameters) curvature(tire float64) float64 {
 	return p.Wheelbase / sin
 }
 
+
+// Initialize PlannerParams, possibly from data.
+func Parameters(buf []byte) PlannerParameters {
+	var params PlannerParameters
+	var defaultInterval int64 = 50
+	params.Interval = defaultInterval
+
+	if buf != nil {
+		err := json.Unmarshal(buf, &params)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	if params.Wheelbase == 0 {
+		params.Wheelbase = 4.0
+	}
+	if params.GameWheelToTire == 0 {
+		params.GameWheelToTire = 1.0
+	}
+	if params.TireMax == 0 {
+		params.TireMax = math.Pi / 4
+	}
+	if params.DtireDtMax == 0 {
+		params.DtireDtMax = 0.25
+	}
+
+	// Don't allow configuring this from JSON
+	if params.Interval != defaultInterval {
+		log.Printf("force planner interval to %d, not %v", defaultInterval, params.Interval)
+		params.Interval = defaultInterval
+	}
+
+	return params
+}
+
+
 // Probably need something better, like a PI controller.
 func intervalController(setpoint time.Duration, tickPrev, tickNow time.Time) time.Duration {
 	actual := tickNow.Sub(tickPrev).Microseconds()
@@ -157,13 +193,10 @@ func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G
 				}
 			case <-ticker.C:
 				tireRequested := param.tire(report.Wheel)
-				const microsToSeconds = 1e-6
-				dt := float64(report.Requested-reportPrev.Requested) * microsToSeconds
-				if dt <= 0 {
-					log.Printf("dt <= 0 for G920 at %d - %d", report.Requested, reportPrev.Requested)
-					continue
+				if report.Requested < reportPrev.Requested {
+					log.Fatalf("out-of-order G920 reports at %d - %d", report.Requested, reportPrev.Requested)
 				}
-				tireLimited := param.limitDtireDt(tirePrev, tireRequested, dt)
+				tireLimited := param.limitDtireDt(tirePrev, tireRequested, intervalSetpoint.Seconds())
 				// fmt.Printf("report wheel %.2f, tire requested %.2f, limited %.2f\n", report.Wheel, tireRequested, tireLimited)
 				curvature := param.curvature(tireLimited)
 
@@ -174,7 +207,7 @@ func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G
 				tb := trajectory.Bytes()
 				trajectories <- tb
 				vehicleCommands <- tb
-				vehicleCommands <- report.Bytes()
+				vehicleCommands <- report.Bytes() // include G920 report for braking and accelerator
 				if logCh != nil {
 					select {
 					case logCh <- speed.bytes():

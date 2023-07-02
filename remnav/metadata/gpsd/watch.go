@@ -98,7 +98,7 @@ func WatchBinned(gpsdAddress string, reader chan string, gnssDir string, wg *syn
 		}
 
 		if ofile == nil {
-			if probe.Class == "TPV" {
+			if probe.Class == ClassTPV {
 				// Start a new log file.
 				var tpv TPV
 				err := json.Unmarshal([]byte(line), &tpv)
@@ -132,7 +132,7 @@ func WatchBinned(gpsdAddress string, reader chan string, gnssDir string, wg *syn
 			lineCount++
 			continue
 		}
-		if probe.Class == "TPV" {
+		if probe.Class == ClassTPV {
 			var tpv TPV
 			err := json.Unmarshal([]byte(line), &tpv)
 			if err != nil {

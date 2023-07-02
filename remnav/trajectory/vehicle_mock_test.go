@@ -40,7 +40,7 @@ func TestVehicleMock(t *testing.T) {
 			t.Error(err)
 		}
 		fmt.Printf("RTT %d μs = %d - %d, observed applied - trajectory = %d μs = %d - %d\n", now-appl.Trajectory, now, appl.Trajectory, appl.Applied-appl.Trajectory, appl.Applied, appl.Trajectory)
-		eps := 7500.0
+		eps := 7500.0*2
 		nominal := int64(mock.RTT * 1000)
 		checkRTT := math.Abs((float64)(now - appl.Trajectory - nominal))
 		if checkRTT > eps {

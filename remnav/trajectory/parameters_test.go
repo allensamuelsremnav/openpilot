@@ -2,6 +2,7 @@ package trajectory
 
 import (
 	"fmt"
+	"io/ioutil"
 	"math"
 	"testing"
 )
@@ -110,3 +111,35 @@ func TestLimitDtireDt(t *testing.T) {
 	}
 
 }
+
+func TestParamsInit(t *testing.T) {
+	for _, v := range []struct {
+		filename string
+		want PlannerParameters
+	}{
+		{"testParams.json", PlannerParameters{4, 1.0, math.Pi / 4, 0.25, 50}},
+		{"testParamsInterval.json", PlannerParameters{8, 1.125, 0.5, 0.75, 50}},
+		{"testParamsNL.json", PlannerParameters{4, 1.0, math.Pi / 4, 0.25, 50}},
+		{"testParamsNLUnix.json", PlannerParameters{4, 1.0, math.Pi / 4, 0.25, 50}},
+	}{
+		var buf []byte
+		buf, err := ioutil.ReadFile(v.filename)
+		if err != nil {
+			t.Fatalf("%v", err)
+		}
+		got := Parameters(buf)
+		if got != v.want {
+			t.Fatalf("got %v, wnat %v", got, v.want)
+		}
+		
+		fmt.Printf("%s: %v\n", v.filename, got)
+	}		
+
+	var buf []byte
+	got := Parameters(buf)
+	want := PlannerParameters{4, 1.0, math.Pi / 4, 0.25, 50}
+	if got != want {
+		t.Fatalf("got %v, wnat %v", got, want)
+	}
+}
+

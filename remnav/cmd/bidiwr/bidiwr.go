@@ -49,12 +49,12 @@ func writeTo(pc net.PacketConn, addrs <-chan net.Addr, replies <-chan []byte, wG
 }
 
 func main() {
-	localUsage := fmt.Sprintf("listen and reply and this local port, i.e. %d  or %d (trajectories or g920).",
-		rnnet.VehicleTrajectoryRequestApplication, rnnet.VehicleG920)
+	localUsage := fmt.Sprintf("listen and reply and this local port, i.e. %d trajectories).",
+		rnnet.VehicleTrajectoryRequestApplication)
 	localPort := flag.Int("port", 0, localUsage)
 
-	destUsage := fmt.Sprintf("destination address, i.e. 10.0.0.60:%d or %d  (trajectories or g920)",
-		rnnet.OperatorTrajectoryListen, rnnet.OperatorG920Listen)
+	destUsage := fmt.Sprintf("destination address, i.e. 10.0.0.60:%d (trajectories)",
+		rnnet.OperatorTrajectoryListen)
 	dest := flag.String("dest", "", destUsage)
 	bufSize := flag.Int("bufsize", 4096, "buffer size for reading")
 	recvKey := flag.String("recv_key", "requested", "filter latest received message using this field")
