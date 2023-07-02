@@ -51,7 +51,9 @@
 // #define FRAME_PERIOD_MS 33.36490893
 // #define FRAME_PERIOD_MS 33.34136441
 // #define FRAME_PERIOD_MS 33.3656922228
-#define FRAME_PERIOD_MS 33.34067086
+// #define FRAME_PERIOD_MS 33.34067086
+// #define FRAME_PERIOD_MS 33.34067086
+#define FRAME_PERIOD_MS 33.36631016
 #define MAX_GPS			25000				// maximum entries in the gps file. fatal if there are more.
 #define TX_BUFFER_SIZE (20*60*1000)
 #define CD_BUFFER_SIZE (20*60*1000)
@@ -802,7 +804,8 @@ PROCESS_NEXT_FILE:
     sprintf (sd_prep, "%s_%s", "service", file_table[flist_idx].tx_pre); 
     sprintf (brm_prep, "%s_%s", "bitrate", file_table[flist_idx].tx_pre); 
     sprintf (avgq_prep, "%s_%s", "avgQ", file_table[flist_idx].tx_pre); 
-    have_tx_log = have_ld_log = have_sd_log = have_brm_log = have_avgq_log = 1;
+    have_tx_log = have_ld_log = have_sd_log = have_brm_log = 1;
+    have_avgq_log = 0;
 
     printf ("rx_prep: %s\n", rx_prep); 
     printf ("tx_prep: %s\n", tx_prep); 
@@ -1494,41 +1497,38 @@ int read_pr_line (
 
 void my_free () {
 
-    if (fd !=NULL) free (fd); 
+    if (fd !=NULL) free (fd); fd = NULL; 
 
-    if (td0 != NULL) free (td0); 
-    if (td1 != NULL) free (td1); 
-    if (td2 != NULL) free (td2); 
+    if (td0 != NULL) free (td0); td0 = NULL; 
+    if (td1 != NULL) free (td1); td1 = NULL;
+    if (td2 != NULL) free (td2); td2 = NULL;
 
-    if (cd0 != NULL) free (cd0); 
-    if (cd1 != NULL) free (cd1); 
-    if (cd2 != NULL) free (cd2); 
+    if (cd0 != NULL) free (cd0); cd0 = NULL; 
+    if (cd1 != NULL) free (cd1); cd1 = NULL; 
+    if (cd2 != NULL) free (cd2); cd2 = NULL; 
 
-    if (cs0 != NULL) free (cs0); 
-    if (cs1 != NULL) free (cs1); 
-    if (cs2 != NULL) free (cs2); 
+    if (cs0 != NULL) free (cs0); cs0 = NULL;
+    if (cs1 != NULL) free (cs1); cs1 = NULL;
+    if (cs2 != NULL) free (cs2); cs2 = NULL; 
 
-    if (sd0 != NULL) free (sd0); 
-    if (sd1 != NULL) free (sd1); 
-    if (sd2 != NULL) free (sd2); 
+    if (sd0 != NULL) free (sd0); sd0 = NULL;
+    if (sd1 != NULL) free (sd1); sd1 = NULL;
+    if (sd2 != NULL) free (sd2); sd2 = NULL;
 
-    if (ld0 != NULL) free (ld0); 
-    if (ld1 != NULL) free (ld1); 
-    if (ld2 != NULL) free (ld2); 
+    if (ld0 != NULL) free (ld0); ld0 = NULL;
+    if (ld1 != NULL) free (ld1); ld1 = NULL;
+    if (ld2 != NULL) free (ld2); ld2 = NULL;
     
-    if (ls0 != NULL) free (ls0); 
-    if (ls1 != NULL) free (ls1); 
-    if (ls2 != NULL) free (ls2); 
+    if (ls0 != NULL) free (ls0); ls0 = NULL;
+    if (ls1 != NULL) free (ls1); ls1 = NULL;
+    if (ls2 != NULL) free (ls2); ls2 = NULL;
 
-    if (avgqd0 != NULL) free (avgqd0);
-    if (avgqd1 != NULL) free (avgqd1);
-    if (avgqd2 != NULL) free (avgqd2);
+    if (avgqd0 != NULL) free (avgqd0); avgqd0 = NULL; 
+    if (avgqd1 != NULL) free (avgqd1); avgqd1 = NULL; 
+    if (avgqd2 != NULL) free (avgqd2); avgqd2 = NULL; 
 
-    if (brmdata != NULL) free (brmdata);
+    if (brmdata != NULL) free (brmdata); brmdata = NULL; 
     
-    fd = td0 = td1 = td2 = cd0 = cd1 = cd2 = cs0 = cs1 = cs2 = sd0 = sd1 = sd2 =
-    ld0 = ld1 = ld2 = ls0 = ls1 = ls2 = avgqd0 = avgqd1 = avgqd2 = brmdata = NULL; 
-
 	if (md_fp) fclose (md_fp);
 	if (an_fp) fclose (an_fp);
 	if (fs_fp) fclose (fs_fp); 
@@ -2429,7 +2429,7 @@ void emit_packet_header (FILE *ps_fp) {
     // per carrier meta data
     int i; 
     for (i=0; i<3; i++) {
-        fprintf (ps_fp, "C%d: c2r, c2v, t2r, r2t, est_t2r, ert, socc, MMbps, retx,", i); 
+        fprintf (ps_fp, "C%d: c2r, c2v, t2r, r2t, est_t2r, ert, socc, MMbps, chqst, retx,", i); 
         fprintf (ps_fp, "tgap, ppkts, upkts, spkts, cont, Inc, rdbg, urpkt, oos_d, oos_o, cr, I, rb, bp_gap, x, y, rlen, flen, I,");
         fprintf (ps_fp, "tx_TS, rx_TS, r2t_TS, ert_TS, socc_TS, bp_pkt_TS, bp_pkt, bp_t2r,"); 
         fprintf (ps_fp, "Ravg, IS, qst, qsz, avg_ms, avg_pkt,");
@@ -3371,6 +3371,7 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
         fprintf (ps_fp, "%d,", cp->socc);                                                       // socc
         if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000);          // MMbps
         else fprintf (ps_fp, ",");                                                              
+        fprintf (ps_fp, "%d,", cp->brmdp->channel_quality_state[carrier_num]);
         fprintf (ps_fp, "%d,", cp->retx);                                                       // retx
         if (cp->start_of_run_flag) { // channel entering service
             fprintf (ps_fp, "%d,", cp->tgap);                                                   // tgap
@@ -3453,6 +3454,7 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
         fprintf (ps_fp, ",");       // ert
         fprintf (ps_fp, "%d,", cp->socc);
         if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000); else fprintf (ps_fp, ",");
+        fprintf (ps_fp, ",");       // chqst
         fprintf (ps_fp, ",");       // retx
         fprintf (ps_fp, ",");       // pending packets time gap (tgap)
         fprintf (ps_fp, ",");       // pending_packet_count (ppkts)
