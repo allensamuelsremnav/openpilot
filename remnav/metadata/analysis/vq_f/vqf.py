@@ -21,8 +21,8 @@ do_max_burst_check = 0
 
 for capture in capture_list:
     # read log/csv files and cleanse the data
-    files_dic, log_dic = create_dic (tx_infix = capture.tx_infix, rx_infix = capture.rx_infix, in_dir = capture.in_dir) 
-    read_files (log_dic = log_dic, files_dic = files_dic)
+    files_dic, log_dic = create_dic (tx_infix=capture.tx_infix, rx_infix=capture.rx_infix, in_dir=capture.in_dir) 
+    read_files (log_dic=log_dic, files_dic=files_dic)
     create_self_bp_list (log_dic)
     create_max_bp_list (log_dic)
     create_chrx_sorted_by_pkt_num (log_dic)
