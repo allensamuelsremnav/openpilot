@@ -16,7 +16,8 @@
 #define RES_HD  0
 #define RES_SD  1
 #define CRITICAL_RUN_LENGTH 20
-#define MD_BUFFER_SIZE (20*60*30*15)
+#define CAPTURE_PERIOD_MINUTES 30
+#define MD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30*15)
 #define MAX_LINE_SIZE    1000 
 #define MAX_SD_LINE_SIZE 1000
 #define NUM_OF_MD_FIELDS    12
@@ -54,14 +55,14 @@
 // #define FRAME_PERIOD_MS 33.34067086
 // #define FRAME_PERIOD_MS 33.34067086
 #define FRAME_PERIOD_MS 33.36631016
-#define MAX_GPS			25000				// maximum entries in the gps file. fatal if there are more.
-#define TX_BUFFER_SIZE (20*60*1000)
-#define CD_BUFFER_SIZE (20*60*1000)
-#define BRM_BUFFER_SIZE (20*60*100*3)
-#define AVGQ_BUFFER_SIZE (20*60*1000*3)
-#define LD_BUFFER_SIZE (20*60*1000)
-#define SD_BUFFER_SIZE (20*60*1000)
-#define FD_BUFFER_SIZE (20*60*30)
+#define GPS_BUFFER_SIZE	25000				// maximum entries in the gps file. fatal if there are more.
+#define TX_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
+#define CD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
+#define BRM_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*100*3)
+#define AVGQ_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000*3)
+#define LD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
+#define SD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
+#define FD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30)
 #define IN_SERVICE 1
 #define OUT_OF_SERVICE 0
 
@@ -282,7 +283,6 @@ struct s_carrier {
     int channel_x_in_good_shape;        // 1 if channel x is in good shape
     int channel_y_in_good_shape;        // 1 if channel y is in good shape
     int reason_debug; 
-    int bp_TS_gap;                      // gap between bp_TS of this and other channesl for current packet - 1 (last retired packet)
     int skip_pkts;                      // number of packets to skip at the start of the run
     int unretired_pkts_debug;           // unretired packets from other channel
 
@@ -429,7 +429,7 @@ void init_packet_stats (
     struct s_cmetadata *csp, 
     struct s_carrier *cp);
 
-// returns 1 if successfully read the annotation file
+// returns length of the read annotation file
 int read_annotation_file (void); 
 
 // returns 1 if the current frame count is marked in the annotation file
@@ -529,6 +529,9 @@ struct s_txlog *find_occ_from_td (
     double tx_epoch_ms, struct s_txlog *tdhead, int len_td, 
     int *iocc, int *socc, double *socc_epoch_ms);
 
+// reads ipath and file specifications from the specified file
+void read_worklist (FILE *fp);
+
 // globals - command line inputs
 int     debug = 1; 
 int     silent = 0;                             // if 1 then suppresses warning messages
@@ -540,6 +543,8 @@ char    avgq_pre[500], *avgq_prep = avgq_pre;   // rolling average queue size lo
 char    rx_pre[500], *rx_prep = rx_pre;         // receive side meta data prefix not including the .csv extension
 char    ld_pre[500], *ld_prep = ld_pre;         // latency file prefix 
 char    sd_pre[500], *sd_prep = sd_pre;         // service file prefix 
+char    gps_pre[500], *gps_prep = gps_pre;      // gos file prefix
+char    anno_pre[500], *anno_prep = anno_pre;   // annotation file prefix`service file prefix
 FILE    *md_fp = NULL;                          // meta data file name
 FILE    *an_fp = NULL;                          // annotation file name
 FILE    *fs_fp = NULL;                          // frame statistics output file
@@ -561,6 +566,8 @@ float   minimum_acceptable_bitrate = 0.5;       // used for stats generation onl
 unsigned maximum_acceptable_c2rx_latency = 110; // frames considered late if the latency exceeds this 
 unsigned anlist[MAX_NUM_OF_ANNOTATIONS][2];     // mmanual annotations
 int     len_anlist=0;                           // length of the annotation list
+int     have_gps_metadata = 0;                  // set to 1 if gps meta data exists
+int     have_anno_metadata = 0;                 // set to 1 if annotation metad ata exists
 int     have_carrier_metadata = 0;              // set to 1 if per carrier meta data is available
 int     have_tx_log = 0;                        // set to 1 if transmit log is available
 int     have_ld_log = 0;                        // set to 1 if latency log is available
@@ -578,10 +585,10 @@ char    comamnd_line[5000];                     // string store the command line
 
 // globals - storage
 struct  s_metadata md[MD_BUFFER_SIZE];           // buffer to store meta data lines*/
-int     len_md=1; 
+int     len_md=1;                               // since md data is filled starting from index 1
 int     md_index;                               // current meta data buffer pointer
-struct  s_gps gps[MAX_GPS];                     // gps data array 
-int	    len_gps; 		                        // length of gps array
+struct  s_gps *gpsd = NULL;                     // gps data array 
+int	    len_gps=0; 		                        // length of gps array
 struct  s_cmetadata *cd0=NULL, *cd1=NULL, *cd2=NULL; // per carrier metadata file stored by packet number
 int     len_cd0=0, len_cd1=0, len_cd2=0;        // len of the transmit data logfile
 struct  s_cmetadata *cs0=NULL, *cs1=NULL, *cs2=NULL; // per carrier metadata file stored by rx TS
@@ -591,8 +598,6 @@ struct  s_brmdata *brmdata = NULL;              // pointer to the brm data array
 int     len_brmd=0; 
 struct  s_avgqdata *avgqd0=NULL, *avgqd1=NULL, *avgqd2=NULL; // rolling avg data array
 int     len_avgqd0=0, len_avgqd1=0, len_avgqd2=0;        
-// struct  s_service *sd;                          // service log data array
-// int     len_sd; 
 struct  s_latency *ld0=NULL, *ld1=NULL, *ld2=NULL;  // latency log data array sorted by packet num
 struct  s_latency *ls0=NULL, *ls1=NULL, *ls2=NULL;  // latency log data array sorted by bp_epoch_ms
 int     len_ld0=0, len_ld1=0, len_ld2=0;
@@ -600,11 +605,11 @@ struct  s_service *sd0=NULL, *sd1=NULL, *sd2=NULL;  // serivce log data array so
 int     len_sd0=0, len_sd1=0, len_sd2=0;
 struct  frame *fd = NULL;                           // frame array`
 int     len_fd; 
+struct  s_file_table_entry file_table[100];     // file list
+int     flist_idx = 0;                          // file list index
+int     have_file_list = 0;                     // no file list read yet
 
 int main (int argc, char* argv[]) {
-    struct  s_file_table_entry file_table[100]; // file list
-    int     flist_idx = 0;                      // file list index
-    int     have_file_list = 0;                 // no file list read yet
     struct  s_metadata *cmdp, *lmdp;            // last and current meta data lines
     struct  frame cf, *cfp = &cf;               // current frame
     struct  s_session sstat, *ssp=&sstat;       // session stats 
@@ -667,16 +672,14 @@ int main (int argc, char* argv[]) {
 
         // gps data file
         else if (strcmp (*argv, "-gps") == MATCH) {
-            sprintf (bp, "%s%s.csv", ipathp, *++argv); 
-            if ((gps_fp = open_file (bp, "r")) != NULL)
-                len_gps = read_gps(gps_fp);
+            have_gps_metadata = 1;
+            strcpy (gps_prep, *++argv);
         }
 
         // annotation file
         else if (strcmp (*argv, "-a") == MATCH) {
-            sprintf (bp, "%s%s.csv", ipathp, *++argv); 
-            if ((an_fp = open_file (bp, "r")) != NULL)
-                read_annotation_file (); 
+            have_anno_metadata = 1;
+            strcpy (anno_prep, *++argv);
         }
 
         // new sender time format
@@ -779,6 +782,12 @@ int main (int argc, char* argv[]) {
             short_arg_count++; 
             have_file_list = 1; 
         }
+        // read file names and ipath from file
+        else if (strcmp (*argv, "-file") == MATCH) {
+            FILE *input_fp;
+            if ((input_fp = open_file (*++argv, "r")) != NULL)
+                read_worklist (input_fp);
+        }
 
         // invalid argument
         else {
@@ -844,6 +853,20 @@ SKIP_FILE_LIST:
         sprintf (bp, "%sdebug_%s_vqfilter.txt", opath, rx_prep);
         dbg_fp = open_file (bp, "w");
 
+    // gps data file
+    if (have_gps_metadata) {
+        sprintf (bp, "%s%s.csv", ipathp, gps_prep); 
+        if ((gps_fp = open_file (bp, "r")) != NULL)
+            len_gps = read_gps(gps_fp);
+    }
+
+    // annotation file
+    if (have_anno_metadata) {
+        sprintf (bp, "%s%s.csv", ipathp, anno_prep); 
+        if ((an_fp = open_file (bp, "r")) != NULL)
+            len_anlist = read_annotation_file (); 
+    }
+
     // bit-rate modulation log file
     if (have_brm_log) {
          sprintf (bp, "%s%s.log", ipathp, brm_prep); 
@@ -888,11 +911,12 @@ SKIP_FILE_LIST:
     sprintf (bp, "%s%s.csv", ipathp, rx_prep);
     md_fp = open_file (bp, "r");
     skip_combined_md_file_header (md_fp);
-    while (read_md (0, md_fp, md+len_md) != 0) {
-        len_md++; 
-        if (md_index == MD_BUFFER_SIZE) 
+    while (read_md (0, md_fp, md+len_md) != 0) { // first line is dummy for lmdp
+        len_md++;
+        if (md_index == MD_BUFFER_SIZE)
             FATAL("Dedump meta data buffer full. Increase MD_BUFFER_SIZE\n", "")
     }
+//     calculate_frame_period (md_fp, len)
         
     // per carrier meta data files
     if (have_carrier_metadata) {
@@ -910,10 +934,10 @@ SKIP_FILE_LIST:
     waiting_for_first_frame = 1; 
 
     // metadata structures intializetion
-    lmdp = md; 
+    lmdp = md;              // dummy entry for last mdp read
     lmdp->rx_epoch_ms = -1; // so out-of-order calculations for the first frame are correct.
-    cmdp = lmdp+1; 
-    md_index = 1; 
+    md_index = 1;           // since the first entry of md array is a dummy entry for lmdp
+    cmdp = lmdp+1;
     fd = (struct frame *) malloc (sizeof (struct frame) * FD_BUFFER_SIZE); 
     struct frame *fdp = fd; 
     len_fd = 0;
@@ -1086,6 +1110,100 @@ SKIP_FILE_LIST:
 
 } // end of main
 
+// retuns a token delimited by space from the strp and moves the strp to the next char after the token
+char *get_token (char *strp, char *tokenp) {
+    // skip leading delimeters
+    while ((*strp != '\n') && (*strp != '\0') && 
+        ((*strp == ' ') || (*strp == '"' || (*strp == ','))))
+        strp++;
+    // step to the next delimiter
+    while ((*strp != '\n') && (*strp != '\0') && (*strp != ' ') && (*strp != '"'))
+        *tokenp++ = *strp++;
+    *tokenp = '\0';
+    return strp;
+} // end of get_token
+
+// returns the last token from the strp and moves strp to the end
+char *last_token (char *strp, char *tokenp) {
+    *tokenp = '\0';
+    while ((*strp != '\n') && strlen (strp))
+        strp = get_token (strp, tokenp);
+    return strp;
+} // end of last_token
+
+// reads ipath and file specifications from the specified file
+void read_worklist (FILE *fp) {
+
+    // returns a list of file_list_fields tuples by k file_name
+    int srx_defined = 0;
+    int stx_defined = 0;
+    int ipath_defined = 0;
+    int comment_nest_count = 0;
+    char line[MAX_LINE_SIZE], *linep = line;
+    char token[100], *tokenp = token;
+
+    while (fgets (linep, MAX_LINE_SIZE, fp) != NULL) {
+        linep = get_token (linep, tokenp);
+
+        // skip lines in comment blocks
+        if (strcmp (tokenp, "/*") == MATCH) {
+            comment_nest_count += 1;
+            continue;
+        }
+        else if (strcmp (tokenp, "*/") == MATCH) {
+            comment_nest_count -= 1;
+            continue;
+        }
+        else if (comment_nest_count > 0)
+            continue;
+        else if (comment_nest_count < 0)
+            FATAL ("read_worklist: Incorrectly nested comments start line: %s", line)
+    
+        // skip comment lines (outside comment block) and empty lines
+        if (strlen (tokenp)== 0 || strcmp (tokenp, "//")==MATCH || strcmp (tokenp, "#")==MATCH)
+            continue;
+    
+        // parse a non-comment line 
+        if (strcmp (tokenp, "-srx_pre") == MATCH) {
+            get_token (linep, tokenp); // file name
+            if (strlen (tokenp) == 0)
+                FATAL ("read_worklist: Missing file name argument in line: %s", line)
+            strcpy (file_table[flist_idx].rx_pre, tokenp); 
+            srx_defined = 1;
+        } 
+        else if (strcmp (tokenp, "-stx_pre") == MATCH) {
+            get_token (linep, tokenp); // file name
+            if (strlen (tokenp) == 0)
+                FATAL ("read_worklist: Missing file name argument in line: %s", line)
+            strcpy (file_table[flist_idx].tx_pre, tokenp); 
+            stx_defined = 1;
+        } 
+        else if (strcmp (tokenp, "-ipath") == MATCH) {
+            get_token (linep, tokenp); // path name
+            if (strlen (tokenp) == 0)
+                FATAL ("read_worklist: Missing ipath name argument in line: %s", line)
+            strcpy (ipathp, tokenp); 
+            ipath_defined = 1;
+        } 
+        else {
+            WARN ("read_worklist: Invalid syntax: %s", line)
+            continue;
+        }
+        // end of parse a non-comment line
+            
+        if (stx_defined && srx_defined) {
+                flist_idx++;
+                srx_defined = 0; 
+                stx_defined = 0;
+        }
+    } // while there are more lines to be read
+    
+    if (!ipath_defined)
+        FATAL ("read_worklist: missing ipath specification %s\n", "")
+    if (!flist_idx)
+        FATAL ("read_worklist: no file specification found %s\n", "")
+    return; 
+} // end of read_worklist
 
 // returns pointer to the sdp equal to or closest smaller sdp to the specified epoch_ms
 struct s_service *find_closest_sdp (double epoch_ms, struct s_service *sdp, int len_sd) {
@@ -1580,12 +1698,16 @@ int read_gps (FILE *fp) {
 	if (fgets (lp, MAX_LINE_SIZE, fp) == NULL)
 		FATAL ("Empty or incomplete gps file%s\n", "")
 
+    // allocate storage
+    gpsd = (struct s_gps *) malloc (sizeof (struct s_gps) * GPS_BUFFER_SIZE);
+    if (gpsd==NULL) FATAL("Could not allocate storage to read the gps file%s\n", "")
+
 	// while there are more lines to read from the gps file
 	while (fgets (lp, MAX_LINE_SIZE, fp) != NULL) {
-		struct s_gps *gpsp = gps + ++index;
+		struct s_gps *gpsp = gpsd + ++index;
 
-		if (index >= MAX_GPS)
-			FATAL ("gps file has more lines that gps[MAX_GPS]. Increase MAX_GPS%d\n", index)
+		if (index >= GPS_BUFFER_SIZE)
+			FATAL ("gps file has more lines (%d) than storage. Increase GPS_BUFFER_SIZE\n", index)
 
 		if (sscanf (lp, "%[^,],%lf,%d,%lf,%lf,%f", 
 			time,
@@ -1665,7 +1787,7 @@ void sort_brmd (struct s_brmdata *brmdp, int len) {
 // reads bit-rate modulation file into brmd array sorted by timestamp
 void read_brmd (FILE *fp) {
 
-    // allocate storage for tx log
+    // allocate storage for brm log
     brmdata = (struct s_brmdata *) malloc (sizeof (struct s_brmdata) * BRM_BUFFER_SIZE);
     if (brmdata==NULL) FATAL("Could not allocate storage to read the bit rate log file in an array%s\n", "")
 
@@ -1684,6 +1806,7 @@ void read_brmd (FILE *fp) {
 
     sort_brmd (brmdata, len_brmd); // sort by epoch_ms
 
+    return;
 } // read_brmdp
 
 // reads and parses a bit-rate modulation log file line. Returns 0 if end of file reached
@@ -2122,26 +2245,29 @@ int get_gps_coord (struct frame *framep) {
 	struct s_gps	*next;
 
 	// check if the frame time is in the range
-	if ((framep->camera_epoch_ms < gps->epoch_ms) || (framep->camera_epoch_ms > (gps+len_gps-1)->epoch_ms)) {
+	if ( len_gps == 0 ||
+        (framep->camera_epoch_ms < gpsd->epoch_ms) || 
+        (framep->camera_epoch_ms > (gpsd+len_gps-1)->epoch_ms)) {
+        framep->coord.lat = framep->coord.lon = framep->speed = 0;
 		return 0;
 	} // frame timestamp deos not map into the gps file range
 
 	// find the closest before timestamp in gps array (linear search now should be replaced with binary)
 	for (i=0; i<len_gps; i++) {
-		if ((gps+i)->epoch_ms > framep->camera_epoch_ms)
+		if ((gpsd+i)->epoch_ms > framep->camera_epoch_ms)
 			break; 
 	}
 
 	// i could be larger than the array if the last element was equal to the frame time
 	if (i==len_gps) { // len_gps is 1 more than the last index
-		prev = gps+len_gps-1;
-		next = gps+len_gps-1;
+		prev = gpsd+len_gps-1;
+		next = gpsd+len_gps-1;
 		framep->coord.lat = prev->coord.lat;
 		framep->coord.lon = prev->coord.lon;
 		framep->speed = prev->speed;
 	}  else { // interpolate
-		prev = gps+i-1;
-		next = gps+i;
+		prev = gpsd+i-1;
+		next = gpsd+i;
 		double dt = (framep->camera_epoch_ms - prev->epoch_ms)/(next->epoch_ms - prev->epoch_ms);
 		framep->coord.lat = (1-dt)*prev->coord.lat + (dt * next->coord.lat);
 		framep->coord.lon = (1-dt)*prev->coord.lon + (dt * next->coord.lon); 
@@ -2151,9 +2277,10 @@ int get_gps_coord (struct frame *framep) {
 		return 1;
 } // end of get_gps_coord
 
-// returns 1 if successfully read the annotation file
+// returns length of the read annotation file
 int read_annotation_file (void) {
     char    line[100]; 
+    int     len_anlist = 0;
 
     // skip header
     if (fgets (line, 100, an_fp) == NULL) {
@@ -2181,7 +2308,7 @@ int read_annotation_file (void) {
     if (len_anlist == 0) {
         printf ("WARNING: the annotation file had no annotations\n"); 
     }
-    return 1; 
+    return len_anlist; 
 }  // end of read_annotation_file
 
 // returns 1 if the current frame count is marked in the annotation file
@@ -2430,7 +2557,7 @@ void emit_packet_header (FILE *ps_fp) {
     int i; 
     for (i=0; i<3; i++) {
         fprintf (ps_fp, "C%d: c2r, c2v, t2r, r2t, est_t2r, ert, socc, MMbps, chqst, retx,", i); 
-        fprintf (ps_fp, "tgap, ppkts, upkts, spkts, cont, Inc, rdbg, urpkt, oos_d, oos_o, cr, I, rb, bp_gap, x, y, rlen, flen, I,");
+        fprintf (ps_fp, "tgap, ppkts, upkts, spkts, cont, Inc, rdbg, urpkt, oos_d, oos_o, cr, I, rb, x, y, rlen, flen, I,");
         fprintf (ps_fp, "tx_TS, rx_TS, r2t_TS, ert_TS, socc_TS, bp_pkt_TS, bp_pkt, bp_t2r,"); 
         fprintf (ps_fp, "Ravg, IS, qst, qsz, avg_ms, avg_pkt,");
     }
@@ -3404,15 +3531,10 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
         fprintf (ps_fp, "%d,", cp->indicator); // I
         if (cp->start_of_run_flag) {
             fprintf (ps_fp, "%d,", cp->resume_from_beginning); //  rb
-            if (cp->resume_from_beginning == 2)
-                fprintf (ps_fp, "%d,", cp->bp_TS_gap); // bp_gap
-            else
-                fprintf (ps_fp, ","); 
             fprintf (ps_fp, "%d,", cp->channel_x_in_good_shape); // x
             fprintf (ps_fp, "%d,", cp->channel_y_in_good_shape); // y
         } else {
             fprintf (ps_fp,","); // rb
-            fprintf (ps_fp,","); // bp_gap
             fprintf (ps_fp,","); // x
             fprintf (ps_fp,","); // y
         }
@@ -3469,7 +3591,6 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
         fprintf (ps_fp, ",");       // cr
         fprintf (ps_fp, ",");       // indicator
         fprintf (ps_fp, ",");       // rb
-        fprintf (ps_fp, ",");       // bp_gap
         fprintf (ps_fp, ",");       // x
         fprintf (ps_fp, ",");       // y
         if (cp->start_of_run_flag) {
@@ -3673,6 +3794,9 @@ int read_md (int skip_header, FILE *fp, struct s_metadata *p) {
                 p->camera_epoch_ms = (p-1)->camera_epoch_ms; 
             return 1;
         } // successful scan
+
+        if (p->camera_epoch_ms == 0)
+            printf ("debug\n");
 
         struct s_latency *ld = p->ch==0? ld0 : p->ch==1? ld1 : ld2;
         int len_ld = p->ch==0? len_ld0 : p->ch==1? len_ld1 : len_ld2;
