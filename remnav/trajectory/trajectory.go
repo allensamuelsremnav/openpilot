@@ -14,7 +14,7 @@ type Trajectory struct {
 	Class     string  `json:"class"`
 	Requested int64   `json:"requested"` // μs since Unix epoch.  Unique identifier.
 	Curvature float64 `json:"curvature"` // 1/m; positive left turn, counterclockwise turn
-	Speed     float64 `json:"speed"`     // m/s
+	Speed     float64 `json:"speed"`     // m/s.  Ignored by vehicle.
 }
 
 func (t Trajectory) Bytes() []byte {
@@ -42,7 +42,7 @@ type TrajectoryApplication struct {
 	Class      string `json:"class"`
 	Trajectory int64  `json:"trajectory"` // Trajectory.Requested field.
 	Applied    int64  `json:"applied"`    // μs since Unix epoch
-	// Log the time received at the listener.
+	// Log the time received at the listener.  Ignored by vehicle.
 	Log int64 `json:"log"` // μs since Unix epoch
 }
 
