@@ -95,7 +95,7 @@ func run_traj(logScanner *bufio.Scanner, trajWriter, trajapplWriter *csv.Writer)
 
 // Identify the log file and output files.
 func main() {
-	defid := "097eef1620f9a10249d68482c8c80fcbf863da5f33645615e199976062124196" 
+	defid := "e3af1220630ed7df311fb6c324d3ab91481da09652d747c9b9b8bb219972b778"
 	machineid := flag.String(
 		"machine_id",
 		defid,
