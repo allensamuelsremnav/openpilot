@@ -12,7 +12,7 @@ const ClassTrajectory = "TRAJECTORY"
 
 type Trajectory struct {
 	Class     string  `json:"class"`
-	Requested int64   `json:"requested"` // μs since Unix epoch
+	Requested int64   `json:"requested"` // μs since Unix epoch.  Unique identifier.
 	Curvature float64 `json:"curvature"` // 1/m; positive left turn, counterclockwise turn
 	Speed     float64 `json:"speed"`     // m/s
 }
@@ -34,9 +34,13 @@ func (t Trajectory) String() string {
 
 const ClassTrajectoryApplication = "TRAJECTORY_APPLICATION"
 
+// The TrajectoryApplication message reports the first time that a
+// Trajectory request affects the Remnav video.  It is used to
+// distinguish applied vs in-flight trajectory requests for the
+// operator display.
 type TrajectoryApplication struct {
 	Class      string `json:"class"`
-	Trajectory int64  `json:"trajectory"` // μs since Unix epoch
+	Trajectory int64  `json:"trajectory"` // Trajectory.Requested field.
 	Applied    int64  `json:"applied"`    // μs since Unix epoch
 	// Log the time received at the listener.
 	Log int64 `json:"log"` // μs since Unix epoch
