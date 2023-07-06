@@ -54,8 +54,8 @@
 // #define FRAME_PERIOD_MS 33.3656922228
 // #define FRAME_PERIOD_MS 33.34067086
 // #define FRAME_PERIOD_MS 33.34067086
-#define FRAME_PERIOD_MS 33.36631016
-#define GPS_BUFFER_SIZE	25000				// maximum entries in the gps file. fatal if there are more.
+// #define FRAME_PERIOD_MS 33.36631016
+#define GPS_BUFFER_SIZE	(CAPTURE_PERIOD_MINUTES*60*2)
 #define TX_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
 #define CD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
 #define BRM_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*100*3)
@@ -199,7 +199,7 @@ struct frame {
 }; // frame
 
 struct stats {
-    unsigned    count;
+    unsigned    count;                      // number of times the metric occus in the session
     double      mean; 
     double      var;
     double      min;
@@ -208,7 +208,10 @@ struct stats {
 };
 
 struct s_session {
-//  unsigned        frame_count;            // total fames in the session
+    // frame level stats
+    unsigned        frame_count;            // total fames in the session
+    struct stats    c2d, *c2dp;             // camera to display latency
+    struct stats    eMbps, *eMbpsp;          // encoded Mbps
     struct stats    pc, *pcp;               // packet count stats: count=total packets in the session, rest per frame
     struct stats    l, *lp;                 // latecncy stats: count=n/a, rest per frame
     struct stats    bc, *bcp;               // byte count stats: count = total bytes in the session, rest per frame
@@ -217,16 +220,43 @@ struct s_session {
     struct stats    late, *latep;           // late frame stats; count = number of late frames in the session; 
     struct stats    br, *brp;               // frame bit-rate stats: count = number of frames below too_low_bit_rate parameter
     struct stats    cts, *ctsp;             // camera time-stamp
-    struct stats    c2d, *c2dp;             // camera to display latency
     struct stats    rpt, *rptp;             // repeated frames
-    // packet level stats
+    struct stats    estate, *estatep;// estate
+    struct stats    per_HBR, *per_HBRp;     // % of frames the encoder is in high bit rate mode
+    struct stats    per_IBR, *per_IBRp;     // % of frames the encoder is in intermediate BR mode
+    struct stats    per_LBR, *per_LBRp;     // % of frames the encoder is in the low bit rate mode
+    // dedup packet level stats
     struct stats    c2v, *c2vp;             // camera to video latency
     struct stats    v2t, *v2tp;             // best encoder to transmit for a packet
+    struct stats    t2r, *t2rp;             // t2r latency
     struct stats    c2r, *c2rp;             // camera to receiver latency
-    struct stats    best_t2r, *best_t2rp;   // best tx to rx delay for a packet
+    struct stats    dedup_retx, *dedup_retxp;// number deduped packets that were retxed
+    // carrier packet level stats
+    struct stats    best_t2r, *best_t2rp;   // best tx to rx delay for a packet regardless of used by dedeup or not
     struct stats    c0_est_t2r, *c0_est_t2rp;     // estimated t2r
     struct stats    c1_est_t2r, *c1_est_t2rp;     // estimated t2r
     struct stats    c2_est_t2r, *c2_est_t2rp;     // estimated t2r
+    struct stats    c0_retx, *c0_retxp;      // number c0 packets that were retexed
+    struct stats    c1_retx, *c1_retxp;      // number c1 packets that were retexed
+    struct stats    c2_retx, *c2_retxp;      // number c2 packets that were retexed
+};
+
+struct s_capture { // stats for the capture session - the work list
+// 	max c2d	eMBps estate	avg t2r	max t2r	avg c2r	max c2r	% c0 pq	% c1 pq	% c2 pq	% eHBR	%eIBR	%eLBR	% Res eff	dedup retx	c0 retx	c1 retx	c2 retx	pkts	frames	C period	V frrames
+    float max_c2d;                         // max c2d in the file
+    float avg_eMbps;                        // 
+    float avg_estate;
+    float avg_t2r;
+    float max_t2r;
+    float avg_c2r;
+    float max_c2r;
+    float per_eHBR;
+    float per_eIBR; 
+    float per_eLBR;
+    float dedup_retx;
+    float c0_retx;
+    float c1_retx; 
+    float c2_retx;
 };
 
 struct s_carrier {
@@ -310,11 +340,9 @@ struct s_gps {
 void  my_free (); 
 int my_exit (int n);
 
-// reads a new meta data line. returns 0 if reached end of the file
-int read_md (
-    int skip_header,                        // if 1 then skip the header lines
-    FILE *fp, 
-    struct s_metadata *p);    
+// initializes md array; sets global len_md and frame_period
+// assumes len_md is set to 1 when the function is called
+void read_md (FILE *fp);
 
 // initializes the frame structure for a new frame
 void init_frame (
@@ -348,6 +376,12 @@ void initialize_cp_from_cd (
     struct s_carrier *cp, 
     int t_mobile);
 
+// updates capture stats for the specified session
+void update_capture_stats (struct s_session *ssp, struct s_capture *csp);
+
+// prints captures stats or header based on print_header value
+void emit_capture_stats (int print_header, struct s_session *ssp, FILE *fp);
+
 // assumes called at the end of a frame after frame and session stats have been updated
 void emit_frame_stats (
     int print_header,                       // set to 1 if only header is to be emitted
@@ -357,9 +391,11 @@ void emit_frame_stats (
 void init_metric_stats (
     struct stats *p);
 
+// initializes captures stats
+void init_capture_stats (struct s_capture *p);
+
 // initializes session stats
-void init_session_stats (
-    struct s_session *p);
+void init_session_stats (struct s_session *p);
 
 // Computes the mean/variance of the specified metric. 
 void compute_metric_stats (
@@ -369,7 +405,7 @@ void compute_metric_stats (
 // Collects data for calculating mean/variance/distribution for the specified metric
 void update_metric_stats (
     struct stats *p, 
-    unsigned count,                         // number of frames this metric occurred in the session
+    unsigned count,                          // number of times the metric occurs in this call
     double value,                            // value of the metric in the frame
     double range_max,                        // max value this metric can take in a frame
     double range_min);                       // min value this mnetric can take in a frame
@@ -396,9 +432,7 @@ void emit_metric_stats (
 
 // outputs session  stats
 void emit_session_stats (
-    struct s_session *ssp,                  // session stats
-    struct frame *fp                        // current frame
-);
+    struct s_session *ssp);                  // session stats
 
 void per_packet_analytics (
     struct s_session *ssp, 
@@ -533,9 +567,10 @@ struct s_txlog *find_occ_from_td (
 void read_worklist (FILE *fp);
 
 // globals - command line inputs
-int     debug = 1; 
+int     debug = 0; 
 int     silent = 0;                             // if 1 then suppresses warning messages
 char    ipath[500], *ipathp = ipath;            // input files directory
+char    capture_date[50], *capture_datep = capture_date; // capture date extracted from ipath
 char    opath[500], *opathp = opath;            // output files directory
 char    tx_pre[500], *tx_prep = tx_pre;         // transmit log prefix not including the .log extension
 char    brm_pre[500], *brm_prep = brm_pre;      // bit-rate modulation log file
@@ -547,9 +582,10 @@ char    gps_pre[500], *gps_prep = gps_pre;      // gos file prefix
 char    anno_pre[500], *anno_prep = anno_pre;   // annotation file prefix`service file prefix
 FILE    *md_fp = NULL;                          // meta data file name
 FILE    *an_fp = NULL;                          // annotation file name
+FILE    *cs_fp = NULL;                          // capture statistics output file name
+FILE    *ss_fp = NULL;                          // session statistics output file name
 FILE    *fs_fp = NULL;                          // frame statistics output file
-FILE    *ss_fp = NULL;                          // statistics output file name
-FILE    *ps_fp = NULL;                          // late frame output file name
+FILE    *ps_fp = NULL;                          // packet stats output file 
 FILE    *c0_fp = NULL;                          // carrier 0 meta data file
 FILE    *c1_fp = NULL;                          // carrier 0 meta data file
 FILE    *c2_fp = NULL;                          // carrier 0 meta data file
@@ -584,7 +620,9 @@ int     frame_size_modulation_threshold = 6000; // size in bytes the frame size 
 char    comamnd_line[5000];                     // string store the command line 
 
 // globals - storage
-struct  s_metadata md[MD_BUFFER_SIZE];           // buffer to store meta data lines*/
+float   frame_period;                           // camera frame period
+int     discarded_frame_count;                  // number of frames whose frame periods were unreasonable
+struct  s_metadata *md=NULL;                    // buffer to store meta data lines*/
 int     len_md=1;                               // since md data is filled starting from index 1
 int     md_index;                               // current meta data buffer pointer
 struct  s_gps *gpsd = NULL;                     // gps data array 
@@ -613,6 +651,7 @@ int main (int argc, char* argv[]) {
     struct  s_metadata *cmdp, *lmdp;            // last and current meta data lines
     struct  frame cf, *cfp = &cf;               // current frame
     struct  s_session sstat, *ssp=&sstat;       // session stats 
+    struct  s_capture cstat, *csp=&cstat;       // capture stats
     struct  s_carrier c0, c1, c2; 
     struct s_carrier *c0p=&c0, *c1p=&c1, *c2p=&c2; 
 
@@ -802,9 +841,13 @@ int main (int argc, char* argv[]) {
         }
     } // while there are more arguments to process
 
+    // open capture stats file
+    sprintf (bp, "%scapture_%s_vqfilter.csv", opath, capture_datep);
+    cs_fp = open_file (bp, "w");
+    emit_capture_stats (1, NULL, cs_fp); // priint header
+
     flist_idx--; // points to the last entry of the file list or -1 if no list
-    if (flist_idx < 0)
-        goto SKIP_FILE_LIST; 
+    if (flist_idx < 0) goto SKIP_FILE_LIST; 
 
 PROCESS_NEXT_FILE: 
     rx_prep = file_table[flist_idx].rx_pre; 
@@ -827,7 +870,7 @@ SKIP_FILE_LIST:
     start = clock();
 
     // initialize variables for next iteration
-	len_md=1; 
+	len_md=1; // 1 because md_array has a dummy first entry for lmdp
 	len_cd0=0, len_cd1=0, len_cd2=0;
 	len_td0=0, len_td1=0, len_td2=0;
 	len_brmd=0; 
@@ -895,7 +938,7 @@ SKIP_FILE_LIST:
     if (have_ld_log) {
          sprintf (bp, "%s%s.log", ipathp, ld_prep); 
         if ((ld_fp = open_file (bp, "r")) != NULL) {
-                read_ld(ld_fp);
+            read_ld(ld_fp);
         }
     }
 
@@ -903,20 +946,15 @@ SKIP_FILE_LIST:
     if (have_sd_log) {
          sprintf (bp, "%s%s.log", ipathp, sd_prep); 
         if ((sd_fp = open_file (bp, "r")) != NULL) {
-                read_sd(sd_fp);
+            read_sd(sd_fp);
         }
     }
 
     // dedup metadata file
     sprintf (bp, "%s%s.csv", ipathp, rx_prep);
-    md_fp = open_file (bp, "r");
-    skip_combined_md_file_header (md_fp);
-    while (read_md (0, md_fp, md+len_md) != 0) { // first line is dummy for lmdp
-        len_md++;
-        if (md_index == MD_BUFFER_SIZE)
-            FATAL("Dedump meta data buffer full. Increase MD_BUFFER_SIZE\n", "")
+    if ((md_fp = open_file (bp, "r")) != NULL) {
+        read_md (md_fp);
     }
-//     calculate_frame_period (md_fp, len)
         
     // per carrier meta data files
     if (have_carrier_metadata) {
@@ -942,8 +980,9 @@ SKIP_FILE_LIST:
     struct frame *fdp = fd; 
     len_fd = 0;
 
-    // session stat structure initialization
+    // session and capture stat structure initialization
     init_session_stats (ssp);
+    init_capture_stats (csp);
 
     // packet structures intialization
     init_packet_stats (td0, len_td0, cd0, len_cd0, cs0, c0p);
@@ -1081,7 +1120,6 @@ SKIP_FILE_LIST:
     } 
     
     // update stats for the last frame
-
     // check if the last frame of the file had any missing packets
     if (!lmdp->frame_end) // frame ended abruptly
        cfp->missing += 1; // not the correct number of missing packets but can't do better
@@ -1092,44 +1130,53 @@ SKIP_FILE_LIST:
 
     // end of the file so emit both last frame and session stats
     emit_frame_stats(0, cfp);
-
     *fdp = *cfp; len_fd++;
     if (have_carrier_metadata)
         carrier_metadata_clients (0, ssp, fdp, c0p, c1p, c2p); 
-    emit_session_stats(ssp, cfp);
+    emit_session_stats(ssp);
+    emit_capture_stats (0, ssp, cs_fp);
 
+    // free storage and close files (except capture stat file)
     my_free (); 
 
+    // print end of file stats
     end = clock();
     execution_time = ((double)(end - start))/CLOCKS_PER_SEC;
     printf ("Program execution time = %0.1fs\n", execution_time); 
 
-    if (flist_idx-- > 0) 
-            goto PROCESS_NEXT_FILE; 
-    else    return (0);
+    // process next file on the worklist
+    if (flist_idx-- > 0) goto PROCESS_NEXT_FILE; 
 
+    fclose (cs_fp);
+    exit (0);
 } // end of main
 
-// retuns a token delimited by space from the strp and moves the strp to the next char after the token
-char *get_token (char *strp, char *tokenp) {
+// retuns a token delimited by ' ', \n, \0, ',' or delimiter from the strp and moves the strp to the next char after the token
+// tokenp is left undisturbed if no new token in input string
+char *get_token (char *strp, char delimiter, char *tokenp) {
     // skip leading delimeters
     while ((*strp != '\n') && (*strp != '\0') && 
-        ((*strp == ' ') || (*strp == '"' || (*strp == ','))))
+        ((*strp == ' ') || (*strp == ',' || (*strp == delimiter))))
         strp++;
-    // step to the next delimiter
-    while ((*strp != '\n') && (*strp != '\0') && (*strp != ' ') && (*strp != '"'))
+
+    if (strlen (strp) == 0) // no token in the input string
+        // don't disturb tokenp so that it retains the lat token read
+        return strp;
+
+    // there is a new token in the input string; step to the next delimiter
+    while ((*strp != '\n') && (*strp != '\0') && (*strp != ' ') && (*strp != ',') && (*strp != delimiter))
         *tokenp++ = *strp++;
     *tokenp = '\0';
     return strp;
 } // end of get_token
 
-// returns the last token from the strp and moves strp to the end
-char *last_token (char *strp, char *tokenp) {
+// returns the last token from the input string if one exists
+char *get_last_token (char *strp, char delimiter, char *tokenp) {
     *tokenp = '\0';
-    while ((*strp != '\n') && strlen (strp))
-        strp = get_token (strp, tokenp);
+    while (strlen (strp) && (*strp != '\n'))
+        strp = get_token (strp, delimiter, tokenp);
     return strp;
-} // end of last_token
+} // end of get_last_token
 
 // reads ipath and file specifications from the specified file
 void read_worklist (FILE *fp) {
@@ -1143,7 +1190,7 @@ void read_worklist (FILE *fp) {
     char token[100], *tokenp = token;
 
     while (fgets (linep, MAX_LINE_SIZE, fp) != NULL) {
-        linep = get_token (linep, tokenp);
+        linep = get_token (linep, '"', tokenp);
 
         // skip lines in comment blocks
         if (strcmp (tokenp, "/*") == MATCH) {
@@ -1165,25 +1212,27 @@ void read_worklist (FILE *fp) {
     
         // parse a non-comment line 
         if (strcmp (tokenp, "-srx_pre") == MATCH) {
-            get_token (linep, tokenp); // file name
+            get_token (linep, '"', tokenp); // file name
             if (strlen (tokenp) == 0)
                 FATAL ("read_worklist: Missing file name argument in line: %s", line)
             strcpy (file_table[flist_idx].rx_pre, tokenp); 
             srx_defined = 1;
         } 
         else if (strcmp (tokenp, "-stx_pre") == MATCH) {
-            get_token (linep, tokenp); // file name
+            get_token (linep, '"', tokenp); // file name
             if (strlen (tokenp) == 0)
                 FATAL ("read_worklist: Missing file name argument in line: %s", line)
             strcpy (file_table[flist_idx].tx_pre, tokenp); 
             stx_defined = 1;
         } 
         else if (strcmp (tokenp, "-ipath") == MATCH) {
-            get_token (linep, tokenp); // path name
+            get_token (linep, '"', tokenp); // path name
             if (strlen (tokenp) == 0)
                 FATAL ("read_worklist: Missing ipath name argument in line: %s", line)
             strcpy (ipathp, tokenp); 
             ipath_defined = 1;
+            // extract the capture date from the ipath
+            get_last_token (ipathp, '/', capture_datep);
         } 
         else {
             WARN ("read_worklist: Invalid syntax: %s", line)
@@ -1616,6 +1665,7 @@ int read_pr_line (
 void my_free () {
 
     if (fd !=NULL) free (fd); fd = NULL; 
+    if (md != NULL) free (md); md = NULL; 
 
     if (td0 != NULL) free (td0); td0 = NULL; 
     if (td1 != NULL) free (td1); td1 = NULL;
@@ -2355,8 +2405,11 @@ void update_session_packet_stats (
 
     update_metric_stats (ssp->c2vp, 0, mdp->vx_epoch_ms - fp->camera_epoch_ms, MAX_C2V_LATENCY, MIN_C2V_LATENCY);
     update_metric_stats (ssp->v2tp, 0, mdp->tx_epoch_ms - mdp->vx_epoch_ms, 50, 0);
+    update_metric_stats (ssp->t2rp, 0, mdp->rx_epoch_ms - mdp->tx_epoch_ms, 120,0);
     update_metric_stats (ssp->c2rp, 0, mdp->rx_epoch_ms - fp->camera_epoch_ms, MAX_C2R_LATENCY, MIN_C2R_LATENCY);
+    update_metric_stats (ssp->dedup_retxp, mdp->retx, mdp->retx, MAX_PACKETS_IN_A_FRAME, MIN_PACKETS_IN_A_FRAME);
 
+    return;
 } // end of update_session_packet_stats
 
 // updates per packet stats of the frame
@@ -2411,12 +2464,12 @@ void init_frame (
         // abrupt start of this frame but clean end of previous frame.
         // missing the camera_epoch_ms. So will add one frame worth of delay to previous camera time stamp
         fp->missing = cmdp->packet_num - (lmdp->packet_num + 1); 
-        fp->camera_epoch_ms += fp->frame_rate==HZ_30? FRAME_PERIOD_MS : fp->frame_rate==HZ_15? 66.66 : fp->frame_rate==HZ_10? 100 : 200;
+        fp->camera_epoch_ms += fp->frame_rate==HZ_30? frame_period : fp->frame_rate==HZ_15? 66.66 : fp->frame_rate==HZ_10? 100 : 200;
     } else {
         // abrupt start of this frame AND abrupt end of the previous frame. Now we can't tell how many packets each frame lost
         // have assigned one missing packet to previous frame. So will assign the remaining packets to this frame. 
         fp->missing = cmdp->packet_num - (lmdp->packet_num +1) -1; 
-        fp->camera_epoch_ms += fp->frame_rate==HZ_30? FRAME_PERIOD_MS : fp->frame_rate==HZ_15? FRAME_PERIOD_MS*2: fp->frame_rate==HZ_10? 100 : 200;
+        fp->camera_epoch_ms += fp->frame_rate==HZ_30? frame_period : fp->frame_rate==HZ_15? frame_period*2: fp->frame_rate==HZ_10? 100 : 200;
     }
     fp->out_of_order = /* first_frame? 0: */ cmdp->rx_epoch_ms < lmdp->rx_epoch_ms; 
     fp->first_packet_num = fp->last_packet_num = cmdp->packet_num;
@@ -2424,7 +2477,7 @@ void init_frame (
     fp->rx_epoch_ms_last_packet = fp->rx_epoch_ms_earliest_packet = fp->rx_epoch_ms_latest_packet = cmdp->rx_epoch_ms;
     fp->latest_retx = cmdp->retx; 
     fp->frame_rate = cmdp->frame_rate; 
-	fp->display_period_ms = fp->frame_rate==HZ_30? FRAME_PERIOD_MS : fp->frame_rate==HZ_15 ? FRAME_PERIOD_MS*2 : fp->frame_rate==HZ_10? 100 : 200;
+	fp->display_period_ms = fp->frame_rate==HZ_30? frame_period : fp->frame_rate==HZ_15 ? frame_period*2 : fp->frame_rate==HZ_10? 100 : 200;
     fp->frame_resolution = cmdp->frame_resolution;
     fp->late = cmdp->rx_epoch_ms > (fp->camera_epoch_ms + maximum_acceptable_c2rx_latency);
     fp->packet_count = fp->latest_packet_count = 1; 
@@ -2544,7 +2597,7 @@ void emit_packet_header (FILE *ps_fp) {
     fprintf (ps_fp, "MMbps, ");
     fprintf (ps_fp, "tx_TS, ");
     fprintf (ps_fp, "rx_TS, ");
-    fprintf (ps_fp, "bp_TS,");
+    fprintf (ps_fp, "bp_TS, ");
     fprintf (ps_fp, "Pc2r, ");
     fprintf (ps_fp, "Pt2r, ");
     
@@ -2621,8 +2674,7 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
         fprintf (ps_fp, "%u, ", mdp->retx);
         fprintf (ps_fp, "%u, ", mdp->ch);
         if (len_brmd) fprintf (ps_fp, "%d,", brmdp->encoder_state); else fprintf (ps_fp, ",");
-        if (mdp->kbps > 0) 
-            fprintf (ps_fp, "%.1f, ", ((float) mdp->kbps)/1000);
+        if (mdp->kbps > 0) fprintf (ps_fp, "%.1f, ", ((float) mdp->kbps)/1000);
         else fprintf (ps_fp, ","); 
         fprintf (ps_fp, "%.0lf, ", mdp->tx_epoch_ms);
         fprintf (ps_fp, "%.0lf, ", mdp->rx_epoch_ms);
@@ -2771,15 +2823,12 @@ int resume_from_beginning (
     // resume from the beining if this channel was out of service for less than a frame time
     // or other channels are not in good shape
     int from_beginning = 
-        (cp->out_of_service_duration < FRAME_PERIOD_MS)
-        ||
-        !(cp->channel_x_in_good_shape || cp->channel_y_in_good_shape);   
+        (cp->out_of_service_duration < frame_period)
+        || !(cp->channel_x_in_good_shape || cp->channel_y_in_good_shape);   
     cp->reason_debug = 
-        ((cp->out_of_service_duration < FRAME_PERIOD_MS) << 2)
-        |
-        (cp->channel_x_in_good_shape << 1)
-        |
-        (cp->channel_y_in_good_shape << 0);
+        ((cp->out_of_service_duration < frame_period) << 2)
+        | (cp->channel_x_in_good_shape << 1)
+        | (cp->channel_y_in_good_shape << 0);
 
     if (debug) {
         fprintf (dbg_fp, "rb: %d, reason: %d, OOS_ms: %d, ch_x_good: %d, ch_y_good: %d, oos_occ,",
@@ -3049,12 +3098,18 @@ void per_packet_analytics (
 	
 	    // update carrier based session packet stats 
 	    update_metric_stats (ssp->best_t2rp, 0, fastest_tx_to_rx, MAX_T2R_LATENCY, MIN_T2R_LATENCY);
-        if (c0p->tx)
+        if (c0p->tx) {
 	        update_metric_stats (ssp->c0_est_t2rp, 1, c0p->est_t2r_ms, MAX_EST_T2R_LATENCY, MIN_EST_T2R_LATENCY);
-        if (c1p->tx)
+	        update_metric_stats (ssp->c0_retxp, c0p->retx, c0p->retx, MAX_PACKETS_IN_A_FRAME, MIN_PACKETS_IN_A_FRAME);
+        }
+        if (c1p->tx) {
 	        update_metric_stats (ssp->c1_est_t2rp, 1, c1p->est_t2r_ms, MAX_EST_T2R_LATENCY, MIN_EST_T2R_LATENCY);
-        if (c2p->tx)
-	    update_metric_stats (ssp->c2_est_t2rp, 1, c2p->est_t2r_ms, MAX_EST_T2R_LATENCY, MIN_EST_T2R_LATENCY);
+	        update_metric_stats (ssp->c1_retxp, c1p->retx, c1p->retx, MAX_PACKETS_IN_A_FRAME, MIN_PACKETS_IN_A_FRAME);
+        }
+        if (c2p->tx) {
+	        update_metric_stats (ssp->c2_est_t2rp, 1, c2p->est_t2r_ms, MAX_EST_T2R_LATENCY, MIN_EST_T2R_LATENCY);
+	        update_metric_stats (ssp->c2_retxp, c2p->retx, c2p->retx, MAX_PACKETS_IN_A_FRAME, MIN_PACKETS_IN_A_FRAME);
+        }
 
         // opt: was fastest channel used to transfer this packet
         if ((mdp->rx_epoch_ms - mdp->tx_epoch_ms) < (fastest_tx_to_rx + 2))  // 2 is arbitrary grace duration
@@ -3627,12 +3682,15 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
 void update_session_frame_stats (struct s_session *ssp, struct frame *p) { 
     float   latency;                        // camera timestamp to the last rx packet latency of the current frame
 
+    // c2d latency
+    update_metric_stats (ssp->c2dp, 1, p->c2d_frames, 10, 2);
+    // encoded Mbps
+    update_metric_stats (ssp->eMbpsp, 1, p->EMbps, 15, 0);
     // annotation stat
     p->has_annotation = check_annotation (p->frame_count); 
-
-    // packet count stats
+    // frame and packet count stats
+    ssp->frame_count = p->frame_count; 
     update_metric_stats (ssp->pcp, p->packet_count, p->packet_count, MAX_PACKETS_IN_A_FRAME, MIN_PACKETS_IN_A_FRAME);
-
     // frame latency stats
     latency = p->rx_epoch_ms_latest_packet - p->camera_epoch_ms; 
     if (latency < 0) {
@@ -3640,36 +3698,35 @@ void update_session_frame_stats (struct s_session *ssp, struct frame *p) {
         my_exit (-1);
     }
     update_metric_stats (ssp->lp, 0, latency, MAX_TRANSIT_LATENCY_OF_A_FRAME, MIN_TRANSIT_LATENCY_OF_A_FRAME);
-
     // frame byte count stats
     if (p->size <= 0) {
         printf ("Invalid frame size %u for frame %u starting at %.0lf\n", p->size, p->frame_count, p->tx_epoch_ms_1st_packet);
         my_exit (-1);
     }
     update_metric_stats (ssp->bcp, p->size, p->size, MAX_BYTES_IN_A_FRAME, MIN_BYTES_IN_A_FRAME);
-
     // late and incomplete frames stats
     update_metric_stats (ssp->latep, p->late > 0, p->late, MAX_LATE_PACKETS_IN_A_FRAME, MIN_LATE_PACKETS_IN_A_FRAME);
     update_metric_stats (ssp->ip, p->missing > 0, p->missing, MAX_MISSING_PACKETS_IN_A_FRAME, MIN_MISSING_PACKETS_IN_A_FRAME); 
     update_metric_stats (ssp->op, p->out_of_order > 0, p->out_of_order, MAX_OOO_PACKETS_IN_A_FRAME, MIN_OOO_PACKETS_IN_A_FRAME); 
-    
     // bit rate stat
     if (p->nm1_bit_rate<=0) {
         printf ("Invalid bit rate %.1f for frame %u starting at %.0lf\n", p->nm1_bit_rate, p->frame_count, p->tx_epoch_ms_1st_packet); 
         my_exit (-1); 
     }
     update_metric_stats (ssp->brp, p->nm1_bit_rate < minimum_acceptable_bitrate, p->nm1_bit_rate, MAX_BIT_RATE_OF_A_FRAME, MIN_BIT_RATE_OF_A_FRAME); 
-    
     // camera timestamp
     if (p->frame_count > 1) // skip first frame because the TS for n-1 frame is undefined 
         update_metric_stats (ssp->ctsp, 1, p->camera_epoch_ms - p->nm1_camera_epoch_ms, 60, 30); 
-
-    // c2d latency
-    update_metric_stats (ssp->c2dp, 1, p->c2d_frames, 10, 2);
-
-    // c2d latency
+    // repeated frame 
     update_metric_stats (ssp->rptp, 1, p->repeat_count, 10, 0);
+    // encoder state
+    update_metric_stats (ssp->estatep, 1, p->brmdp->encoder_state, 2, 0);
+    // bit rate modulation
+    update_metric_stats (ssp->per_HBRp, 1, p->brmdp->encoder_state==0, 1, 0);
+    update_metric_stats (ssp->per_IBRp, 1, p->brmdp->encoder_state==1, 1, 0);
+    update_metric_stats (ssp->per_LBRp, 1, p->brmdp->encoder_state==2, 1, 0);
 
+    return;
 } // update_session_frame_stats
 
 // Computes the mean/variance of the specified metric. 
@@ -3679,27 +3736,42 @@ void compute_metric_stats (struct stats *p, unsigned count) {
     p->var -= p->mean * p->mean;         // E[X^2] - EX^2
 } // compute stats
 
-void emit_session_stats (struct s_session *ssp, struct frame *fp) {
+void emit_session_stats (struct s_session *ssp) {
     char buffer[500];
-    compute_metric_stats (ssp->pcp, fp->frame_count); 
-    compute_metric_stats (ssp->lp, fp->frame_count); 
-    compute_metric_stats (ssp->bcp, fp->frame_count); 
-    compute_metric_stats (ssp->ip, fp->frame_count); 
-    compute_metric_stats (ssp->op, fp->frame_count); 
-    compute_metric_stats (ssp->latep, fp->frame_count); 
-    compute_metric_stats (ssp->brp, fp->frame_count); 
-    compute_metric_stats (ssp->ctsp, fp->frame_count); 
-    compute_metric_stats (ssp->c2dp, fp->frame_count); 
-    compute_metric_stats (ssp->rptp, fp->frame_count); 
+    int frame_count = ssp->frame_count; 
+    // frame level stats
+    compute_metric_stats (ssp->c2dp, frame_count); 
+    compute_metric_stats (ssp->eMbpsp, frame_count); 
+    compute_metric_stats (ssp->pcp, frame_count); 
+    compute_metric_stats (ssp->lp, frame_count); 
+    compute_metric_stats (ssp->bcp, frame_count); 
+    compute_metric_stats (ssp->ip, frame_count); 
+    compute_metric_stats (ssp->op, frame_count); 
+    compute_metric_stats (ssp->latep, frame_count); 
+    compute_metric_stats (ssp->brp, frame_count); 
+    compute_metric_stats (ssp->ctsp, frame_count); 
+    compute_metric_stats (ssp->rptp, frame_count); 
+    compute_metric_stats (ssp->rptp, frame_count); 
+    compute_metric_stats (ssp->estatep, frame_count); 
+    compute_metric_stats (ssp->per_HBRp, frame_count); 
+    compute_metric_stats (ssp->per_IBRp, frame_count); 
+    compute_metric_stats (ssp->per_LBRp, frame_count); 
+    // dedup packet level stats
     compute_metric_stats (ssp->c2vp, ssp->pcp->count); 
     compute_metric_stats (ssp->v2tp, ssp->pcp->count); 
+    compute_metric_stats (ssp->t2rp, ssp->pcp->count); 
+    compute_metric_stats (ssp->c2rp, ssp->pcp->count); 
+    compute_metric_stats (ssp->dedup_retxp, ssp->pcp->count); 
+    // carrier packet level stats
     compute_metric_stats (ssp->best_t2rp, ssp->pcp->count); 
     compute_metric_stats (ssp->c0_est_t2rp, ssp->c0_est_t2rp->count); 
     compute_metric_stats (ssp->c1_est_t2rp, ssp->c1_est_t2rp->count); 
     compute_metric_stats (ssp->c2_est_t2rp, ssp->c2_est_t2rp->count); 
-    compute_metric_stats (ssp->c2rp, ssp->pcp->count); 
+    compute_metric_stats (ssp->c0_retxp, ssp->c0_retxp->count); 
+    compute_metric_stats (ssp->c1_retxp, ssp->c1_retxp->count); 
+    compute_metric_stats (ssp->c2_retxp, ssp->c2_retxp->count); 
 
-    fprintf (ss_fp, "Total number of frames in the session, %u\n", fp->frame_count); 
+    fprintf (ss_fp, "Total number of frames in the session, %u\n", frame_count); 
     emit_metric_stats ("Frames with late packets", "Late Packets distribution", ssp->latep, 1, MAX_LATE_PACKETS_IN_A_FRAME, MIN_LATE_PACKETS_IN_A_FRAME);
     emit_metric_stats ("Frame Latency", "Frame Latency", ssp->lp, 0, MAX_TRANSIT_LATENCY_OF_A_FRAME, MIN_TRANSIT_LATENCY_OF_A_FRAME);
     emit_metric_stats ("Frames with missing packets", "Missing Packets distribution",  ssp->ip, 1, MAX_MISSING_PACKETS_IN_A_FRAME, MIN_MISSING_PACKETS_IN_A_FRAME);
@@ -3718,7 +3790,6 @@ void emit_session_stats (struct s_session *ssp, struct frame *fp) {
     emit_metric_stats ("C->Rx latency", "C->Rx latency", ssp->c2rp, 0, MAX_C2R_LATENCY, MIN_C2R_LATENCY); 
     emit_metric_stats ("Packets in frame", "Packets in frame", ssp->pcp, 1, MAX_PACKETS_IN_A_FRAME, MIN_PACKETS_IN_A_FRAME); 
     emit_metric_stats ("Bytes in frame", "Bytes in frame", ssp->bcp, 1, MAX_BYTES_IN_A_FRAME, MIN_BYTES_IN_A_FRAME);
-
 } // end of emit_session_stats
 
 // emits the stats for the specified metric
@@ -3763,13 +3834,25 @@ void skip_combined_md_file_header (FILE *fp) {
     return;
 } // skip_combined_md_file_header
 
-// reads next line of the meta data file. returns 0 if reached end of file
-int read_md (int skip_header, FILE *fp, struct s_metadata *p) {
+// initializes md array; sets global len_md and frame_period
+// assumes len_md is set to 1 when the function is called
+void read_md (FILE *fp) {
+
+    // allocate storage
+    md = (struct s_metadata *) malloc (sizeof (struct s_metadata) * MD_BUFFER_SIZE);
+    if (md == NULL)
+        FATAL ("read_md: could not allocate storage for md array%s\n", "")
+    
+    // skip header
     char    mdline[MAX_LINE_SIZE], *mdlp = mdline; 
+    fgets (mdline, MAX_LINE_SIZE, md_fp);
 
-    // read next line
-    if (fgets (mdlp, MAX_LINE_SIZE, md_fp) != NULL) {
-
+    // read the csv file
+    int frame_count = 0;
+    double sum_of_frame_periods = 0.0, last_frame_epoch_ms = 0.0; 
+    discarded_frame_count = 0;
+    while (fgets (mdlp, MAX_LINE_SIZE, md_fp) != NULL) {
+        struct s_metadata *p = md + len_md++;
         // parse the line
         if (sscanf (mdlp, "%u, %lf, %lf, %u, %u, %u, %u, %u, %u, %lf, %u, %u", 
             &p->packet_num, 
@@ -3788,26 +3871,31 @@ int read_md (int skip_header, FILE *fp, struct s_metadata *p) {
             my_exit(1);
         } // scan did not succeed
 
-        else { // successful scan
-            decode_sendtime (&p->vx_epoch_ms, &p->tx_epoch_ms, &p->socc);
-            if (p->camera_epoch_ms == 0)
-                p->camera_epoch_ms = (p-1)->camera_epoch_ms; 
-            return 1;
-        } // successful scan
+        // successful scan
+        decode_sendtime (&p->vx_epoch_ms, &p->tx_epoch_ms, &p->socc);
+        if (p->camera_epoch_ms == 0) 
+            p->camera_epoch_ms = (p-1)->camera_epoch_ms; 
+        
+        // frame period math
+        if (p->frame_start) {
+            double period = p->camera_epoch_ms - last_frame_epoch_ms;
+            if ((period < 40.0) && (period > 20.0)) { // count only reasonable frame periods 
+                sum_of_frame_periods += period; 
+                frame_count++; 
+            }
+            else discarded_frame_count++;
+            last_frame_epoch_ms = p->camera_epoch_ms; 
+        } // if frame start packet
+    } // while there are more lines to be read
 
-        if (p->camera_epoch_ms == 0)
-            printf ("debug\n");
-
-        struct s_latency *ld = p->ch==0? ld0 : p->ch==1? ld1 : ld2;
-        int len_ld = p->ch==0? len_ld0 : p->ch==1? len_ld1 : len_ld2;
-        struct s_latency *ldp = find_ldp_by_packet_num (p->packet_num, p->rx_epoch_ms, 
-            ld, len_ld);
-        p->bp_epoch_ms = ldp->bp_epoch_ms;
-
-    } // if were able to read a line from the file
-    
-    // get here at the end of the file
-    return 0;
+    // compute frame period
+    if (frame_count !=0) {
+        frame_period = sum_of_frame_periods / frame_count; 
+        printf ("Frame period = %0.4fms. Computed over %d frames\n", frame_period, frame_count);
+    } else 
+        FATAL ("read_md: Could not compute frame_period%s\n", "")
+        
+    return;
 } // end of read_md
 
 // extracts tx_epoch_ms from the vx_epoch_ms embedded format
@@ -3860,7 +3948,7 @@ void update_bit_rate (struct frame *fp, struct s_metadata *lmdp, struct s_metada
 
 void calculate_Mbps (struct frame *fp, struct frame *cfp) {
 
-        cfp->EMbps = (cfp->size*8)/FRAME_PERIOD_MS/1000; 
+        cfp->EMbps = (cfp->size*8)/frame_period/1000; 
         
         // delivered bit rate
         if (cfp->frame_count < 3) // can't calculate average
@@ -3894,9 +3982,48 @@ void update_brm (struct frame *fp) {
     return; 
 } // update_brm
 
+// initializes captures stats
+void init_capture_stats (struct s_capture *p) {
+    p->max_c2d = 0;
+    p->avg_eMbps = 0;
+    return;
+} // end of capture stats
+
+// updates capture stats for the specified session
+void update_capture_stats (struct s_session *ssp, struct s_capture *csp) {
+    csp->max_c2d = ssp->c2dp->max; 
+    csp->avg_eMbps = ssp->eMbpsp->mean; 
+    return; 
+} // end of update capture_stats
+
+// prints captures stats or header based on print_header value
+void emit_capture_stats (int print_header, struct s_session *ssp, FILE *fp) {
+    if (print_header) fprintf (fp, "capture,"); else fprintf (fp, "%s,", rx_prep);
+    if (print_header) fprintf (fp, "cd2,"); else fprintf (fp, "%0.1f,", ssp->c2dp->max); 
+    if (print_header) fprintf (fp, "eMbps,"); else fprintf (fp, "%0.2f,", ssp->eMbpsp->mean);
+    if (print_header) fprintf (fp, "max_t2r,"); else fprintf (fp, "%0.1f,", ssp->t2rp->max);
+    if (print_header) fprintf (fp, "avg_t2r,"); else fprintf (fp, "%0.1f,", ssp->t2rp->mean);
+    if (print_header) fprintf (fp, "max_c2r,"); else fprintf (fp, "%0.1f,", ssp->c2rp->max);
+    if (print_header) fprintf (fp, "avg_c2r,"); else fprintf (fp, "%0.1f,", ssp->c2rp->mean);
+    if (print_header) fprintf (fp, "estate,"); else fprintf (fp, "%0.1f,", ssp->estatep->mean);
+    if (print_header) fprintf (fp, "per_HBR,"); else fprintf (fp, "%0.2f,", ssp->per_HBRp->mean);
+    if (print_header) fprintf (fp, "per_IBR,"); else fprintf (fp, "%0.2f,", ssp->per_IBRp->mean);
+    if (print_header) fprintf (fp, "per_LBR,"); else fprintf (fp, "%0.2f,", ssp->per_LBRp->mean);
+    if (print_header) fprintf (fp, "dedup_retx,"); else fprintf (fp, "%d,", ssp->dedup_retxp->count);
+    if (print_header) fprintf (fp, "c0_retx,"); else fprintf (fp, "%d,", ssp->c0_retxp->count);
+    if (print_header) fprintf (fp, "c1_retx,"); else fprintf (fp, "%d,", ssp->c1_retxp->count);
+    if (print_header) fprintf (fp, "c2_retx,"); else fprintf (fp, "%d,", ssp->c2_retxp->count);
+    fprintf (fp, "\n");
+    return;
+} // end of emit_capture_stats
+
 
 // initializes session stats
 void init_session_stats (struct s_session *p) {
+    // frame level stats
+    p->frame_count = 0; 
+    p->c2dp = &(p->c2d); init_metric_stats (p->c2dp);
+    p->eMbpsp = &(p->eMbps); init_metric_stats (p->eMbpsp);
     p->pcp = &(p->pc); init_metric_stats (p->pcp);
     p->lp = &(p->l); init_metric_stats (p->lp);
     p->bcp = &(p->bc); init_metric_stats (p->bcp);
@@ -3905,15 +4032,26 @@ void init_session_stats (struct s_session *p) {
     p->latep = &(p->late); init_metric_stats (p->latep);
     p->brp = &(p->br); init_metric_stats (p->brp);
     p->ctsp = &(p->cts); init_metric_stats (p->ctsp);
-    p->c2dp = &(p->c2d); init_metric_stats (p->c2dp);
     p->rptp = &(p->rpt); init_metric_stats (p->rptp);
+    p->estatep = &(p->estate); init_metric_stats (p->estatep); 
+    p->per_HBRp = &(p->per_HBR); init_metric_stats (p->per_HBRp);
+    p->per_LBRp = &(p->per_LBR); init_metric_stats (p->per_LBRp);
+    p->per_IBRp = &(p->per_IBR); init_metric_stats (p->per_IBRp);
+    // dedup packet level stats
     p->c2vp = &(p->c2v); init_metric_stats (p->c2vp);
     p->v2tp = &(p->v2t); init_metric_stats (p->v2tp);
+    p->t2rp = &(p->t2r); init_metric_stats (p->t2rp);
     p->c2rp = &(p->c2r); init_metric_stats (p->c2rp);
+    p->dedup_retxp = &(p->dedup_retx); init_metric_stats (p->dedup_retxp);
+    // carrier packet level stats
     p->best_t2rp = &(p->best_t2r); init_metric_stats (p->best_t2rp);
     p->c0_est_t2rp = &(p->c0_est_t2r); init_metric_stats (p->c0_est_t2rp);
     p->c1_est_t2rp = &(p->c1_est_t2r); init_metric_stats (p->c1_est_t2rp);
     p->c2_est_t2rp = &(p->c2_est_t2r); init_metric_stats (p->c2_est_t2rp);
+    p->c0_retxp = &(p->c0_retx); init_metric_stats (p->c0_retxp);
+    p->c1_retxp = &(p->c1_retx); init_metric_stats (p->c1_retxp);
+    p->c2_retxp = &(p->c2_retx); init_metric_stats (p->c2_retxp);
+    return;
 } // end of init_session_stats
 
 // initializes the session stat structures for the specified metrics
@@ -3922,6 +4060,7 @@ void init_metric_stats (struct stats *p) {
     p->count = p->mean = p->var = p->min = p->max = 0;
     for (i=0; i<NUMBER_OF_BINS; i++)
         p->distr[i] = 0; 
+    return;
 } // end of init_metric_stats
 
 // Collects data for calculating mean/variance/distribution for the specified metric
