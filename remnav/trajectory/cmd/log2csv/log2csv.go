@@ -120,7 +120,7 @@ func main() {
 	
 	if *logtype == storage.VehicleCmdSubdir {
 		// Prepare g920 csv writer
-		g920out, err := os.Create(*outroot + "/" + "g920.csv")
+		g920out, err := os.Create(*outroot + "/" + *logtype + ".g920.csv")
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -129,7 +129,7 @@ func main() {
 		g920Writer.Write([]string{"requested", "wheel", "pedalmiddle", "pedalright"})
 	
 		// Prepare trajectory csv writer
-		trajout, err := os.Create(*outroot + "/" + "traj.csv")
+		trajout, err := os.Create(*outroot + "/" + *logtype + ".traj.csv")
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -141,7 +141,7 @@ func main() {
 	} else if *logtype == storage.TrajectorySubdir {
 	
 		// Prepare trajectory csv writer
-		trajout, err := os.Create(*outroot + "/" + "traj.csv")
+		trajout, err := os.Create(*outroot + "/" +  *logtype + ".traj.csv")
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -150,7 +150,7 @@ func main() {
 		trajWriter.Write([]string{"requested", "curvature", "speed"})
 		
 		// Prepare trajectory application csv writer
-		trajapplout, err := os.Create(*outroot + "/" + "trajapplication.csv")
+		trajapplout, err := os.Create(*outroot + "/" + *logtype + ".trajapplication.csv")
 		if err != nil {
 			log.Fatal(err)
 		}
