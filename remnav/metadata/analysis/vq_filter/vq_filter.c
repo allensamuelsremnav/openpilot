@@ -434,7 +434,7 @@ void emit_metric_stats (
 void emit_session_stats (
     struct s_session *ssp);                  // session stats
 
-void per_packet_analytics (
+void emit_per_packet_analytics (
     struct s_session *ssp, 
     struct frame *fp,
     struct s_metadata *mdp,
@@ -2518,22 +2518,23 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "CTS, ");
     fprintf (fp, "Late, ");
     fprintf (fp, "Miss, ");
-    fprintf (fp, "anno, ");
-    fprintf (fp, "0fst, ");
+    // fprintf (fp, "anno, ");
+    // fprintf (fp, "0fst, ");
     fprintf (fp, "SzB, ");
+    fprintf (fp, "SzP, ");
+    fprintf (fp, "c2d, ");
+    fprintf (fp, "estate, ");
     fprintf (fp, "EMbps,");
-    fprintf (fp, "DMbps, ");
+    // fprintf (fp, "DMbps, ");
     fprintf (fp, "Lat, ");
     fprintf (fp, "Lon, ");
     fprintf (fp, "Spd, ");
     fprintf (fp, "Rpt, ");
     fprintf (fp, "skp, ");
-    fprintf (fp, "c2d, ");
-    fprintf (fp, "dlv, ulv, ");     // modulation down / up latency violation
+    // fprintf (fp, "dlv, ulv, ");     // modulation down / up latency violation
 
-    fprintf (fp, "SzP, ");
     fprintf (fp, "1st Pkt, ");
-    fprintf (fp, "LPC, ");
+    /// fprintf (fp, "LPC, ");
     fprintf (fp, "LPN, ");
     fprintf (fp, "retx, ");
     fprintf (fp, "c2t, ");
@@ -2556,7 +2557,6 @@ void emit_frame_header (FILE *fp) {
 
     // bit-rate modulation
     fprintf (fp, "ebr, ");
-    fprintf (fp, "estate, ");
     fprintf (fp, "esrl, ");
     fprintf (fp, "lqsrl,");
     fprintf (fp, "c0q, ");
@@ -2577,46 +2577,50 @@ void emit_packet_header (FILE *ps_fp) {
     fprintf (ps_fp, "F#, ");
     fprintf (ps_fp, "P#, ");
 	fprintf (ps_fp, "LPN, ");
-    fprintf (ps_fp, "Late, ");
-	fprintf (ps_fp, "Miss, ");
+    // fprintf (ps_fp, "Late, ");
+	// fprintf (ps_fp, "Miss, ");
 	fprintf (ps_fp, "SzP, ");
 	fprintf (ps_fp, "SzB, ");
-    fprintf (ps_fp, "EMbps,");
-	fprintf (ps_fp, "DMbps, ");
-	fprintf (ps_fp, "Ft2r, ");
-	fprintf (ps_fp, "Fc2r, ");
-	fprintf (ps_fp, "Rpt, ");
-	fprintf (ps_fp, "skp, ");
+	// fprintf (ps_fp, "DMbps, ");
+	// fprintf (ps_fp, "Ft2r, ");
+	// fprintf (ps_fp, "Fc2r, ");
+	// fprintf (ps_fp, "Rpt, ");
+	// fprintf (ps_fp, "skp, ");
 	fprintf (ps_fp, "c2d, ");
-    fprintf (ps_fp, "CTS, ");
+    fprintf (ps_fp, "est,");
+    fprintf (ps_fp, "EMbps,");
 
     // Delivered packet meta data
     fprintf (ps_fp, "retx, ");
     fprintf (ps_fp, "ch, ");
-    fprintf (ps_fp, "est,");
-    fprintf (ps_fp, "MMbps, ");
+    // fprintf (ps_fp, "MMbps, ");
+    fprintf (ps_fp, "CTS, ");
     fprintf (ps_fp, "tx_TS, ");
     fprintf (ps_fp, "rx_TS, ");
-    fprintf (ps_fp, "bp_TS, ");
     fprintf (ps_fp, "Pc2r, ");
     fprintf (ps_fp, "Pt2r, ");
     
     // service resumption indicator
-	fprintf (ps_fp, "c2t, ");
+	fprintf (ps_fp, "Pc2t, ");
     fprintf (ps_fp, "Res,");
     fprintf (ps_fp, "Res_ch,");
 
     // per carrier meta data
     int i; 
     for (i=0; i<3; i++) {
-        fprintf (ps_fp, "C%d: c2r, c2v, t2r, r2t, est_t2r, ert, socc, MMbps, chqst, retx,", i); 
-        fprintf (ps_fp, "tgap, ppkts, upkts, spkts, cont, Inc, rdbg, urpkt, oos_d, oos_o, cr, I, rb, x, y, rlen, flen, I,");
-        fprintf (ps_fp, "tx_TS, rx_TS, r2t_TS, ert_TS, socc_TS, bp_pkt_TS, bp_pkt, bp_t2r,"); 
-        fprintf (ps_fp, "Ravg, IS, qst, qsz, avg_ms, avg_pkt,");
+        fprintf (ps_fp, "C%d: c2r, t2r, r2t, est_t2r, socc, chqst, retx,", i); 
+        fprintf (ps_fp, "flen,");
+        fprintf (ps_fp, "tx_TS, rx_TS, r2t_TS,"); 
+        // fprintf (ps_fp, "Ravg, IS, qst, qsz, avg_ms, avg_pkt,");
+
+        // fprintf (ps_fp, "C%d: c2r, c2v, t2r, r2t, est_t2r, ert, socc, MMbps, chqst, retx,", i); 
+        // fprintf (ps_fp, "tgap, ppkts, upkts, spkts, cont, Inc, rdbg, urpkt, oos_d, oos_o, cr, I, rb, x, y, rlen, flen, I,");
+        // fprintf (ps_fp, "tx_TS, rx_TS, r2t_TS, ert_TS, socc_TS, bp_pkt_TS, bp_pkt, bp_t2r,"); 
+        // fprintf (ps_fp, "Ravg, IS, qst, qsz, avg_ms, avg_pkt,");
     }
 
     // packet analytics 
-    fprintf (ps_fp, "dtx, fch, eff, opt, "); 
+    // fprintf (ps_fp, "dtx, fch, eff, opt, "); 
     fprintf (ps_fp, "3fch, 2fch, 1fch, 0fch, cUse, ");
 
     fprintf (ps_fp, "\n");
@@ -2656,29 +2660,26 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
         fprintf (ps_fp, "%u, ", fp->frame_count);
         fprintf (ps_fp, "%u, ", mdp->packet_num);
 	    if (fp->latest_packet_num == mdp->packet_num) fprintf (ps_fp, "%u, ", fp->latest_packet_num); else fprintf (ps_fp, ", "); 
-        fprintf (ps_fp, "%u, ", fp->late);
-	    fprintf (ps_fp, "%u, ", fp->missing);
+        // fprintf (ps_fp, "%u, ", fp->late);
+	    // fprintf (ps_fp, "%u, ", fp->missing);
 	    fprintf (ps_fp, "%u, ", fp->packet_count);          // SzP
 	    fprintf (ps_fp, "%u, ", mdp->video_packet_len);     // SzB
-        fprintf (ps_fp, "%.1f,", fp->EMbps); // EMbps
-	    fprintf (ps_fp, "%.1f, ", fp->DMbps); // DMbps
-	    // fprintf (ps_fp, "%.1f, ", fp->tx_epoch_ms_1st_packet - fp->camera_epoch_ms);
-	    fprintf (ps_fp, "%.1f, ", fp->rx_epoch_ms_latest_packet - fp->tx_epoch_ms_1st_packet);
-	    fprintf (ps_fp, "%.1f, ", fp->rx_epoch_ms_latest_packet - fp->camera_epoch_ms);
-	    fprintf (ps_fp, "%d, ", fp->repeat_count);
-	    fprintf (ps_fp, "%u, ", fp->skip_count);
+	    // fprintf (ps_fp, "%.1f, ", fp->DMbps); // DMbps
+	    // fprintf (ps_fp, "%.1f, ", fp->rx_epoch_ms_latest_packet - fp->tx_epoch_ms_1st_packet);
+	    // fprintf (ps_fp, "%.1f, ", fp->rx_epoch_ms_latest_packet - fp->camera_epoch_ms);
+	    // fprintf (ps_fp, "%d, ", fp->repeat_count);
+	    // fprintf (ps_fp, "%u, ", fp->skip_count);
 	    fprintf (ps_fp, "%.1f, ", fp->c2d_frames);
-        fprintf (ps_fp, "%.0lf, ", fp->camera_epoch_ms);
+        if (len_brmd) fprintf (ps_fp, "%d,", brmdp->encoder_state); else fprintf (ps_fp, ",");
+        fprintf (ps_fp, "%.1f,", fp->EMbps); // EMbps
 
         // Delivered packet meta data
         fprintf (ps_fp, "%u, ", mdp->retx);
         fprintf (ps_fp, "%u, ", mdp->ch);
-        if (len_brmd) fprintf (ps_fp, "%d,", brmdp->encoder_state); else fprintf (ps_fp, ",");
-        if (mdp->kbps > 0) fprintf (ps_fp, "%.1f, ", ((float) mdp->kbps)/1000);
-        else fprintf (ps_fp, ","); 
+        // if (mdp->kbps > 0) fprintf (ps_fp, "%.1f, ", ((float) mdp->kbps)/1000); else fprintf (ps_fp, ","); 
+        fprintf (ps_fp, "%.0lf, ", fp->camera_epoch_ms);
         fprintf (ps_fp, "%.0lf, ", mdp->tx_epoch_ms);
         fprintf (ps_fp, "%.0lf, ", mdp->rx_epoch_ms);
-        fprintf (ps_fp, "%.0lf, ", mdp->bp_epoch_ms);
         fprintf (ps_fp, "%.1f, ", mdp->rx_epoch_ms - fp->camera_epoch_ms);
         fprintf (ps_fp, "%.1f, ", mdp->rx_epoch_ms - mdp->tx_epoch_ms);
 
@@ -3029,7 +3030,7 @@ void carrier_metadata_clients (
 	    emit_packet_stats (c2p, mdp, 2, fp);
 
         // per packet analytics
-        per_packet_analytics (ssp, fp, mdp, c0p, c1p, c2p); 
+        emit_per_packet_analytics (ssp, fp, mdp, c0p, c1p, c2p); 
 	
         fprintf (ps_fp, "\n");
     } // for every packet in the frame
@@ -3038,7 +3039,7 @@ void carrier_metadata_clients (
 } // carrier_metadata_clients
 
 // prints out packet level analytics based on the carrier packet metadata
-void per_packet_analytics (
+void emit_per_packet_analytics (
     struct s_session *ssp, 
     struct frame *fp,
     struct s_metadata *mdp,
@@ -3065,7 +3066,7 @@ void per_packet_analytics (
 		    earliest_tx = MIN(MIN(c0p->tx_epoch_ms, c1p->tx_epoch_ms), c2p->tx_epoch_ms);
         } // all 3 channels transmitting this packet
 
-		fprintf (ps_fp, "%0.1f, ", latest_tx-earliest_tx); 
+		// fprintf (ps_fp, "%0.1f, ", latest_tx-earliest_tx); 
 	
 	    // fch: fast channel availability
         // fastest tx_to_rx computed regardless of a channel was transmitting or not to capture the case where a fast
@@ -3091,10 +3092,10 @@ void per_packet_analytics (
             // all 3 tranmsitting 111
             fastest_tx_to_rx = MIN(c0p->t2r_ms, MIN(c1p->t2r_ms, c2p->t2r_ms));
 
-	    fprintf (ps_fp, "%0.1f, ", fastest_tx_to_rx);
+	    // fprintf (ps_fp, "%0.1f, ", fastest_tx_to_rx);
 
         // eff: time wasted between encoding and transmission
-	    fprintf (ps_fp, "%0.1f, ", (mdp->rx_epoch_ms - fp->camera_epoch_ms) - fastest_tx_to_rx - c2v_latency); 
+	    // fprintf (ps_fp, "%0.1f, ", (mdp->rx_epoch_ms - fp->camera_epoch_ms) - fastest_tx_to_rx - c2v_latency); 
 	
 	    // update carrier based session packet stats 
 	    update_metric_stats (ssp->best_t2rp, 0, fastest_tx_to_rx, MAX_T2R_LATENCY, MIN_T2R_LATENCY);
@@ -3112,10 +3113,10 @@ void per_packet_analytics (
         }
 
         // opt: was fastest channel used to transfer this packet
-        if ((mdp->rx_epoch_ms - mdp->tx_epoch_ms) < (fastest_tx_to_rx + 2))  // 2 is arbitrary grace duration
-            fprintf (ps_fp, "1, "); 
-        else
-            fprintf (ps_fp, "0, "); 
+        // if ((mdp->rx_epoch_ms - mdp->tx_epoch_ms) < (fastest_tx_to_rx + 2))  // 2 is arbitrary grace duration
+            // fprintf (ps_fp, "1, "); 
+        // else
+            // fprintf (ps_fp, "0, "); 
         
         // fast channel availability
         int c0fast = c0p->t2r_ms < fast_channel_t2r ? 1 : 0; 
@@ -3134,7 +3135,7 @@ void per_packet_analytics (
         fprintf (ps_fp, "%d, ", c0p->tx + c1p->tx + c2p->tx); 
 
     return; 
-} // per packet_analytics
+} // end of emit_per_packet_analytics
 
 // assumes called at the end of a frame after frame and session stats have been updated
 void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1 for the last frame of the session 
@@ -3149,18 +3150,21 @@ void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1
     fprintf (fs_fp, "%.0lf, ", p->camera_epoch_ms);
     fprintf (fs_fp, "%u, ", p->late);
     fprintf (fs_fp, "%u, ", p->missing);
-    fprintf (fs_fp, "%u, ", p->has_annotation);
-    fprintf (fs_fp, "%d, ", (p->fast_channel_count != p->packet_count)); 
+    // fprintf (fs_fp, "%u, ", p->has_annotation);
+    // fprintf (fs_fp, "%d, ", (p->fast_channel_count != p->packet_count)); 
     fprintf (fs_fp, "%u, ", p->size);
+    fprintf (fs_fp, "%u, ", p->packet_count);
+    fprintf (fs_fp, "%.1f, ", p->c2d_frames);
+    fprintf (fs_fp, "%d, ", p->brmdp->encoder_state);
     fprintf (fs_fp, "%.1f,", p->EMbps); 
-    fprintf (fs_fp, "%.1f, ", p->DMbps);
+    // fprintf (fs_fp, "%.1f, ", p->DMbps);
     fprintf (fs_fp, "%lf, ", p->coord.lat);
     fprintf (fs_fp, "%lf, ", p->coord.lon);
     fprintf (fs_fp, "%.1f, ", p->speed);
     fprintf (fs_fp, "%d, ", p->repeat_count);
     fprintf (fs_fp, "%u, ", p->skip_count);
-    fprintf (fs_fp, "%.1f, ", p->c2d_frames);
 
+    /*
     // dlv and ulv
     // frame size modulation analytics
     float frame_t2r = p->rx_epoch_ms_latest_packet - p->tx_epoch_ms_1st_packet;
@@ -3179,15 +3183,15 @@ void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1
         fprintf (fs_fp, "%d, ", 1);
     else
         fprintf (fs_fp, "%d, ", 0); 
+    */
 
     // other frame stats
-    fprintf (fs_fp, "%u, ", p->packet_count);
     fprintf (fs_fp, "%u, ", p->first_packet_num);
-    fprintf (fs_fp, "%u, ", p->latest_packet_count);
+    // fprintf (fs_fp, "%u, ", p->latest_packet_count);
     fprintf (fs_fp, "%u, ", p->latest_packet_num);
     fprintf (fs_fp, "%u, ", p->latest_retx);
     fprintf (fs_fp, "%.1f, ", p->tx_epoch_ms_1st_packet - p->camera_epoch_ms);      // c2t
-    fprintf (fs_fp, "%.1f, ", frame_t2r);                                           // t2r
+    fprintf (fs_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->tx_epoch_ms_1st_packet); // t2r
     fprintf (fs_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->camera_epoch_ms);   // Fc2r
     fprintf (fs_fp, "%u, ", p->out_of_order);
     fprintf (fs_fp, "%u, ", p->frame_resolution);
@@ -3206,7 +3210,6 @@ void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1
 
     // bit-rate modulation stats
     fprintf (fs_fp, "%d, ", p->brmdp->bit_rate);
-    fprintf (fs_fp, "%d, ", p->brmdp->encoder_state);
     if (p->brm_changed) {
         fprintf (fs_fp, "%d, ", p->brm_run_length);
     } else
@@ -3545,16 +3548,16 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
 	if (cp->tx) {
         // if this carrier transmitted this packet
 	    fprintf (ps_fp, "%0.1f,", cp->rx_epoch_ms - fp->camera_epoch_ms);                       // c2r
-	    fprintf (ps_fp, "%0.1f,", cp->vx_epoch_ms - fp->camera_epoch_ms);                       // c2v
+	    // fprintf (ps_fp, "%0.1f,", cp->vx_epoch_ms - fp->camera_epoch_ms);                       // c2v
 	    fprintf (ps_fp, "%0.1f,", cp->t2r_ms);                                                  // t2r
 	    if (cp->len_ld) fprintf (ps_fp, "%0.1f,", cp->r2t_ms); else fprintf (ps_fp, ",");       // r2t
 	    if (cp->len_ld) fprintf (ps_fp, "%0.1f,", cp->est_t2r_ms);                              // est_t2r
-        if (cp->len_ld) fprintf (ps_fp, "%.0f,", cp->ert_ms); else fprintf (ps_fp, ",");        // ert
+        // if (cp->len_ld) fprintf (ps_fp, "%.0f,", cp->ert_ms); else fprintf (ps_fp, ",");        // ert
         fprintf (ps_fp, "%d,", cp->socc);                                                       // socc
-        if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000);          // MMbps
-        else fprintf (ps_fp, ",");                                                              
+        // if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000); else fprintf (ps_fp, ",");// MMbps
         fprintf (ps_fp, "%d,", cp->brmdp->channel_quality_state[carrier_num]);
         fprintf (ps_fp, "%d,", cp->retx);                                                       // retx
+        /*
         if (cp->start_of_run_flag) { // channel entering service
             fprintf (ps_fp, "%d,", cp->tgap);                                                   // tgap
             fprintf(ps_fp, "%d,", cp->pending_packet_count);                                    // pptks
@@ -3593,85 +3596,85 @@ void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrie
             fprintf (ps_fp,","); // x
             fprintf (ps_fp,","); // y
         }
-
+        */
         if (cp->start_of_run_flag) {
-            fprintf(ps_fp, "%d,", cp->last_run_length); // rlen
+            // fprintf(ps_fp, "%d,", cp->last_run_length); // rlen
             fprintf(ps_fp, "%d,", cp->run_length); // flen
-            fprintf (ps_fp, "%d,", cp->last_run_length - cp->last_fast_run_length); // I
+            // fprintf (ps_fp, "%d,", cp->last_run_length - cp->last_fast_run_length); // I
         } else {
-            fprintf (ps_fp,","); // rlen
+            // fprintf (ps_fp,","); // rlen
             fprintf(ps_fp, "%d,", cp->run_length); // flen
-            fprintf (ps_fp,","); // I 
+            // fprintf (ps_fp,","); // I 
         }
 
 	    fprintf (ps_fp, "%.0lf,", cp->tx_epoch_ms);                                             // tx_TS
 	    fprintf (ps_fp, "%.0lf,", cp->rx_epoch_ms);                                             // rx_TS
 	    if (cp->len_ld) fprintf (ps_fp, "%.0lf,", cp->ldp->bp_epoch_ms); else fprintf (ps_fp, ",");// r2t_TS
-	    if (cp->len_td) fprintf (ps_fp, "%.0lf,", cp->ert_epoch_ms); else fprintf (ps_fp, ","); //ert_TS
-	    if (cp->len_td) fprintf (ps_fp, "%.0lf,", cp->socc_epoch_ms); else fprintf (ps_fp, ",");// socc_TS 
-	    if (cp->len_ld) fprintf (ps_fp, "%.0lf,", cp->lsp->bp_epoch_ms); else fprintf (ps_fp, ",");// bp_pkt_TS 
-	    if (cp->len_ld) fprintf (ps_fp, "%d,", cp->lsp->packet_num); else fprintf (ps_fp, ","); // bp_pkt
-	    if (cp->len_ld) fprintf (ps_fp, "%d,", cp->lsp->t2r_ms); else fprintf (ps_fp, ",");     // bp_t2r
+	    // if (cp->len_td) fprintf (ps_fp, "%.0lf,", cp->ert_epoch_ms); else fprintf (ps_fp, ","); //ert_TS
+	    // if (cp->len_td) fprintf (ps_fp, "%.0lf,", cp->socc_epoch_ms); else fprintf (ps_fp, ",");// socc_TS 
+	    // if (cp->len_ld) fprintf (ps_fp, "%.0lf,", cp->lsp->bp_epoch_ms); else fprintf (ps_fp, ",");// bp_pkt_TS 
+	    // if (cp->len_ld) fprintf (ps_fp, "%d,", cp->lsp->packet_num); else fprintf (ps_fp, ","); // bp_pkt
+	    // if (cp->len_ld) fprintf (ps_fp, "%d,", cp->lsp->t2r_ms); else fprintf (ps_fp, ",");     // bp_t2r
 
         // print average socc stats
-        if (cp->len_avgqd) fprintf (ps_fp, "%0.1f,", cp->avgqdp->rolling_average); else fprintf (ps_fp, ","); 
-        fprintf (ps_fp, "%d,", 1);  // in service
-        if (cp->len_avgqd) fprintf (ps_fp, "%d,", cp->avgqdp->quality_state); else fprintf (ps_fp, ","); 
-        if (cp->len_avgqd) fprintf (ps_fp, "%d,", cp->avgqdp->queue_size); else fprintf (ps_fp, ","); 
-        if (cp->len_avgqd) fprintf (ps_fp, "%.0lf,", cp->avgqdp->tx_epoch_ms); else fprintf (ps_fp, ","); 
-        if (cp->len_avgqd) fprintf (ps_fp, "%d,", cp->avgqdp->packet_num); else fprintf (ps_fp, ","); 
-    } // if this carrier transmitted this meta data line, then print the carrier stats 
+        // if (cp->len_avgqd) fprintf (ps_fp, "%0.1f,", cp->avgqdp->rolling_average); else fprintf (ps_fp, ","); 
+        // fprintf (ps_fp, "%d,", 1);  // in service
+        // if (cp->len_avgqd) fprintf (ps_fp, "%d,", cp->avgqdp->quality_state); else fprintf (ps_fp, ","); 
+        // if (cp->len_avgqd) fprintf (ps_fp, "%d,", cp->avgqdp->queue_size); else fprintf (ps_fp, ","); 
+        // if (cp->len_avgqd) fprintf (ps_fp, "%.0lf,", cp->avgqdp->tx_epoch_ms); else fprintf (ps_fp, ","); 
+        // if (cp->len_avgqd) fprintf (ps_fp, "%d,", cp->avgqdp->packet_num); else fprintf (ps_fp, ","); 
+    } // if (cp->tx) this carrier transmitted this meta data line
 
 	else { // stay silent except indicate the channel quality occ and run lengths
 	    fprintf (ps_fp, ",");       // c2r
-	    fprintf (ps_fp, ",");       // c2v
+	    // fprintf (ps_fp, ",");       // c2v
         fprintf (ps_fp, ",");       // t2r
         fprintf (ps_fp, ",");       // r2t
         fprintf (ps_fp, ",");       // est_t2r
-        fprintf (ps_fp, ",");       // ert
+        // fprintf (ps_fp, ",");       // ert
         fprintf (ps_fp, "%d,", cp->socc);
-        if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000); else fprintf (ps_fp, ",");
+        // if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000); else fprintf (ps_fp, ",");
         fprintf (ps_fp, ",");       // chqst
         fprintf (ps_fp, ",");       // retx
-        fprintf (ps_fp, ",");       // pending packets time gap (tgap)
-        fprintf (ps_fp, ",");       // pending_packet_count (ppkts)
-        fprintf (ps_fp, ",");       // unsed packets at the start of a run (upkts)
-        fprintf (ps_fp, ",");       // spkts
-        fprintf (ps_fp, ",");       // cont
-        fprintf (ps_fp, ",");       // Inc(orrect)
-        fprintf (ps_fp, ",");       // rdbg
-        fprintf (ps_fp, ",");       // urpkt
-        fprintf (ps_fp, ",");       // oos_d
-        fprintf (ps_fp, ",");       // oos_o
-        fprintf (ps_fp, ",");       // cr
-        fprintf (ps_fp, ",");       // indicator
-        fprintf (ps_fp, ",");       // rb
-        fprintf (ps_fp, ",");       // x
-        fprintf (ps_fp, ",");       // y
+        // fprintf (ps_fp, ",");       // pending packets time gap (tgap)
+        // fprintf (ps_fp, ",");       // pending_packet_count (ppkts)
+        // fprintf (ps_fp, ",");       // unsed packets at the start of a run (upkts)
+        // fprintf (ps_fp, ",");       // spkts
+        // fprintf (ps_fp, ",");       // cont
+        // fprintf (ps_fp, ",");       // Inc(orrect)
+        // fprintf (ps_fp, ",");       // rdbg
+        // fprintf (ps_fp, ",");       // urpkt
+        // fprintf (ps_fp, ",");       // oos_d
+        // fprintf (ps_fp, ",");       // oos_o
+        // fprintf (ps_fp, ",");       // cr
+        // fprintf (ps_fp, ",");       // indicator
+        // fprintf (ps_fp, ",");       // rb
+        // fprintf (ps_fp, ",");       // x
+        // fprintf (ps_fp, ",");       // y
         if (cp->start_of_run_flag) {
-            fprintf(ps_fp, "%d,", cp->last_run_length); // rlen
+            // fprintf(ps_fp, "%d,", cp->last_run_length); // rlen
             fprintf(ps_fp, "%d,", cp->run_length); // flen
-            fprintf (ps_fp, "%d,", cp->last_run_length - cp->last_fast_run_length); // I
+            // fprintf (ps_fp, "%d,", cp->last_run_length - cp->last_fast_run_length); // I
         } else {
-            fprintf (ps_fp,","); // rlen
+            // fprintf (ps_fp,","); // rlen
             fprintf(ps_fp, "%d,", cp->run_length); // flen
-            fprintf (ps_fp,","); // I 
+            // fprintf (ps_fp,","); // I 
         }
         fprintf (ps_fp, ",");       // tx_TS
         fprintf (ps_fp, ",");       // rx_TS
         fprintf (ps_fp, ",");       // r2t_TS
-        fprintf (ps_fp, ",");       // ert_TS
-	    if (cp->len_td) fprintf (ps_fp, "%.0lf,", cp->socc_epoch_ms); else fprintf (ps_fp, ","); 
-        fprintf (ps_fp, ",");       // bp_pkt_TS
-        fprintf (ps_fp, ",");       // bp_pkt
-        fprintf (ps_fp, ",");       // bp_t2r
+        // fprintf (ps_fp, ",");       // ert_TS
+	    // if (cp->len_td) fprintf (ps_fp, "%.0lf,", cp->socc_epoch_ms); else fprintf (ps_fp, ","); 
+       //  fprintf (ps_fp, ",");       // bp_pkt_TS
+        // fprintf (ps_fp, ",");       // bp_pkt
+        // fprintf (ps_fp, ",");       // bp_t2r
 
-        fprintf (ps_fp, ","); 
-        fprintf (ps_fp, "%d,", 0);  // not in serivce
-        fprintf (ps_fp, ","); 
-        fprintf (ps_fp, ","); 
-        fprintf (ps_fp, ","); 
-        fprintf (ps_fp, ","); 
+        // fprintf (ps_fp, ","); 
+        // fprintf (ps_fp, "%d,", 0);  // not in serivce
+        // fprintf (ps_fp, ","); 
+        // fprintf (ps_fp, ","); 
+        // fprintf (ps_fp, ","); 
+        // fprintf (ps_fp, ","); 
     } // this carrier did not transmit the packet
 
     return;
