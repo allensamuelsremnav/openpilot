@@ -230,7 +230,8 @@ func main() {
 	if vid == 0  || *mock {
 		const maxSteeringWheel = math.Pi / 8
 		const sinSpeed = 2 * math.Pi / 4.0
-		gs = g920Mock(5, maxSteeringWheel, sinSpeed)
+		const reportIntervalMs = 5
+		gs = g920Mock(reportIntervalMs, maxSteeringWheel, sinSpeed)
 	} else {
 		gs = g920Device(vid, pid, *verbose, *progress)
 	}
