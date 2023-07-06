@@ -230,7 +230,8 @@ func main() {
 	if vid == 0  || *mock {
 		const maxSteeringWheel = math.Pi / 8
 		const sinSpeed = 2 * math.Pi / 4.0
-		gs = g920Mock(5, maxSteeringWheel, sinSpeed)
+		const reportIntervalMs = 5
+		gs = g920Mock(reportIntervalMs, maxSteeringWheel, sinSpeed)
 	} else {
 		gs = g920Device(vid, pid, *verbose, *progress)
 	}
@@ -256,7 +257,7 @@ func main() {
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	cmdsLogDir := gpsd.LogDir("plnrmock", *logRoot, storage.VehicleCmdSubdir, "", "")
+	cmdsLogDir := gpsd.LogDir("plnr", *logRoot, storage.VehicleCmdSubdir, "", "")
 	go rnlog.StringBinned(vehicleLogCh, cmdsLogDir, &wg)
 
 	log.Printf("%s: display port %d", os.Args[0], *display)
@@ -268,7 +269,7 @@ func main() {
 	}
 
 	wg.Add(1)
-	displayLogDir := gpsd.LogDir("plnrmock", *logRoot, storage.TrajectorySubdir, "", "")
+	displayLogDir := gpsd.LogDir("plnr", *logRoot, storage.TrajectorySubdir, "", "")
 	go rnlog.StringBinned(displayLogCh, displayLogDir, &wg)
 
 	wg.Wait()

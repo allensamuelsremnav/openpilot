@@ -24,15 +24,15 @@ func TestCurvature(t *testing.T) {
 		arg  float64
 		want float64
 	}{
-		{math.Pi / 2, 4},
-		{-math.Pi / 2, -4},
-		{math.Pi / 4, 5.65685424949238019521},
-		{-math.Pi / 4, -5.65685424949238019521},
-		{math.Pi / 100, 127.34490083639049182265},
-		{-math.Pi / 100, -127.34490083639049182265},
+		{math.Pi / 2, 1/4.0},
+		{-math.Pi / 2, -1/4.0},
+		{math.Pi / 4, 1/5.65685424949238019521},
+		{-math.Pi / 4, -1/5.65685424949238019521},
+		{math.Pi / 100, 1/127.34490083639049182265},
+		{-math.Pi / 100, -1/127.34490083639049182265},
 	} {
 		got := params.curvature(aw.arg)
-		if math.Abs(got-aw.want) > 1e-17 {
+		if math.Abs(got-aw.want) > 1e-15 {
 			t.Fatalf("got %v, want %v for case %v", got, aw.want, aw)
 		}
 	}
@@ -44,9 +44,9 @@ func TestCurvatureSmallAngle(t *testing.T) {
 		arg  float64
 		want float64
 	}{
-		{0.0, 4 * 1e300},
-		{5e-301, 4 * 1e300},
-		{-5e-301, -4 * 1e300},
+		{0.0, 0.0},
+		{5e-301, 0.0},
+		{-5e-301, 0.0},
 	} {
 		got := params.curvature(aw.arg)
 		if math.Abs(got-aw.want) > 1e286 {
@@ -132,7 +132,7 @@ func TestParamsInit(t *testing.T) {
 			t.Fatalf("got %v, wnat %v", got, v.want)
 		}
 		
-		fmt.Printf("%s: %v\n", v.filename, got)
+		// fmt.Printf("%s: %v\n", v.filename, got)
 	}		
 
 	var buf []byte

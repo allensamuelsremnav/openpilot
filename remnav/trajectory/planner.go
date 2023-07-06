@@ -77,13 +77,7 @@ func (p PlannerParameters) limitDtireDt(tireState, tireRequested, dt float64) fl
 
 // Compute curvature using front-axle bicycle model.
 func (p PlannerParameters) curvature(tire float64) float64 {
-	sin := math.Sin(tire)
-	// Don't divide by zero
-	const eps = 1e-300
-	if math.Abs(sin) < eps {
-		sin = math.Copysign(eps, sin)
-	}
-	return p.Wheelbase / sin
+	return math.Sin(tire) / p.Wheelbase
 }
 
 
@@ -162,8 +156,7 @@ func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G
 	trajectoryInterval := intervalSetpoint
 
 	// State variables
-	var report g920.G920     // most recent
-	var reportPrev g920.G920 // at last trajectory
+	var report g920.G920     // most recent from channel
 	var speed Speed          // most recent
 	var tirePrev float64     // at last trajectory
 
@@ -177,7 +170,6 @@ func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G
 		if logCh != nil {
 			defer close(logCh)
 		}
-		var okG920 bool
 		for {
 			select {
 			case tpv, ok := <-gpsdCh:
@@ -186,20 +178,27 @@ func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G
 					return
 				}
 				speed = tpvToSpeed(tpv)
-			case report, okG920 = <-g920Ch:
+			case report_, okG920 := <-g920Ch:
 				if !okG920 {
 					log.Printf("G920 channel closed")
 					return
 				}
+				// There might be something wrong with us resolution clocks on Windows.
+				if report_.Requested < report.Requested {
+					log.Printf("out-of-order G920 reports at %d < %d", report_.Requested, report.Requested)
+					break
+				}
+				report = report_
 			case <-ticker.C:
 				tireRequested := param.tire(report.Wheel)
-				if report.Requested < reportPrev.Requested {
-					log.Fatalf("out-of-order G920 reports at %d - %d", report.Requested, reportPrev.Requested)
-				}
 				tireLimited := param.limitDtireDt(tirePrev, tireRequested, intervalSetpoint.Seconds())
 				// fmt.Printf("report wheel %.2f, tire requested %.2f, limited %.2f\n", report.Wheel, tireRequested, tireLimited)
 				curvature := param.curvature(tireLimited)
 
+				// We had a bug; be sure it doesn't come back.
+				if math.Abs(curvature) > 6000 {
+					log.Printf("tireRequested %f, tirePrev %f, tireLimited %f", tireRequested, tirePrev, tireLimited)
+				}
 				trajectory := Trajectory{Class: ClassTrajectory,
 					Requested: time.Now().UnixMicro(),
 					Curvature: curvature,
@@ -228,7 +227,6 @@ func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G
 					}
 				}
 				tirePrev = tireLimited
-				reportPrev = report
 
 				/*
 					        tickNow := time.Now()
