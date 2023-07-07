@@ -79,13 +79,13 @@ frame_sz_list_fields = namedtuple ("frame_sz_list_fields", "frame_num, frame_szP
 #########################################################################################
 def WARN (s):
     " prints warning string on stderr"
-    sys.stderr.write (s+"\n")
+    sys.stderr.write (s)
     # exit ()
     return
 
 def FATAL (s):
     " prints error string on stderr and exits"
-    sys.stderr.write (s+"\n")
+    sys.stderr.write (s)
     exit ()
     return
 
@@ -114,7 +114,7 @@ def is_number(s):
         return False
 # end of is_number
 
-class csv_out:
+class CsvOut:
 
     def __init__(self, fout):
         self.fout = fout
@@ -164,8 +164,7 @@ class csv_out:
     def close (self):
         self.fout.close ()
         return
-
-# end of csv_out
+# end of CsvOut
 
 def read_worklist (file_name):
     """ returns a list of file_list_fields tuples by reading file_name """
@@ -192,9 +191,7 @@ def read_worklist (file_name):
         elif comment_nest_count > 0:
             continue
         elif comment_nest_count < 0:
-            err_str = "FATAL: Incorrectly nested comments start line: ", + str(i)
-            sys.stderr.write (err_str)
-            exit
+            FATAL ("FATAL: Incorrectly nested comments start line: ", + str(i))
     
         # skip comment lines (outside comment block) and empty lines
         if line.startswith ("//") or line.startswith ("#") or line == "":
@@ -217,20 +214,25 @@ def read_worklist (file_name):
                 ipath = line_tokens[3]
                 ipath_defined = True
             else:
-                err_str = "Invalid syntax at line :" + str(i)
-                sys.stderr.write (err_str)
+                WARN ("Invalid syntax at line :" + str(i))
             
             if stx_defined and srx_defined and ipath_defined:
                 work_list += [file_list_fields (in_dir=ipath, rx_infix=srx, tx_infix=stx)]
                 srx_defined = False 
                 stx_defined = False
         except:
-            sys.stderr ("FATAL read_worklist: Invalid syntax at line {n}: {l} in file {f}".format (n=i, l=line, f=input_file))
-            exit
+            FATAL ("FATAL read_worklist: Invalid syntax at line {n}: {l} in file {f}".format (n=i, l=line, f=input_file))
         # end of parse a non-comment line
     # for all lines in the input_file
     return work_list
 # end of read_worklist
+
+def add_to_dic (key, file_name, tuple_fields, array, files_dic, log_dic ):
+    "adds an element to the file attribute and log dictionary if the specified file exists"
+    path = Path (file_name)
+    if path.is_file ():
+        files_dic.update ({key: files_dic_fields._make ([file_name, tuple_fields])})
+        log_dic.update ({key: array})
 
 def create_dic (in_dir, tx_infix, rx_infix):
     " creates file attribute dictionary and corresponding entry in log dictionary"
@@ -238,59 +240,31 @@ def create_dic (in_dir, tx_infix, rx_infix):
     files_dic = {}
     log_dic = {}
 
-    #
     # log files
-    #
-    files_dic.update ({"uplink":  files_dic_fields._make ([in_dir+"uplink_queue_"+tx_infix+".log", uplink_fields])})
     uplink_array = []
-    log_dic.update ({"uplink": uplink_array})
+    add_to_dic (key="uplink", file_name=in_dir+"uplink_queue_"+tx_infix+".log", tuple_fields = uplink_fields, array=uplink_array, files_dic=files_dic, log_dic=log_dic)
     
-    files_dic.update ({"all_latency": files_dic_fields._make ([in_dir+"latency_"+tx_infix+".log", latency_fields])})
     all_latency_array = []
-    log_dic.update ({"all_latency": all_latency_array})
+    add_to_dic (key="all_latency", file_name=in_dir+"latency_"+tx_infix+".log", tuple_fields=latency_fields, array=all_latency_array, files_dic=files_dic, log_dic=log_dic)
     
-    files_dic.update ({"service": files_dic_fields._make ([in_dir+"service_"+tx_infix+".log", service_fields])})
     service_array = []
-    log_dic.update ({"service": service_array})
+    add_to_dic (key="service", file_name=in_dir+"service_"+tx_infix+".log", tuple_fields=service_fields, array=service_array, files_dic=files_dic, log_dic=log_dic)
     
-    files_dic.update ({"skip": files_dic_fields._make ([in_dir+"skip_decision_"+tx_infix+".log", skip_fields])})
     skip_array = []
-    log_dic.update ({"skip": skip_array})
+    add_to_dic (key="skip", file_name=in_dir+"skip_decision_"+tx_infix+".log", tuple_fields=skip_fields, array=skip_array, files_dic=files_dic, log_dic=log_dic)
     
-    files_dic.update ({"brm": files_dic_fields._make ([in_dir+"bitrate_"+tx_infix+".log", brm_fields])})
     brm_array = []
-    log_dic.update ({"brm": brm_array})
+    add_to_dic (key="brm", file_name=in_dir+"bitrate_"+tx_infix+".log", tuple_fields=brm_fields, array=brm_array, files_dic=files_dic, log_dic=log_dic)
 
-    files_dic.update ({"chq": files_dic_fields._make ([in_dir+"chQ_"+tx_infix+".log", chq_fields])})
     chq_array = []
-    log_dic.update ({"chq": chq_array})
+    add_to_dic (key="chq", file_name=in_dir+"chQ_"+tx_infix+".log", tuple_fields=chq_fields, files_dic=files_dic, array=chq_array, log_dic=log_dic)
 
-    """
-    files_dic.update ({"probe":   files_dic_fields([in_dir+"probe_"+rx_infix+".log",probe_fields])})
-    probe_array = []
-    log_dic.update ({"probe": probe_array})
-    """
-    
-    #
     # csv files
-    # 
     for i in range (3):
-        files_dic.update ({"chrx"+str(i): files_dic_fields._make ([in_dir+rx_infix+"_ch"+ str(i) + ".csv", chrx_fields])})
         chrx_array = []
-        log_dic.update ({"chrx"+str(i): chrx_array})
-    
-    files_dic.update ({"dedup": files_dic_fields._make ([in_dir+rx_infix+".csv", dedup_fields])})
+        add_to_dic (key="chrx"+str(i), file_name=in_dir+rx_infix+"_ch"+ str(i) + ".csv", tuple_fields=chrx_fields, array=chrx_array, files_dic=files_dic, log_dic=log_dic)
     dedup_array = []
-    log_dic.update ({"dedup": dedup_array})
-
-    # check that files_dic and log_dic are consistent
-    files_dic_keys = set (list (files_dic.keys()))
-    log_dic_keys = set (list (log_dic.keys()))
-    if (files_dic_keys != log_dic_keys): 
-        print ("keys don't match")
-        print ("files_dic_keys: ", files_dic_keys)
-        print ("log_dic keys:   ", log_dic_keys)
-        exit ()
+    add_to_dic (key="dedup", file_name=in_dir+rx_infix+".csv", tuple_fields=dedup_fields, array=dedup_array, files_dic=files_dic, log_dic=log_dic)
 
     return files_dic, log_dic
 # end of create_dic
@@ -356,9 +330,7 @@ def read_log_file (filename, tuplename):
         try: 
             array += [tuplename._make(field_list)]
         except:
-            err_str = "WARNING read_log_file: incorrect number of filelds: " + filename  + " Line " + str(line_num) + ": " + " ".join (str(e) for e in field_list) +"\n"
-            sys.stderr.write (err_str)
-            # exit ()
+            WARN ("WARNING read_log_file: incorrect number of filelds: " + filename  + " Line " + str(line_num) + ": " + " ".join (str(e) for e in field_list) +"\n")
 
     return array
 # end of read_log_file
@@ -392,9 +364,7 @@ def read_csv_file(filename, tuplename, tx_TS_index, camera_TS_index):
         try: 
             array += [tuplename._make(field_list)]
         except:
-            err_str = "WARNING read_csv_file: incorrect number of filelds: " + filename  + " Line " + str(line_num) + ": " + " ".join (str(e) for e in field_list) +"\n"
-            sys.stderr.write (err_str)
-            # exit ()
+            WARN ("WARNING read_csv_file: incorrect number of filelds: " + filename  + " Line " + str(line_num) + ": " + " ".join (str(e) for e in field_list) +"\n")
 
     return array
 # end of read_csv_file
@@ -471,13 +441,24 @@ def create_chrx_sorted_by_pkt_num (log_dic):
     return
 # end of remove_network_duplicates
 
+def open_output_files (file_name_prefix):
+    "Opens output csv file and returns CsvOut object containing it. Redirects stderr to warning file"
+    fout = CsvOut (open (file_name_prefix + ".csv", "w"))
+    sys.stderr = open (file_name_prefix + "_warnings"+".log", "w")
+    return fout
+
+def close_output_files (fout):
+    "closes file contained in CsvOut object fout and warning file. Redirects stderr to standard error"
+    fout.close ()
+    sys.stderr.close ()
+    sys.stderr = sys.__stderr__
+    return
+
 def spike_analysis (log_dic, out_dir, capture):
     "performance spike analysis - mostly requested vs delivered bandwidth. outputs spike_ file"
-    # output
-    fout = csv_out (open (out_dir + "spike_" + capture.tx_infix + ".csv", "w"))
-    sys.stderr = open (out_dir + "spike_" + capture.tx_infix + "_warnings"+".log", "w")
 
     print ("Running spike analysis on file {f}".format (f=capture.tx_infix))
+    fout = open_output_files (out_dir + "spike_" + capture.tx_infix)
     
     service_start_index = 0
     itr_count = 0
@@ -636,9 +617,7 @@ def spike_analysis (log_dic, out_dir, capture):
         if itr_count % 1000 == 0:
             print ("Reached itr: ", itr_count)
     # while there are more service transitions to be analyzed
-    fout.close ()
-    sys.stderr.close ()
-    sys.stderr = sys.__stderr__
+    close_output_files (fout)
     return
 # end of spike_analysis
 
@@ -646,8 +625,7 @@ def resume_algo_check (log_dic, capture, out_dir):
     "performs resume algo and effectiveness checks and outputs skip_algo_chk_ file"
     
     print ("Running resume algo checks")
-    fout = csv_out (open (out_dir + "skip_algo_chk_" + capture.tx_infix + ".csv", "w"))
-    sys.stderr = open (out_dir + "skip_algo_chk_" + capture.tx_infix + "_warnings"+".log", "w")
+    fout = open_output_files (out_dir + "skip_algo_chk_" + capture.tx_infix)
     
     service_index = 0
     skip_index = 0
@@ -981,18 +959,16 @@ def resume_algo_check (log_dic, capture, out_dir):
         skip_index += 1
     # while there are more service transitions to be analyzed
 
-    fout.close ()
-    sys.stderr.close ()
-    sys.stderr = sys.__stderr__
+    close_output_files (fout)
     return
 # end of resume_alog_check
+
 
 def brm_algo_check (log_dic, out_dir, capture):
     "Checks bit-rate modulation and outputs brm_algo_chk_ file"
 
     print ("Running Channel quality state and BRM modulation checks")
-    fout = csv_out (open (out_dir + "brm_algo_chk_" + capture.tx_infix + ".csv", "w"))
-    sys.stderr = open (out_dir + "brm_algo_chk_" + capture.tx_infix + "_warnings"+".log", "w")
+    fout = open_output_files (out_dir + "brm_algo_chk_" + capture.tx_infix)
     
     # channel quality state machine states
     GOOD_QUALITY = 0
@@ -1051,18 +1027,19 @@ def brm_algo_check (log_dic, out_dir, capture):
     qsize_gt_10_start_TS = [0]*3
     
     while uplink_index < len (log_dic["uplink"]) and service_index < len (log_dic["service"]) and \
-        latency_index < len (log_dic["latency"]) and brm_index < len (log_dic["brm"]) and chq_index < len (log_dic["chq"]):
+        latency_index < len (log_dic["latency"]) and brm_index < len (log_dic["brm"]) and \
+        (chq_index < len (log_dic["chq"]) if "chq" in log_dic else True):
     
         uplink_line = log_dic["uplink"][uplink_index]
         service_line = log_dic["service"][service_index]
         brm_line = log_dic["brm"][brm_index]
         latency_line = log_dic["latency"][latency_index]
-        chq_line = log_dic["chq"][chq_index]
+        chq_line = log_dic["chq"][chq_index] if "chq" in log_dic else ()
     
         # advance time to what needs to be evaluated first next
-        current_TS = min (uplink_line.queue_size_sample_TS, service_line.service_transition_TS, brm_line.TS, 
-                          latency_line.bp_t2r_receive_TS, chq_line.TS)
-        if len (internal_scheduling_list): current_TS = min (current_TS, internal_scheduling_list[HEAD].TS)
+        current_TS = min (uplink_line.queue_size_sample_TS, service_line.service_transition_TS, brm_line.TS, latency_line.bp_t2r_receive_TS, 
+                          chq_line.TS if "chq" in log_dic else brm_line.TS, # if chq file does not exit, then don't care
+                          internal_scheduling_list[HEAD].TS if len (internal_scheduling_list) else brm_line.TS) # don't care if internal_scheduling_list is empty
         
         # read external inputs
         #
@@ -1104,15 +1081,16 @@ def brm_algo_check (log_dic, out_dir, capture):
 
         # chq log
         next_chq_index = chq_index
-        while current_TS == chq_line.TS: 
-            chq_qst[chq_line.ch] = chq_line.channel_quality
-            chq_good_quality_x_TS[chq_line.ch] = chq_line.good_quality_x_TS
-            next_chq_index = chq_index + 1
-            # check if there multiple lines in the log file with the same TS
-            if next_chq_index < len (log_dic["chq"]) and log_dic["chq"][next_chq_index].TS == current_TS: 
-                chq_index = next_chq_index
-                chq_line = log_dic["chq"][chq_index]
-            else: break
+        if "chq" in log_dic: 
+            while current_TS == chq_line.TS: 
+                chq_qst[chq_line.ch] = chq_line.channel_quality
+                chq_good_quality_x_TS[chq_line.ch] = chq_line.good_quality_x_TS
+                next_chq_index = chq_index + 1
+                # check if there multiple lines in the log file with the same TS
+                if next_chq_index < len (log_dic["chq"]) and log_dic["chq"][next_chq_index].TS == current_TS: 
+                    chq_index = next_chq_index
+                    chq_line = log_dic["chq"][chq_index]
+                else: break
     
         # latency log
         next_latency_index = latency_index
@@ -1134,7 +1112,6 @@ def brm_algo_check (log_dic, out_dir, capture):
         #
         next_quality_state = deepcopy (quality_state)
         for channel in range(3): 
-    
             ms_since_in_service_x[channel] = current_TS - in_service_state_x_TS[channel]
             channel_degraded[channel] = queue_size[channel] > 10 or est_t2r[channel] > 120
             # state machine
@@ -1182,8 +1159,7 @@ def brm_algo_check (log_dic, out_dir, capture):
         num_of_channels_in_poor_quality_state = sum (
             int (state == POOR_QUALITY or state == WAITING_TO_GO_GOOD) for state in next_quality_state)
         ms_since_encoder_state_x = current_TS - encoder_state_x_TS
-    
-        next_encoder_state = encoder_state
+        next_encoder_state = deepcopy (encoder_state)
         if current_TS == brm_line.TS: # to match implmentation evaluate encoder state only at brm tick
             if encoder_state == HIGH_BIT_RATE: 
                 if num_of_channels_in_poor_quality_state == 3:
@@ -1211,21 +1187,25 @@ def brm_algo_check (log_dic, out_dir, capture):
                     encoder_state_x_TS = current_TS
                     unschedule (internal_scheduling_list, id=ENCODER_ID, reason=REASON_WAITING_TO_GO_TO_HIGH_BIT_RATE)
             # end of encoder state machine
-    
-        #
+        ibr_to_x = encoder_state==INTERMEDIATE_BIT_RATE and next_encoder_state!=INTERMEDIATE_BIT_RATE
+        ibr_to_nxt = 2 if encoder_state==INTERMEDIATE_BIT_RATE and next_encoder_state==LOW_BIT_RATE else 0
+        
         # error check
-        #
         brm_qst = [brm_line.ch0_quality_state, brm_line.ch1_quality_state, brm_line.ch2_quality_state]
-    
         qst_err = 0
         est_err = 0
         if current_TS == brm_line.TS: # check errors only at brm tick
             for i in range (3): qst_err += int (brm_qst[i] != quality_state[i] and brm_qst[i] != next_quality_state[i])
             est_err = int (brm_line.encoder_state != encoder_state and brm_line.encoder_state != next_encoder_state)
     
-        #
+        # update states 
+        quality_state = deepcopy (next_quality_state)
+        encoder_state = deepcopy (next_encoder_state)
+    
+        quality_state = deepcopy (next_quality_state)
+        encoder_state = deepcopy (next_encoder_state)
+
         # debug and analysis print outs
-        #
         # qsize > 10 duration counter
         qsize_gt_10_duration = [0]*3
         for i in range (3):
@@ -1237,47 +1217,35 @@ def brm_algo_check (log_dic, out_dir, capture):
                 if qsize_gt_10[i]: # end of a run
                     qsize_gt_10_duration[i] = current_TS - qsize_gt_10_start_TS[i]
                 qsize_gt_10[i] = 0
-    
         # time stamps
-        i_TS = internal_scheduling_list[HEAD].TS \
-            if len (internal_scheduling_list) else service_line.service_transition_TS # arbitrary else clause
         fout.write ("TS,{t}".format(t=current_TS))
         fout.write (",up_idx,{u}, s_idx,{s}, lat_idx,{l}, brm_idx,{b}, chq_idx,{c}".format (
                 i=itr_count, u=uplink_index, s=service_index, b=brm_index, l=latency_index, c=chq_index))
-    
-        # encoder and channel quality states
+        # encoder and channel quality states and error
         fout.write (",est,{e}, b_est,{be}, est_err,{ee}, qst,{q}, c_qst,{cq}, b_qst,{bq}, qst_err,{qe}".format (
             e=encoder_state, be=brm_line.encoder_state, ee= est_err, q=quality_state, cq=chq_qst, bq=brm_qst, qe=qst_err))
-        
+        # encoder state machine inputs
+        chq_ms_since_good_quality_x_TS = [0]*3
+        if "chq" in log_dic:
+            for i in range (3): chq_ms_since_good_quality_x_TS[i] = chq_good_quality_x_TS[i] - current_TS
+        fout.write (",ch_pq,{p}, ms_e_st_x,{m}, c_ms_gq_x_TS,{g}, ibr2nxt,{i1}".format (
+            p=num_of_channels_in_poor_quality_state, m=ms_since_encoder_state_x, g=chq_ms_since_good_quality_x_TS,
+            i1=ibr_to_nxt if ibr_to_x else 9))
         # channel quality state machine inputs
         fout.write (",qsz,{q}, bp_t2r,{t2r}, est_t2r,{t}, s_est_t2r,{st}, IS_st,{i}, ms_IS_x,{mx}, IS_st_x,{ix}, qsz_gt10_d,{qd}, qsz_m,{qm}".format (
             q=queue_size, t2r=bp_t2r, t=est_t2r, st=s_est_t2r, i=in_service_state, mx=ms_since_in_service_x, ix=in_service_state_x_TS, 
-            qd=qsize_gt_10_duration, qm=queue_size_monitor_working ))
-        
-        # encoder state machine inputs
-        chq_ms_since_good_quality_x_TS = [0]*3
-        for i in range (3): chq_ms_since_good_quality_x_TS[i] = chq_good_quality_x_TS[i] - current_TS
-        fout.write (",ch_pq,{p}, ms_e_st_x,{m}, c_ms_gq_x_TS{g}".format (
-            p=num_of_channels_in_poor_quality_state, m=encoder_state_x_TS, g=chq_ms_since_good_quality_x_TS))
-    
-        # general 
+            qd=qsize_gt_10_duration, qm=queue_size_monitor_working))
+        # internal scheduling list 
         fout.write (", sched,{s}".format (s=internal_scheduling_list))
     
         fout.write ("\n")
     
-        # update states 
-        quality_state = deepcopy (next_quality_state)
-        encoder_state = deepcopy (next_encoder_state)
-    
-        quality_state = deepcopy (next_quality_state)
-        encoder_state = deepcopy (next_encoder_state)
-    
+        # move to next line
         uplink_index = next_uplink_index
         service_index = next_service_index
         brm_index = next_brm_index
         latency_index = next_latency_index
         chq_index = next_chq_index
-    
         itr_count += 1
         if (itr_count % 10_000) == 0: 
             print ("ENCODER BRM checks: itr count:{i} up_index:{u} s_index:{s}, brm_index:{b}, lat_index:{l}, chq_index{c}".format (
@@ -1285,9 +1253,7 @@ def brm_algo_check (log_dic, out_dir, capture):
         # if itr_count == 3_000: break
     # while have not exhausted at least one file
     
-    fout.close ()
-    sys.stderr.close ()
-    sys.stderr = sys.__stderr__
+    close_output_files (fout)
     return
 # end of brm_algo_check    
 
@@ -1295,8 +1261,7 @@ def skip_effectiveness_check (log_dic, capture, out_dir):
     "checks skip effectiveness by testing if dedup used the first 10 packets from the resume channel. Outputs skip_eff_chk_ file"
 
     print ("Running resume effectiveness checks")
-    fout = csv_out (open (out_dir + "skip_eff_chk_" + capture.tx_infix + ".csv", "w"))
-    sys.stderr = open (out_dir + "skip_eff_chk_" + capture.tx_infix + "_warnings"+".log", "w")
+    fout = open_output_files (out_dir + "skip_eff_chk_" + capture.tx_infix)
     
     for i, is_line in enumerate (log_dic["service"] if log_dic["skip"] == None or len (log_dic["skip"]) == 0 else log_dic["skip"]):
         if log_dic["skip"] == None or len(log_dic["skip"]) == 0: # skip_decision file does not exist, so use service file
@@ -1320,9 +1285,8 @@ def skip_effectiveness_check (log_dic, capture, out_dir):
             # find this packet in the dedup array
             dd_index = bisect_left (log_dic["dedup"], pkt_num, key = lambda a: a.pkt_num)
             if (dd_index == len (log_dic["dedup"])) or (log_dic["dedup"][dd_index].pkt_num != pkt_num):
-                err_str = "WARNING Resume effectiveness check: Could not find pkt {p} in dedup array. Res Ch={c} Res_TS={t}\n".format (
-                    p=pkt_num, c=resume_ch, t=resume_TS)
-                sys.stderr.write (err_str)
+                WARN ("WARNING Resume effectiveness check: Could not find pkt {p} in dedup array. Res Ch={c} Res_TS={t}\n".format (
+                    p=pkt_num, c=resume_ch, t=resume_TS))
                 continue # skip checking this packet
             
             # check if resuming channel was effective
@@ -1348,9 +1312,7 @@ def skip_effectiveness_check (log_dic, capture, out_dir):
             print ("Resume effectiveness checks @ line:", i)
     # for each service transition
     
-    fout.close ()
-    sys.stderr.close ()
-    sys.stderr = sys.__stderr__
+    close_output_files (fout)
     return
 # end of resume_effecitvenes_checks
 
@@ -1532,8 +1494,7 @@ def max_burst_check (log_dic, capture, out_dir):
     MAX_BURST_SIZE = 20
 
     print ("Running max_burst_check")
-    fout = csv_out (open (out_dir + "max_burst_check_" + capture.tx_infix + ".csv", "w"))
-    sys.stderr = open (out_dir + "max_burst_check_" + capture.tx_infix + "_warnings"+".log", "w")
+    fout = open_output_files (out_dir + "max_burst_check_" + capture.tx_infix)
 
     # determine the occupancy sampling period of each channel
     avg_sampling_period = [0]*3
@@ -1557,8 +1518,6 @@ def max_burst_check (log_dic, capture, out_dir):
             index = bisect_left (chrx_a, burst_expire_TS, key = lambda a: a.tx_TS)
         # while there are more lines in the channel array
     #  for each channel
-    fout.close ()
-    sys.stderr.close ()
-    sys.stderr = sys.__stderr__
+    close_output_files (fout)
     return
 # end of max_burst_check
