@@ -16,7 +16,7 @@
 #define RES_HD  0
 #define RES_SD  1
 #define CRITICAL_RUN_LENGTH 20
-#define CAPTURE_PERIOD_MINUTES 30
+#define CAPTURE_PERIOD_MINUTES 40
 #define MD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30*15)
 #define MAX_LINE_SIZE    1000 
 #define MAX_SD_LINE_SIZE 1000
@@ -72,6 +72,7 @@ struct s_file_table_entry {
 };
 
 struct s_service {
+    int channel;                // 0 att, 1 vz, 2 tm
     int state;                  // 1=IN-SERVICE 0=OUT-OF-SERVICE
     double state_transition_epoch_ms; // time stamp of state transition
     int bp_t2r;                 // back propagated t2r at the state_transition_epoch_ms
@@ -548,7 +549,7 @@ void sort_ld_by_bp (struct s_latency *ldp, int len);
 int read_ld_line (FILE *fp, int ch, struct s_latency *ldp);
 
 // reads and parses a service log file. Returns 0 if end of file reached
-int read_sd_line (FILE *fp, int ch, struct s_service *sdp);
+int read_sd_line (FILE *fp, struct s_service *sdp);
 
 // reads and parses a proble log line from the specified file. 
 // returns 0 if end of file reached or // if the scan for all the fields fails due 
@@ -1456,41 +1457,28 @@ int read_ld_line (FILE *fp, int ch, struct s_latency *ldp) {
 } // end of read_ld_line
 
 void read_sd (FILE *fp) {
-
     // allocate storate for service data log
     sd0 = (struct s_service *) malloc (sizeof (struct s_latency) * SD_BUFFER_SIZE); 
     sd1 = (struct s_service *) malloc (sizeof (struct s_latency) * SD_BUFFER_SIZE); 
     sd2 = (struct s_service *) malloc (sizeof (struct s_latency) * SD_BUFFER_SIZE); 
-
     if (sd0==NULL || sd1==NULL || sd2==NULL)
         FATAL("Could not allocate storage to read the service log file in an array%s\n", "")
-
-    int i; 
-    struct s_service *sdp;
-	int *len_sdp;
+    struct s_service *sd0p=sd0, *sd1p=sd1, *sd2p=sd2;
     
-    for (i=0; i<3; i++) {
+    printf ("Reading service log data file\n"); 
+    struct s_service sd, *sdp=&sd; 
+    while (read_sd_line (fp, sdp)) {
+        if (sdp->channel == 0)      {*sd0p = *sdp; len_sd0++; sd0p++;}
+        else if (sdp->channel == 1) {*sd1p = *sdp; len_sd1++; sd1p++;}
+        else if (sdp->channel == 2) {*sd2p = *sdp; len_sd2++; sd2p++;}
+        if (len_sd0==SD_BUFFER_SIZE || len_sd1==SD_BUFFER_SIZE || len_sd2==SD_BUFFER_SIZE)
+    	    FATAL ("Service data array is not large enough to read the log file. Increase SD_BUFFER_SIZE%S\n", "")
+    } // while there are more lines to be read
 
-        printf ("Reading service log data file for channel %d\n", i); 
-
-        sdp = i==0? sd0 : i==1? sd1 : sd2; 
-        len_sdp = i==0? &len_sd0 : i==1? &len_sd1 : &len_sd2; 
-        
-    	// read latency log file into array and sort it
-    	while (read_sd_line (fp, i, sdp)) {
-    		(*len_sdp)++;
-    		if (*len_sdp == SD_BUFFER_SIZE)
-    		    FATAL ("Service data array is not large enough to read the log file. Increase SD_BUFFER_SIZE%S\n", "")
-    		sdp++;
-    	} // while there are more lines to be read
+    // checks
+    if (len_sd0==0 && len_sd1==0 && len_sd2==0)
+    	FATAL("service log file is empty%s", "\n")
     
-    	if (*len_sdp == 0)
-    		FATAL("service log file is empty%s", "\n")
-    
-        fseek (fp, 0, SEEK_SET); 
-
-    } // for each channel
-
     return; 
 } // end of read_sd
 
@@ -1548,7 +1536,7 @@ void read_ld (FILE *fp) {
 } // read_ld
 
 // reads and parses a service log file. Returns 0 if end of file reached
-int read_sd_line (FILE *fp, int ch, struct s_service *sdp) {
+int read_sd_line (FILE *fp, struct s_service *sdp) {
 
     char sdline[MAX_LINE_SIZE], *sdlinep = sdline; 
     char dummy_str[100];
@@ -1562,15 +1550,13 @@ int read_sd_line (FILE *fp, int ch, struct s_service *sdp) {
 
     // parse the line
     int n; 
-    int channel;
     // CH: 1, change to out-of-service state, latency: 64, latencyTime: 1673815478924, estimated latency: 70, stop_sending flag: 1 , 
     // uplink queue size: 19, zeroUplinkQueue: 0, service flag: 0, numCHOut: 1, Time: 1673815478930, packetNum: 8
 
-    while (
-        ((n = sscanf (sdlinep, 
+    while ((n = sscanf (sdlinep, 
             "%[^:]:%d, %[^,], %[^:]:%d %[^:]:%lf %[^:]:%d %[^:]:%d \
             %[^:]:%d %[^:]:%d %[^:]:%d %[^:]:%d %[^:]:%lf %[^:]:%d" ,
-            dummy_str, &channel,
+            dummy_str, &sdp->channel,
             state_str,  
             dummy_str, &sdp->bp_t2r,
             dummy_str, &sdp->bp_t2r_epoch_ms, 
@@ -1582,27 +1568,20 @@ int read_sd_line (FILE *fp, int ch, struct s_service *sdp) {
             dummy_str, &dummy_int,
             dummy_str, &dummy_int,
             dummy_str, &sdp->state_transition_epoch_ms, 
-            dummy_str, &sdp->bp_packet_num)) !=23)
-        || channel !=ch // skip if not this channel
-        /*
-        // collect only going in service timestampls
-        || (strcmp(state_str, "change to out-of-service state") == 0)*/) {
+            dummy_str, &sdp->bp_packet_num)) !=23) {
 
-        if (n != 23) // did not successfully parse this line
-            FWARN(warn_fp, "read_sd_line: Skipping line %s\n", sdlinep);
+        FWARN(warn_fp, "read_sd_line: Skipping line %s\n", sdlinep);
 
-        // else did not match the channel
         if (fgets (sdline, MAX_LINE_SIZE, fp) == NULL)
             // reached end of the file
             return 0;
     } // while not successfully scanned a transmit log line
 
     if (strcmp(state_str, "change to out-of-service state") == 0)
-        sdp->state = 0;  // should not happen
+        sdp->state = 0;
     else if (strcmp(state_str, "change to in-service state") == 0)
         sdp->state = 1; 
-    else
-        FATAL ("read_sd_line: could not understand state change string: %s\n", state_str) 
+    else FATAL ("read_sd_line: could not understand state change string: %s\n", state_str) 
 
     return 1;
 } // end of read_sd_line
@@ -3843,8 +3822,8 @@ void read_md (FILE *fp) {
 
     // allocate storage
     md = (struct s_metadata *) malloc (sizeof (struct s_metadata) * MD_BUFFER_SIZE);
-    if (md == NULL)
-        FATAL ("read_md: could not allocate storage for md array%s\n", "")
+    if (md == NULL) FATAL ("read_md: could not allocate storage for md array%s\n", "")
+    struct s_metadata *mdp = md + 1; // first entry reserved for dummy lmdp entry
     
     // skip header
     char    mdline[MAX_LINE_SIZE], *mdlp = mdline; 
@@ -3855,77 +3834,76 @@ void read_md (FILE *fp) {
     double sum_of_frame_periods = 0.0, last_frame_epoch_ms = 0.0; 
     discarded_frame_count = 0;
     while (fgets (mdlp, MAX_LINE_SIZE, md_fp) != NULL) {
-        struct s_metadata *p = md + len_md++;
         // parse the line
         if (sscanf (mdlp, "%u, %lf, %lf, %u, %u, %u, %u, %u, %u, %lf, %u, %u", 
-            &p->packet_num, 
-            &p->vx_epoch_ms,
-            &p->rx_epoch_ms,
-            &p->video_packet_len,
-            &p->frame_start, 
-            &p->rolling_frame_number,
-            &p->frame_rate,
-            &p->frame_resolution,
-            &p->frame_end,
-            &p->camera_epoch_ms,
-            &p->retx, 
-            &p->ch) != NUM_OF_MD_FIELDS) {
+            &mdp->packet_num, 
+            &mdp->vx_epoch_ms,
+            &mdp->rx_epoch_ms,
+            &mdp->video_packet_len,
+            &mdp->frame_start, 
+            &mdp->rolling_frame_number,
+            &mdp->frame_rate,
+            &mdp->frame_resolution,
+            &mdp->frame_end,
+            &mdp->camera_epoch_ms,
+            &mdp->retx, 
+            &mdp->ch) != NUM_OF_MD_FIELDS) {
             printf ("Insufficient number of fields in line: %s\n", mdlp);
             my_exit(1);
         } // scan did not succeed
 
         // successful scan
-        decode_sendtime (&p->vx_epoch_ms, &p->tx_epoch_ms, &p->socc);
-        if (p->camera_epoch_ms == 0) 
-            p->camera_epoch_ms = (p-1)->camera_epoch_ms; 
+        decode_sendtime (&mdp->vx_epoch_ms, &mdp->tx_epoch_ms, &mdp->socc);
+        if (mdp->camera_epoch_ms == 0) // this packet is part of the same frame, so inherit camera TS from previous line
+            mdp->camera_epoch_ms = (mdp-1)->camera_epoch_ms; 
         
         // frame period math
-        if (p->frame_start) {
-            double period = p->camera_epoch_ms - last_frame_epoch_ms;
+        if (mdp->frame_start) {
+            double period = mdp->camera_epoch_ms - last_frame_epoch_ms;
             if ((period < 40.0) && (period > 20.0)) { // count only reasonable frame periods 
                 sum_of_frame_periods += period; 
                 frame_count++; 
             }
             else discarded_frame_count++;
-            last_frame_epoch_ms = p->camera_epoch_ms; 
+            last_frame_epoch_ms = mdp->camera_epoch_ms; 
         } // if frame start packet
+        len_md++; mdp++; 
+        if (len_md >= MD_BUFFER_SIZE) FATAL ("read_md: packet count exceeded buffer size, increase MD_BUFFER_SIZE\n%s", ""); 
     } // while there are more lines to be read
 
     // compute frame period
-    if (frame_count !=0) {
-        frame_period = sum_of_frame_periods / frame_count; 
-        printf ("Frame period = %0.4fms. Computed over %d frames\n", frame_period, frame_count);
-    } else 
-        FATAL ("read_md: Could not compute frame_period%s\n", "")
+    if (frame_count ==0) FATAL ("read_md: Could not compute frame_period%s\n", "")
+    frame_period = sum_of_frame_periods / frame_count; 
+    printf ("Frame period = %0.4fms. Computed over %d frames\n", frame_period, frame_count);
         
     return;
 } // end of read_md
 
 // extracts tx_epoch_ms from the vx_epoch_ms embedded format
 void decode_sendtime (double *vx_epoch_ms, double *tx_epoch_ms, int *socc) {
-            double real_vx_epoch_ms;
-            unsigned tx_minus_vx; 
-            
-            // calculate tx-vx and modem occupancy
-            if (new_sendertime_format == 1) {
-                real_vx_epoch_ms = /* starts at bit 8 */ trunc (*vx_epoch_ms/256);
-                *socc = 31; // not available
-                tx_minus_vx =  /* lower 8 bits */ *vx_epoch_ms - real_vx_epoch_ms*256;
-            } // format 1:only tx-vx available
-            else if (new_sendertime_format == 2) {
-                real_vx_epoch_ms = /*starts at bit 9 */ trunc (*vx_epoch_ms/512);
-                *socc = /* bits 8:4 */ trunc ((*vx_epoch_ms - real_vx_epoch_ms*512)/16); 
-                tx_minus_vx =  /* bits 3:0 */ (*vx_epoch_ms - real_vx_epoch_ms*512) - (*socc *16); 
-            } // format 2: tx-vx and modem occ available
-            else {
-                *socc = 31; // not available
-                tx_minus_vx = 0; 
-            } // format 0: tx-vx and modem occ not available
-                
-            *tx_epoch_ms = real_vx_epoch_ms + tx_minus_vx; 
-            *vx_epoch_ms = real_vx_epoch_ms; 
+    double real_vx_epoch_ms;
+    unsigned tx_minus_vx; 
+    
+    // calculate tx-vx and modem occupancy
+    if (new_sendertime_format == 1) {
+        real_vx_epoch_ms = /* starts at bit 8 */ trunc (*vx_epoch_ms/256);
+        *socc = 31; // not available
+        tx_minus_vx =  /* lower 8 bits */ *vx_epoch_ms - real_vx_epoch_ms*256;
+    } // format 1:only tx-vx available
+    else if (new_sendertime_format == 2) {
+        real_vx_epoch_ms = /*starts at bit 9 */ trunc (*vx_epoch_ms/512);
+        *socc = /* bits 8:4 */ trunc ((*vx_epoch_ms - real_vx_epoch_ms*512)/16); 
+        tx_minus_vx =  /* bits 3:0 */ (*vx_epoch_ms - real_vx_epoch_ms*512) - (*socc *16); 
+    } // format 2: tx-vx and modem occ available
+    else {
+        *socc = 31; // not available
+        tx_minus_vx = 0; 
+    } // format 0: tx-vx and modem occ not available
+        
+    *tx_epoch_ms = real_vx_epoch_ms + tx_minus_vx; 
+    *vx_epoch_ms = real_vx_epoch_ms; 
 
-            return;
+    return;
 } // end of fix_vx_tx_epoch_ms
 
 // called after the last packet of the frame is received. Updates stats for the current frame
