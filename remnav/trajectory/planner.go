@@ -63,6 +63,9 @@ func (p PlannerParameters) tire(gWheel float64) float64 {
 // Limit tire angle rate of change (ω).
 // radians and seconds!!!
 func (p PlannerParameters) limitDtireDt(tireState, tireRequested, dt float64) float64 {
+	if p.DtireDtMax <= 0 {
+		return tireRequested
+	}
 	dtire := tireRequested - tireState
 	if dt == 0 && dtire != 0 {
 		log.Fatalf("dt == 0 but dtire = %v", dtire)
@@ -102,9 +105,7 @@ func Parameters(buf []byte) PlannerParameters {
 	if params.TireMax == 0 {
 		params.TireMax = math.Pi / 4
 	}
-	if params.DtireDtMax == 0 {
-		params.DtireDtMax = 0.25
-	}
+	// We need to tune DtireDtMax experimentally.
 
 	// Don't allow configuring this from JSON
 	if params.Interval != defaultInterval {
