@@ -15,6 +15,7 @@
 #define HZ_5    3
 #define RES_HD  0
 #define RES_SD  1
+#define FILE_TABLE_LEN 100
 #define CRITICAL_RUN_LENGTH 20
 #define CAPTURE_PERIOD_MINUTES 40
 #define MD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30*15)
@@ -63,12 +64,14 @@
 #define LD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
 #define SD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
 #define FD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30)
+#define QP_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30)
 #define IN_SERVICE 1
 #define OUT_OF_SERVICE 0
 
 struct s_file_table_entry {
     char rx_pre[500];           // receive side file name prefix
     char tx_pre[500];           // transmit side file name prefix
+    char qp_pre[500];           // encoder stat file name prefix
 };
 
 struct s_service {
@@ -84,6 +87,7 @@ struct s_service {
 };
 
 struct s_latency {
+    int rx_channel, tx_channel; // channel that transmitted and back propagated this pkt
     int packet_num;             // packet number
     int t2r_ms;                 // latency for it 
     double bp_epoch_ms;         // time bp info was received by the sendedr
@@ -503,6 +507,9 @@ void read_ld (FILE *);
 // reads service log file in sd array
 void read_sd (FILE *);
 
+// reads qp file in an array 
+void read_qp (FILE *);
+
 // reads transmit log file into td array 
 void read_td (FILE *);
 
@@ -546,7 +553,7 @@ void sort_ld_by_bp (struct s_latency *ldp, int len);
 
 // reads and parses a latency log file. Returns 0 if end of file reached
 // ch: 0, received a latency, numCHOut:0, packetNUm: 0, latency: 28, time: 1673813692132
-int read_ld_line (FILE *fp, int ch, struct s_latency *ldp);
+int read_ld_line (FILE *fp, struct s_latency *ldp);
 
 // reads and parses a service log file. Returns 0 if end of file reached
 int read_sd_line (FILE *fp, struct s_service *sdp);
@@ -579,6 +586,7 @@ char    avgq_pre[500], *avgq_prep = avgq_pre;   // rolling average queue size lo
 char    rx_pre[500], *rx_prep = rx_pre;         // receive side meta data prefix not including the .csv extension
 char    ld_pre[500], *ld_prep = ld_pre;         // latency file prefix 
 char    sd_pre[500], *sd_prep = sd_pre;         // service file prefix 
+char    qp_pre[500], *qp_prep = qp_pre;         // qp log prefix 
 char    gps_pre[500], *gps_prep = gps_pre;      // gos file prefix
 char    anno_pre[500], *anno_prep = anno_pre;   // annotation file prefix`service file prefix
 FILE    *md_fp = NULL;                          // meta data file name
@@ -594,10 +602,11 @@ FILE    *gps_fp = NULL;                         // gps data file
 FILE    *td_fp = NULL;                          // transmit log data file
 FILE    *ld_fp = NULL;                          // latency log data file
 FILE    *sd_fp = NULL;                          // service log data file
+FILE    *qp_fp = NULL;                          // qp log data file
 FILE    *brmd_fp = NULL;                        // bit-rate modulation data file pointer
 FILE    *avgqd_fp = NULL;                       // rolling average queue size data file pointer
 FILE    *warn_fp = NULL;                        // warning outputs go to this file
-FILE    *dbg_fp = NULL;                       // debug output file
+FILE    *dbg_fp = NULL;                         // debug output file
 char    annotation_file_name[500];              // annotation file name
 float   minimum_acceptable_bitrate = 0.5;       // used for stats generation only
 unsigned maximum_acceptable_c2rx_latency = 110; // frames considered late if the latency exceeds this 
@@ -609,6 +618,7 @@ int     have_carrier_metadata = 0;              // set to 1 if per carrier meta 
 int     have_tx_log = 0;                        // set to 1 if transmit log is available
 int     have_ld_log = 0;                        // set to 1 if latency log is available
 int     have_sd_log = 0;                        // set to 1 if service log is available
+int     have_qp_log = 0;                        // set to 1 if qp log is
 int     have_brm_log = 0;                       // 1 if bit-rate modulation log is available
 int     have_avgq_log = 0;                      // 1 if rolling average log is available
 int     new_sendertime_format = 2;              // set to 1 if using embedded sender time format
@@ -642,9 +652,10 @@ struct  s_latency *ls0=NULL, *ls1=NULL, *ls2=NULL;  // latency log data array so
 int     len_ld0=0, len_ld1=0, len_ld2=0;
 struct  s_service *sd0=NULL, *sd1=NULL, *sd2=NULL;  // serivce log data array sorted by state transition time
 int     len_sd0=0, len_sd1=0, len_sd2=0;
-struct  frame *fd = NULL;                           // frame array`
+int     *qpd=NULL, len_qpd=0;                    // qp log array
+struct  frame *fd = NULL;                       // frame array`
 int     len_fd; 
-struct  s_file_table_entry file_table[100];     // file list
+struct  s_file_table_entry file_table[FILE_TABLE_LEN];     // file list
 int     flist_idx = 0;                          // file list index
 int     have_file_list = 0;                     // no file list read yet
 
@@ -664,6 +675,13 @@ int main (int argc, char* argv[]) {
 
     int     short_arg_count = 0; 
 
+    int i; 
+    for (i=0; i < FILE_TABLE_LEN; i++) {
+        strcpy (file_table[i].qp_pre, ""); 
+        strcpy (file_table[i].rx_pre, ""); 
+        strcpy (file_table[i].tx_pre, ""); 
+    }
+
     //  read command line arguments
     while (*++argv != NULL) {
 
@@ -671,71 +689,63 @@ int main (int argc, char* argv[]) {
         if (strcmp (*argv, "-ipath") == MATCH) {
             strcpy (ipathp, *++argv); 
         }
-
         // output directory
         else if (strcmp (*argv, "-opath") == MATCH) {
             strcpy (opathp, *++argv); 
         }
-
         // transmit log file prefix
         else if (strcmp (*argv, "-tx_pre") == MATCH) {
             have_tx_log = 1;
             strcpy (tx_prep, *++argv); 
         }
-
         else if (strcmp (*argv, "-ld_pre") == MATCH) {
             strcpy (ld_prep, *++argv); 
             have_ld_log = 1; 
         }
-        
         else if (strcmp (*argv, "-sd_pre") == MATCH) {
             strcpy (sd_prep, *++argv); 
             have_sd_log = 1; 
         }
-        
+        else if (strcmp (*argv, "-qp_pre") == MATCH) {
+            strcpy (qp_prep, *++argv); 
+            have_qp_log = 1; 
+        }
         // bit-rate modulation logfile
         else if (strcmp (*argv, "-brm_pre") == MATCH) {
             have_brm_log = 1;
             strcpy (brm_prep, *++argv); 
         }
-
         // rollign average log file
         else if (strcmp (*argv, "-avgq_pre") == MATCH) {
             have_avgq_log = 1;
             strcpy (avgq_prep, *++argv); 
         }
-
         // per carrier meta data availabiliyt
         else if (strcmp (*argv, "-mdc") == MATCH) {
             have_carrier_metadata = 1; 
         }
-
         // gps data file
         else if (strcmp (*argv, "-gps") == MATCH) {
             have_gps_metadata = 1;
             strcpy (gps_prep, *++argv);
         }
-
         // annotation file
         else if (strcmp (*argv, "-a") == MATCH) {
             have_anno_metadata = 1;
             strcpy (anno_prep, *++argv);
         }
-
         // new sender time format
         else if (strcmp (*argv, "-ns1") == MATCH) {
             new_sendertime_format = 1; 
         }
-
         // new sender time format
         else if (strcmp (*argv, "-ns2") == MATCH) {
             new_sendertime_format = 2; 
-
+        } 
         // verbose
-        } else if (strcmp (*argv, "-v") == MATCH) {
+        else if (strcmp (*argv, "-v") == MATCH) {
             verbose = 1; 
         }
-
         // maximum_acceptable_c2rx_latency
         else if (strcmp (*argv, "-l") == MATCH) {
             if (sscanf (*++argv, "%u", &maximum_acceptable_c2rx_latency) != 1) {
@@ -744,7 +754,6 @@ int main (int argc, char* argv[]) {
                 my_exit (-1); 
             }
         }
-
         // minimum_acceptable_bitrate
         else if (strcmp (*argv, "-b") == MATCH) {
             if (sscanf (*++argv, "%f", &minimum_acceptable_bitrate) != 1) {
@@ -753,7 +762,6 @@ int main (int argc, char* argv[]) {
                 my_exit (-1); 
             }
         }
-        
         // fast frame definition
         else if (strcmp (*argv, "-ff") == MATCH) {
             if (sscanf (*++argv, "%d", &fast_frame_t2r) != 1) {
@@ -762,7 +770,6 @@ int main (int argc, char* argv[]) {
                 my_exit (-1); 
             }
         }
-        
         // frame size modulation latency
         else if (strcmp (*argv, "-ml") == MATCH) {
             if (sscanf (*++argv, "%d", &frame_size_modulation_latency) != 1) {
@@ -771,7 +778,6 @@ int main (int argc, char* argv[]) {
                 my_exit (-1); 
             }
         }
-        
         // frame size modulation threshold
         else if (strcmp (*argv, "-mt") == MATCH) {
             if (sscanf (*++argv, "%d", &frame_size_modulation_threshold) != 1) {
@@ -780,7 +786,6 @@ int main (int argc, char* argv[]) {
                 my_exit (-1); 
             }
         }
-        
         // fast channel definition
         else if (strcmp (*argv, "-fc") == MATCH) {
             if (sscanf (*++argv, "%d", &fast_channel_t2r) != 1) {
@@ -789,7 +794,6 @@ int main (int argc, char* argv[]) {
                 my_exit (-1); 
             }
         }
-        
         // rx arrival jitter buffer
         else if (strcmp (*argv, "-j") == MATCH) {
             if (sscanf (*++argv, "%d", &rx_jitter_buffer_ms) != 1) {
@@ -798,28 +802,30 @@ int main (int argc, char* argv[]) {
                 my_exit (-1); 
             }
         }
-
         // help/usage
         else if (strcmp (*argv, "--help")==MATCH || strcmp (*argv, "-help")==MATCH) {
             print_usage (); 
             my_exit (0); 
         }
-
         // receive dedup meta data file prefix
         else if (strcmp (*argv, "-rx_pre") == MATCH) {
             strcpy (rx_prep, *++argv);
         }
-
-        // receive dedup meta data file prefix (MUST BE BEFORE -stx)
+        // receive dedup meta data file prefix
         else if (strcmp (*argv, "-srx_pre") == MATCH) {
             strcpy (file_table[flist_idx].rx_pre, *++argv); 
             short_arg_count++; 
             have_file_list = 1; 
         }
-        // short tx prefix (MUST BE AFTER -srx)
+        // short tx prefix
         else if (strcmp (*argv, "-stx_pre") == MATCH) {
             strcpy (file_table[flist_idx].tx_pre, *++argv); 
             short_arg_count++; 
+            have_file_list = 1; 
+        }
+        // short qp prefix IF SPECIFIED, MUST PRECEED -stx/srx
+        else if (strcmp (*argv, "-sqp_pre") == MATCH) {
+            strcpy (file_table[flist_idx].qp_pre, *++argv); 
             have_file_list = 1; 
         }
         // read file names and ipath from file
@@ -828,7 +834,6 @@ int main (int argc, char* argv[]) {
             if ((input_fp = open_file (*++argv, "r")) != NULL)
                 read_worklist (input_fp);
         }
-
         // invalid argument
         else {
             printf ("Invalid argument %s\n", *argv);
@@ -836,10 +841,13 @@ int main (int argc, char* argv[]) {
             my_exit (-1); 
         }
 
-        if (short_arg_count == 2) { // both -srx and -stx args recad
+        if (short_arg_count == 2) { // all 3 -srx and -stx args read
             flist_idx++;
+            if (flist_idx == FILE_TABLE_LEN)
+                FATAL ("main: file list exceeds table size, increase FILE_TABLE_LEN%s\n", "")
             short_arg_count = 0; 
-        }
+        } 
+
     } // while there are more arguments to process
 
     // open capture stats file
@@ -852,20 +860,25 @@ int main (int argc, char* argv[]) {
 
 PROCESS_NEXT_FILE: 
     rx_prep = file_table[flist_idx].rx_pre; 
+    qp_prep = file_table[flist_idx].qp_pre; 
     sprintf (tx_prep, "%s_%s", "uplink_queue", file_table[flist_idx].tx_pre); 
     sprintf (ld_prep, "%s_%s", "latency", file_table[flist_idx].tx_pre); 
     sprintf (sd_prep, "%s_%s", "service", file_table[flist_idx].tx_pre); 
     sprintf (brm_prep, "%s_%s", "bitrate", file_table[flist_idx].tx_pre); 
     sprintf (avgq_prep, "%s_%s", "avgQ", file_table[flist_idx].tx_pre); 
+
     have_tx_log = have_ld_log = have_sd_log = have_brm_log = 1;
+    have_qp_log = strlen (qp_prep) != 0;
     have_avgq_log = 0;
 
     printf ("rx_prep: %s\n", rx_prep); 
     printf ("tx_prep: %s\n", tx_prep); 
     printf ("ld_prep: %s\n", ld_prep); 
     printf ("sd_prep: %s\n", sd_prep); 
+    printf ("qp_prep: %s\n", qp_prep); 
     printf ("brm_prep: %s\n", brm_prep); 
     printf ("avgq_prep: %s\n", avgq_prep); 
+
 
 SKIP_FILE_LIST: 
     start = clock();
@@ -878,6 +891,7 @@ SKIP_FILE_LIST:
 	len_avgqd0=0, len_avgqd1=0, len_avgqd2=0;        
 	len_ld0=0, len_ld1=0, len_ld2=0;
 	len_sd0=0, len_sd1=0, len_sd2=0;
+    len_qpd=0;
 
     // open remaining input and output files
 
@@ -896,6 +910,14 @@ SKIP_FILE_LIST:
     if (debug)
         sprintf (bp, "%sdebug_%s_vqfilter.txt", opath, rx_prep);
         dbg_fp = open_file (bp, "w");
+
+    // qp log file
+    if (have_qp_log) {
+         sprintf (bp, "%s%s.log", ipathp, qp_prep); 
+        if ((qp_fp = open_file (bp, "r")) != NULL) {
+            read_qp(qp_fp);
+        }
+    }
 
     // gps data file
     if (have_gps_metadata) {
@@ -935,14 +957,6 @@ SKIP_FILE_LIST:
         }
     }
 
-    // latency log file
-    if (have_ld_log) {
-         sprintf (bp, "%s%s.log", ipathp, ld_prep); 
-        if ((ld_fp = open_file (bp, "r")) != NULL) {
-            read_ld(ld_fp);
-        }
-    }
-
     // service log file
     if (have_sd_log) {
          sprintf (bp, "%s%s.log", ipathp, sd_prep); 
@@ -962,6 +976,14 @@ SKIP_FILE_LIST:
         sprintf (bp, "%s%s", ipathp, rx_prep); 
         read_cd (bp); 
     } // per carrier meta data files
+
+    // latency log file
+    if (have_ld_log) {
+         sprintf (bp, "%s%s.log", ipathp, ld_prep); 
+        if ((ld_fp = open_file (bp, "r")) != NULL) {
+            read_ld(ld_fp);
+        }
+    }
 
     // check if any missing arguments
     if (md_fp==NULL || fs_fp==NULL || ss_fp==NULL || ps_fp==NULL) {
@@ -1226,6 +1248,12 @@ void read_worklist (FILE *fp) {
             strcpy (file_table[flist_idx].tx_pre, tokenp); 
             stx_defined = 1;
         } 
+        else if (strcmp (tokenp, "-sqp_pre") == MATCH) {
+            get_token (linep, '"', tokenp); // file name
+            if (strlen (tokenp) == 0)
+                FATAL ("read_worklist: Missing file name argument in line: %s", line)
+            strcpy (file_table[flist_idx].qp_pre, tokenp); 
+        } 
         else if (strcmp (tokenp, "-ipath") == MATCH) {
             get_token (linep, '"', tokenp); // path name
             if (strlen (tokenp) == 0)
@@ -1243,6 +1271,8 @@ void read_worklist (FILE *fp) {
             
         if (stx_defined && srx_defined) {
                 flist_idx++;
+                if (flist_idx == FILE_TABLE_LEN)
+                    FATAL ("main: file list exceeds table size, increase FILE_TABLE_LEN%s\n", "")
                 srx_defined = 0; 
                 stx_defined = 0;
         }
@@ -1369,23 +1399,30 @@ struct s_latency *find_closest_lsp (double epoch_ms, struct s_latency *lsp, int 
 // sorts latency data array by packet number
 void sort_ld_by_packet_num (struct s_latency *ldp, int len) {
 
-    int i, j; 
+    int i, j, s, sc=0; 
 
     for (i=1; i<len; i++) {
-        j = i; 
+        j = i; s = 0; 
         while (j != 0) {
             if ((ldp+j)->packet_num < (ldp+j-1)->packet_num) {
                 // slide jth element up by 1
                 struct s_latency temp = *(ldp+j-1); 
                 *(ldp+j-1) = *(ldp+j);
                 *(ldp+j) = temp; 
+                s++;
             } // if slide up
             else 
                 // done sliding up
                 break;
             j--;
         } // end of while jth elment is smaller than one above it
-
+        /*
+        if (s > 10) {
+            printf ("packet %d: %d\n", (ldp+j)->packet_num, s);
+            if (++sc > 10)
+                exit (0);
+        }
+        */
     } // for elements in the log data array
 
     return;
@@ -1419,7 +1456,7 @@ void sort_ld_by_bp_epoch_ms (struct s_latency *ldp, int len) {
 // reads and parses a latency log file. Returns 0 if end of file reached
 // ch: 1, received a latency, numCHOut:1, packetNum: 48851, latency: 28, time: 1681255250906, sent from ch: 0
 // ch: 1, received a latency, numCHOut:0, packetNum: 4294967295, latency: 14, time: 1681255230028, sent from ch: 1
-int read_ld_line (FILE *fp, int ch, struct s_latency *ldp) {
+int read_ld_line (FILE *fp, struct s_latency *ldp) {
     char ldline[MAX_LINE_SIZE], *ldlinep = ldline; 
     char dummy_str[100];
     int  dummy_int; 
@@ -1430,19 +1467,18 @@ int read_ld_line (FILE *fp, int ch, struct s_latency *ldp) {
 
     // parse the line
     int n; 
-    int rx_channel, tx_channel;
-
     while (
         ((n = sscanf (ldlinep, 
             "%[^:]:%d, %[^:]:%d %[^:]:%d %[^:]:%d %[^:]:%lf %[^:]:%d",
-            dummy_str, &rx_channel,
+            dummy_str, &ldp->rx_channel,
             dummy_str, &dummy_int,
             dummy_str, &ldp->packet_num, 
             dummy_str, &ldp->t2r_ms, 
             dummy_str, &ldp->bp_epoch_ms,
-            dummy_str, &tx_channel)) !=12)
-        || (rx_channel !=ch) 
-        || (tx_channel !=ch)) {
+            dummy_str, &ldp->tx_channel)) !=12)
+        || (ldp->rx_channel != ldp->tx_channel)
+        || (ldp->packet_num == 4294967295) // skip probe packets
+        || (ldp->packet_num == 2147483647)) { // skip probe packets
 
         if (n != 12) // did not successfully parse this line
             FWARN(warn_fp, "read_ld_line: Skipping line %s\n", ldlinep)
@@ -1474,10 +1510,52 @@ void read_sd (FILE *fp) {
         if (len_sd0==SD_BUFFER_SIZE || len_sd1==SD_BUFFER_SIZE || len_sd2==SD_BUFFER_SIZE)
     	    FATAL ("Service data array is not large enough to read the log file. Increase SD_BUFFER_SIZE%S\n", "")
     } // while there are more lines to be read
+    if (len_sd0==0 && len_sd1==0 && len_sd2==0) FATAL("service log file is empty%s", "\n")
+    
+    return; 
+} // end of read_sd
+
+// reads qp log file in an array
+// CH0-EN [INFO ][1688585482.859] Loop enter on frame 5
+// "CH0-EN [INFO ][1688585482.894] 5th frame crf: 50 next crf: 50
+
+void read_qp (FILE *fp) {
+    // allocate storate for service data log
+    qpd = (int *) malloc (sizeof (int) * QP_BUFFER_SIZE); 
+    if (qpd==NULL) FATAL("read_qpCould not allocate storage to read the qp log file in an array%s\n", "")
+    int *qpp = qpd; 
+    
+    printf ("Reading qp log file\n"); 
+    char qpline [MAX_LINE_SIZE], *qplinep = qpline; 
+    char d[50], frame_num_str[50]; // dummy
+    int n, last_crf, crf, next_crf, last_frame_num, frame_num; 
+    last_crf = 0; last_frame_num = -1; 
+    while (fgets (qpline, MAX_LINE_SIZE, fp) != NULL) {
+        if ((n = sscanf (qpline, "%s %s %s %s %s %s %d %s %s %d", 
+            d, d, d, frame_num_str, d, d, &crf, d, d, &next_crf)) != 10)
+            continue; 
+
+        // extract frame number
+        if ((n = sscanf (frame_num_str, "%d", &frame_num)) != 1) {
+            WARN ("read_qp: could not find frame number in line %s\n", qpline)
+            continue; 
+        }
+        // check for jump in frame numbers
+        if (frame_num != last_frame_num+1) 
+            // fill in missing frames with the last known crf value
+            while (last_frame_num < frame_num) {
+                *qpp++ = last_crf; 
+                last_frame_num++;
+            } // while there are missing frames
+        
+        *qpp++ = crf; 
+        if (++len_qpd == QP_BUFFER_SIZE) FATAL ("read_qp: qp array is not loarge enough. Increase QP_BUFFER_SIZE%s\n","")
+        last_frame_num = frame_num;
+        last_crf = crf;
+    } // while there are more lines in the file
 
     // checks
-    if (len_sd0==0 && len_sd1==0 && len_sd2==0)
-    	FATAL("service log file is empty%s", "\n")
+    if (len_qpd == 0) FATAL("read_qp: qp log file is empty%s", "\n")
     
     return; 
 } // end of read_sd
@@ -1489,48 +1567,43 @@ void read_ld (FILE *fp) {
     ld0 = (struct s_latency *) malloc (sizeof (struct s_latency) * LD_BUFFER_SIZE);
     ld1 = (struct s_latency *) malloc (sizeof (struct s_latency) * LD_BUFFER_SIZE);
     ld2 = (struct s_latency *) malloc (sizeof (struct s_latency) * LD_BUFFER_SIZE);
+    if (ld0==NULL || ld1==NULL || ld2==NULL)
+        FATAL("Could not allocate storage to read the latency log file in an array%s\n", "")
+    struct s_latency *ld0p=ld0, *ld1p=ld1, *ld2p=ld2;
     
     // allocate storage for latency log data sorted by bp_epoch_ms
     ls0 = (struct s_latency *) malloc (sizeof (struct s_latency) * LD_BUFFER_SIZE);
     ls1 = (struct s_latency *) malloc (sizeof (struct s_latency) * LD_BUFFER_SIZE);
     ls2 = (struct s_latency *) malloc (sizeof (struct s_latency) * LD_BUFFER_SIZE);
-    
-    if (ld0==NULL || ld1==NULL || ld2==NULL)
+    if (ls0==NULL || ls1==NULL || ls2==NULL)
         FATAL("Could not allocate storage to read the latency log file in an array%s\n", "")
+    struct s_latency *ls0p=ls0, *ls1p=ls1, *ls2p=ls2;
 
-    int i; 
-     struct s_latency *ldp, *lsp;
-	int *len_ldp;
+    printf ("Reading bp latency data file\n"); 
+    float start = clock();
+    struct s_latency ld, *ldp=&ld, ls, *lsp=&ls;
+	while (read_ld_line (fp, ldp)) {
+        if (ldp->rx_channel == 0) {*ld0p = *ls0p = *ldp; len_ld0++; ld0p++; ls0p++;}
+        else if (ldp->rx_channel == 1) {*ld1p = *ls1p = *ldp; len_ld1++; ld1p++; ls1p++;}
+        else if (ldp->rx_channel == 2) {*ld2p = *ls2p = *ldp; len_ld2++; ld2p++; ls2p++;}
+		if (len_ld0==LD_BUFFER_SIZE || len_ld1==LD_BUFFER_SIZE || len_ld2==LD_BUFFER_SIZE)
+		    FATAL ("Latency data array is not large enough to read the log file. Increase LD_BUFFER_SIZE%S\n", "")
+	} // while there are more lines to be read
+    if (len_ld0==0 && len_ld1==0 && len_ld2==0) FATAL("latency data log file is empty%s", "\n")
+    float end = clock();
+    float execution_time = ((double)(end - start))/CLOCKS_PER_SEC;
+    printf ("finished  reading latency file. execution time = %0.1fs\n", execution_time); 
+    
+    // sort 
+    int i;
     for (i=0; i<3; i++) {
-
-        printf ("Reading bp latency data file for channel %d\n", i); 
-
+        int len_ld = i==0? len_ld0 : i==1? len_ld1 : len_ld2; 
         ldp = i==0? ld0 : i==1? ld1 : ld2; 
-        lsp = i==0? ls0 : i==1? ls1 : ls2; 
-        len_ldp = i==0? &len_ld0 : i==1? &len_ld1 : &len_ld2; 
-        
-    	// read latency log file into array and sort it
-    	while (read_ld_line (fp, i, ldp)) {
-    		(*len_ldp)++;
-    		if (*len_ldp == LD_BUFFER_SIZE)
-    		    FATAL ("Latency data array is not large enough to read the log file. Increase LD_BUFFER_SIZE%S\n", "")
-            *lsp = *ldp;
-    		lsp++; ldp++;
-    	} // while there are more lines to be read
-    
-    	if (*len_ldp == 0)
-    		FATAL("latency data log file is empty%s", "\n")
-    
-        // sort 
-        ldp = i==0? ld0 : i==1? ld1 : ld2; 
-        sort_ld_by_packet_num (ldp, *len_ldp); 
+        sort_ld_by_packet_num (ldp, len_ld); 
 
         lsp = i==0? ls0 : i==1? ls1 : ls2; 
-        sort_ld_by_bp_epoch_ms (lsp, *len_ldp);
-
-        fseek (fp, 0, SEEK_SET); 
-
-     } // for each channel
+        sort_ld_by_bp_epoch_ms (lsp, len_ld);
+    }
 
     return; 
 } // read_ld
@@ -1662,6 +1735,7 @@ void my_free () {
     if (sd1 != NULL) free (sd1); sd1 = NULL;
     if (sd2 != NULL) free (sd2); sd2 = NULL;
 
+    if (qpd != NULL) free (qpd); qpd = NULL; 
     if (ld0 != NULL) free (ld0); ld0 = NULL;
     if (ld1 != NULL) free (ld1); ld1 = NULL;
     if (ld2 != NULL) free (ld2); ld2 = NULL;
@@ -1688,13 +1762,14 @@ void my_free () {
 	if (td_fp) fclose (td_fp); 
 	if (ld_fp) fclose (ld_fp); 
 	if (sd_fp) fclose (sd_fp); 
+	if (qp_fp) fclose (qp_fp); 
 	if (brmd_fp) fclose (brmd_fp); 
 	if (avgqd_fp) fclose (avgqd_fp); 
 	if (warn_fp) fclose (warn_fp); 
     if (dbg_fp) fclose (dbg_fp); 
 
 	md_fp = an_fp = fs_fp = ss_fp = ps_fp = c0_fp = c1_fp = c2_fp = 
-	gps_fp = td_fp = ld_fp = sd_fp = brmd_fp = avgqd_fp = warn_fp = 
+	gps_fp = td_fp = ld_fp = sd_fp = qp_fp = brmd_fp = avgqd_fp = warn_fp = 
     dbg_fp =  NULL; 
 
     return; 
@@ -1946,7 +2021,7 @@ void read_avgqd (FILE *fp) {
 } // read_avgqdp
 
 // reads transmit log file into 3 td arrays Returns 0 if end of file reached
-int read_td_line (FILE *fp, int ch, struct s_txlog *tdp) {
+int read_td_line (FILE *fp, struct s_txlog *tdp) {
 
     char tdline[MAX_LINE_SIZE], *tdlinep = tdline; 
     char dummy_string[100];
@@ -1970,15 +2045,11 @@ int read_td_line (FILE *fp, int ch, struct s_txlog *tdp) {
         dummy_string,
         &tdp->time_since_last_update,
         dummy_string,
-        &tdp->actual_rate)) !=11) || (tdp->channel !=ch)) {
-
-        if (n != 11) // did not successfully parse this line
-            FWARN(warn_fp, "read_td_line: Skipping line %s\n", tdlinep)
-
+        &tdp->actual_rate)) !=11) ) {
+        FWARN(warn_fp, "read_td_line: Skipping line %s\n", tdlinep)
         if (fgets (tdline, MAX_LINE_SIZE, fp) == NULL)
             // reached end of the file
             return 0;
-
     } // while not successfully scanned a transmit log line
 
     return 1;
@@ -2015,37 +2086,28 @@ void read_td (FILE *fp) {
     td0 = (struct s_txlog *) malloc (sizeof (struct s_txlog) * TX_BUFFER_SIZE);
     td1 = (struct s_txlog *) malloc (sizeof (struct s_txlog) * TX_BUFFER_SIZE);
     td2 = (struct s_txlog *) malloc (sizeof (struct s_txlog) * TX_BUFFER_SIZE);
-
     if (td0==NULL || td1==NULL || td2==NULL)
         FATAL("Could not allocate storage to read the tx log file in an array%s\n", "")
+    struct s_txlog *td0p=td0, *td1p=td1, *td2p=td2;
+ 
+    printf ("Reading uplink log data file\n"); 
+    struct s_txlog td, *tdp=&td; 
+    while (read_td_line (fp, tdp)) {
+        if (tdp->channel == 0)      {*td0p = *tdp; len_td0++; td0p++;}
+        else if (tdp->channel == 1) {*td1p = *tdp; len_td1++; td1p++;}
+        else if (tdp->channel == 2) {*td2p = *tdp; len_td2++; td2p++;}
+        if (len_td0==TX_BUFFER_SIZE || len_td1==TX_BUFFER_SIZE || len_td2==TX_BUFFER_SIZE)
+    	    FATAL ("read_td: uplink array not large enough. Increase TX_BUFFER_SIZE%s\n", "")
+    } // while there are more lines to be read
+    if (len_td0==0 && len_td1==0 && len_td2==0) FATAL("read_td: uplink log file is empty%s", "\n")
 
+	// sort by timestamp
     int i; 
     for (i=0; i<3; i++) {
-        struct s_txlog *tdp; 
-	    int *len_td;
-
+        int len_td = i==0? len_td0 : i==1? len_td1 : len_td2; 
         tdp = i==0? td0 : i==1? td1 : td2; 
-        len_td = i==0? &len_td0 : i==1? &len_td1 : &len_td2; 
-
-		// read tx log file into array and sort it
-        printf ("Reading uplink queue size file for channel %d\n", i);
-		while (read_td_line (fp, i, tdp)) {
-		    (*len_td)++;
-		    if (*len_td == TX_BUFFER_SIZE)
-		        FATAL ("TX data array is not large enough to read the tx log file. Increase TX_BUFFER_SIZE%S\n", "")
-		    tdp++;
-		} // while there are more lines to be read
-
-		// if (*len_td == 0)
-		   // FATAL("Meta data file is empty%s", "\n")
-
-		// sort by timestamp
-        tdp = i==0? td0 : i==1? td1 : td2; 
-        sort_td (tdp, *len_td); 
-
-        // reset the file pointer to the start of the file for the next channel
-        fseek (fp, 0, SEEK_SET);
-    } // for each carrier
+        sort_td (tdp, len_td); 
+    }
 
     return;
 } // read_td
@@ -2503,6 +2565,8 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "SzP, ");
     fprintf (fp, "c2d, ");
     fprintf (fp, "estate, ");
+    fprintf (fp, "chpq, ");
+    fprintf (fp, "crf, ");
     fprintf (fp, "EMbps,");
     // fprintf (fp, "DMbps, ");
     fprintf (fp, "Lat, ");
@@ -2567,7 +2631,9 @@ void emit_packet_header (FILE *ps_fp) {
 	// fprintf (ps_fp, "skp, ");
 	fprintf (ps_fp, "c2d, ");
     fprintf (ps_fp, "est,");
+    fprintf (ps_fp, "crf,");
     fprintf (ps_fp, "EMbps,");
+    fprintf (ps_fp, "chpq, ");
 
     // Delivered packet meta data
     fprintf (ps_fp, "retx, ");
@@ -2635,11 +2701,15 @@ void init_packet_stats (
 
 void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *mdp, struct s_brmdata *brmdp) {
 
-        // Frame metadata for reference (repeated for every packet)
-        fprintf (ps_fp, "%u, ", fp->frame_count);
-        fprintf (ps_fp, "%u, ", mdp->packet_num);
+    int i, chpq=0; 
+    for (i=0; i<3; i++)
+        chpq += fp->brmdp->channel_quality_state[i]==1 || fp->brmdp->channel_quality_state[i]==2;
+
+    // Frame metadata for reference (repeated for every packet)
+    fprintf (ps_fp, "%u, ", fp->frame_count);
+    fprintf (ps_fp, "%u, ", mdp->packet_num);
 	    if (fp->latest_packet_num == mdp->packet_num) fprintf (ps_fp, "%u, ", fp->latest_packet_num); else fprintf (ps_fp, ", "); 
-        // fprintf (ps_fp, "%u, ", fp->late);
+    // fprintf (ps_fp, "%u, ", fp->late);
 	    // fprintf (ps_fp, "%u, ", fp->missing);
 	    fprintf (ps_fp, "%u, ", fp->packet_count);          // SzP
 	    fprintf (ps_fp, "%u, ", mdp->video_packet_len);     // SzB
@@ -2649,20 +2719,24 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
 	    // fprintf (ps_fp, "%d, ", fp->repeat_count);
 	    // fprintf (ps_fp, "%u, ", fp->skip_count);
 	    fprintf (ps_fp, "%.1f, ", fp->c2d_frames);
-        if (len_brmd) fprintf (ps_fp, "%d,", brmdp->encoder_state); else fprintf (ps_fp, ",");
-        fprintf (ps_fp, "%.1f,", fp->EMbps); // EMbps
+    fprintf (ps_fp, "%d,", brmdp->encoder_state);
+    fprintf (ps_fp, "%d, ", chpq);
+    if (have_qp_log && (fp->frame_count <= len_qpd)) 
+        fprintf (ps_fp, "%d,", qpd[fp->frame_count-1]); // -1 because frame 1 is store in entry 0
+    else fprintf (ps_fp, ",");
+    fprintf (ps_fp, "%.1f,", fp->EMbps); // EMbps
 
-        // Delivered packet meta data
-        fprintf (ps_fp, "%u, ", mdp->retx);
-        fprintf (ps_fp, "%u, ", mdp->ch);
-        // if (mdp->kbps > 0) fprintf (ps_fp, "%.1f, ", ((float) mdp->kbps)/1000); else fprintf (ps_fp, ","); 
-        fprintf (ps_fp, "%.0lf, ", fp->camera_epoch_ms);
-        fprintf (ps_fp, "%.0lf, ", mdp->tx_epoch_ms);
-        fprintf (ps_fp, "%.0lf, ", mdp->rx_epoch_ms);
-        fprintf (ps_fp, "%.1f, ", mdp->rx_epoch_ms - fp->camera_epoch_ms);
-        fprintf (ps_fp, "%.1f, ", mdp->rx_epoch_ms - mdp->tx_epoch_ms);
+    // Delivered packet meta data
+    fprintf (ps_fp, "%u, ", mdp->retx);
+    fprintf (ps_fp, "%u, ", mdp->ch);
+    // if (mdp->kbps > 0) fprintf (ps_fp, "%.1f, ", ((float) mdp->kbps)/1000); else fprintf (ps_fp, ","); 
+    fprintf (ps_fp, "%.0lf, ", fp->camera_epoch_ms);
+    fprintf (ps_fp, "%.0lf, ", mdp->tx_epoch_ms);
+    fprintf (ps_fp, "%.0lf, ", mdp->rx_epoch_ms);
+    fprintf (ps_fp, "%.1f, ", mdp->rx_epoch_ms - fp->camera_epoch_ms);
+    fprintf (ps_fp, "%.1f, ", mdp->rx_epoch_ms - mdp->tx_epoch_ms);
 
-        return;
+    return;
 } // emit_frame_stats_for_per_packet_file
 
 // tracks length in packets before a resuming channel goes out of service again
@@ -3120,6 +3194,9 @@ void emit_per_packet_analytics (
 void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1 for the last frame of the session 
 
     static int fast_to_slow_edge_count = 0, slow_to_fast_edge_count = 0; 
+    int i, chpq=0; 
+    for (i=0; i<3; i++)
+        chpq += p->brmdp->channel_quality_state[i]==1 || p->brmdp->channel_quality_state[i]==2;
 
     if ((p->frame_count % 1000) == 0)
         printf ("at frame %d\n", p->frame_count); 
@@ -3135,6 +3212,10 @@ void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1
     fprintf (fs_fp, "%u, ", p->packet_count);
     fprintf (fs_fp, "%.1f, ", p->c2d_frames);
     fprintf (fs_fp, "%d, ", p->brmdp->encoder_state);
+    fprintf (fs_fp, "%d, ", chpq);
+    if (have_qp_log && (p->frame_count <= len_qpd)) 
+         fprintf (fs_fp, "%d,", qpd[p->frame_count-1]); // -1 because frame 1 is store in entry 0
+    else fprintf (fs_fp, ",");
     fprintf (fs_fp, "%.1f,", p->EMbps); 
     // fprintf (fs_fp, "%.1f, ", p->DMbps);
     fprintf (fs_fp, "%lf, ", p->coord.lat);
