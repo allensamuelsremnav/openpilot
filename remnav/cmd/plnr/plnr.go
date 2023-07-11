@@ -176,12 +176,12 @@ func main() {
 
 	tpvPort_ := flag.Int("tpv_port",
 		rnnet.OperatorGpsdTrajectory,
-		"receive TPV messages from this local port (gpsdlisten)")
-	vidPID := flag.String("vidpid", "046d:c262", "colon-separated g920 hex vid and pid")
+		"receive TPV messages from this local port (gpsdlisten). use 0 for mock.")
+	vidPID := flag.String("vidpid", "046d:c262", "colon-separated g920 hex vid and pid. use 0:0 for mock.")
 
 	vehiclePort := flag.Int("vehicle_port",
 		rnnet.OperatorTrajectoryListen,
-		"send trajectory requests and received applied messages using bidi")
+		"send trajectory requests and received applied messages using bidi. use 0 for mock.")
 	bufSize := flag.Int("bufsize",
 		4096,
 		"buffer size for network packets")
