@@ -9,7 +9,7 @@ Run these commands in this order in separate Powershell windows.
 3. `AppDecD3d.exe`
 4. `d:/video_decoder/utils/udp_sender/runit.bat`
 
-# `plnr` inputs and outputs.
+# Inputs and outputs.
 
 * g920 (input).  Read reports using the HID interface identified by a
   pair of integers `vid:pid`.
