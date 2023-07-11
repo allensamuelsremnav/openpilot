@@ -7,8 +7,8 @@ Run these commands in this order in separate Powershell windows.
 1. `d:/remnav_bin/gpsdlisten.exe`
 2. `d:/remnav_bin/plnr.exe`
 3. `AppDecD3d.exe`
-4. `d:/video_decoder/utils/udp_sender/runit.bat` if live data are not
-   available.
+4. `d:/video_decoder/utils/udp_sender/runit.bat` if live video data
+   are not available.
 
 # Inputs and outputs.
 
