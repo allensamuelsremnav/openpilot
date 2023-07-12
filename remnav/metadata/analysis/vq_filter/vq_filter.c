@@ -1,3 +1,4 @@
+// TODO: NEED TO SORT GPS INDEX BY TIME OR READ THEM IN IN TIME ORDER
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -18,6 +19,7 @@
 #define FILE_TABLE_LEN 100
 #define CRITICAL_RUN_LENGTH 20
 #define CAPTURE_PERIOD_MINUTES 40
+#define GPS_CAPTURE_PERIOD_MINUTES (CAPTURE_PERIOD_MINUTES * 6)
 #define MD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30*15)
 #define MAX_LINE_SIZE    1000 
 #define MAX_SD_LINE_SIZE 1000
@@ -56,7 +58,7 @@
 // #define FRAME_PERIOD_MS 33.34067086
 // #define FRAME_PERIOD_MS 33.34067086
 // #define FRAME_PERIOD_MS 33.36631016
-#define GPS_BUFFER_SIZE	(CAPTURE_PERIOD_MINUTES*60*2)
+#define GPS_BUFFER_SIZE	(GPS_CAPTURE_PERIOD_MINUTES*60*2)
 #define TX_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
 #define CD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
 #define BRM_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*100*3)
@@ -67,6 +69,11 @@
 #define QP_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30)
 #define IN_SERVICE 1
 #define OUT_OF_SERVICE 0
+
+struct s_qp {
+    int crf;                    // qp value
+    int next_crf;               // filter strength
+};
 
 struct s_file_table_entry {
     char rx_pre[500];           // receive side file name prefix
@@ -195,7 +202,7 @@ struct frame {
     int         fast_channel_count;         // number of packets in the frame that had a fast channel available
 
 	struct s_coord	coord;					// interpolated coordinates based on gps file
-	float			speed; 					// interpolated speed of this frame
+	float			speed; 					// interpolated speed (m/s) of this frame
 
     struct s_brmdata *brmdp;                // bit-rate modulation for this frame
 
@@ -337,7 +344,7 @@ struct s_gps {
 	double 			epoch_ms; 					// time stamp
 	int 			mode;						// quality indicator
 	struct s_coord	coord; 						// lon, lat of the gps point (at 1Hz)
-	float			speed; 						// vehicle speed 
+	float			speed; 						// vehicle speed in m/s 
 	int				count; 						// number of frames that mapped into this gps coord
 }; 
 
@@ -652,7 +659,8 @@ struct  s_latency *ls0=NULL, *ls1=NULL, *ls2=NULL;  // latency log data array so
 int     len_ld0=0, len_ld1=0, len_ld2=0;
 struct  s_service *sd0=NULL, *sd1=NULL, *sd2=NULL;  // serivce log data array sorted by state transition time
 int     len_sd0=0, len_sd1=0, len_sd2=0;
-int     *qpd=NULL, len_qpd=0;                    // qp log array
+struct  s_qp *qpd=NULL;                         // qp log array
+int     len_qpd=0;
 struct  frame *fd = NULL;                       // frame array`
 int     len_fd; 
 struct  s_file_table_entry file_table[FILE_TABLE_LEN];     // file list
@@ -965,6 +973,14 @@ SKIP_FILE_LIST:
         }
     }
 
+    // latency log file
+    if (have_ld_log) {
+         sprintf (bp, "%s%s.log", ipathp, ld_prep); 
+        if ((ld_fp = open_file (bp, "r")) != NULL) {
+            read_ld(ld_fp);
+        }
+    }
+
     // dedup metadata file
     sprintf (bp, "%s%s.csv", ipathp, rx_prep);
     if ((md_fp = open_file (bp, "r")) != NULL) {
@@ -977,13 +993,6 @@ SKIP_FILE_LIST:
         read_cd (bp); 
     } // per carrier meta data files
 
-    // latency log file
-    if (have_ld_log) {
-         sprintf (bp, "%s%s.log", ipathp, ld_prep); 
-        if ((ld_fp = open_file (bp, "r")) != NULL) {
-            read_ld(ld_fp);
-        }
-    }
 
     // check if any missing arguments
     if (md_fp==NULL || fs_fp==NULL || ss_fp==NULL || ps_fp==NULL) {
@@ -1254,6 +1263,13 @@ void read_worklist (FILE *fp) {
                 FATAL ("read_worklist: Missing file name argument in line: %s", line)
             strcpy (file_table[flist_idx].qp_pre, tokenp); 
         } 
+        else if (strcmp (tokenp, "-gps") == MATCH) {
+            get_token (linep, '"', tokenp); // file name
+            if (strlen (tokenp) == 0)
+                FATAL ("read_worklist: Missing file name argument in line: %s", line)
+            strcpy (gps_prep, tokenp);
+            have_gps_metadata = 1; 
+        } 
         else if (strcmp (tokenp, "-ipath") == MATCH) {
             get_token (linep, '"', tokenp); // path name
             if (strlen (tokenp) == 0)
@@ -1521,15 +1537,15 @@ void read_sd (FILE *fp) {
 
 void read_qp (FILE *fp) {
     // allocate storate for service data log
-    qpd = (int *) malloc (sizeof (int) * QP_BUFFER_SIZE); 
+    qpd = (struct s_qp *) malloc (sizeof (struct s_qp) * QP_BUFFER_SIZE); 
     if (qpd==NULL) FATAL("read_qpCould not allocate storage to read the qp log file in an array%s\n", "")
-    int *qpp = qpd; 
+    struct s_qp *qpp = qpd; 
     
     printf ("Reading qp log file\n"); 
     char qpline [MAX_LINE_SIZE], *qplinep = qpline; 
     char d[50], frame_num_str[50]; // dummy
-    int n, last_crf, crf, next_crf, last_frame_num, frame_num; 
-    last_crf = 0; last_frame_num = -1; 
+    int n, last_crf, crf, last_next_crf, next_crf, last_frame_num, frame_num; 
+    last_crf = 0; last_next_crf = 0; last_frame_num = -1; 
     while (fgets (qpline, MAX_LINE_SIZE, fp) != NULL) {
         if ((n = sscanf (qpline, "%s %s %s %s %s %s %d %s %s %d", 
             d, d, d, frame_num_str, d, d, &crf, d, d, &next_crf)) != 10)
@@ -1544,12 +1560,15 @@ void read_qp (FILE *fp) {
         if (frame_num != last_frame_num+1) 
             // fill in missing frames with the last known crf value
             while (last_frame_num < frame_num) {
-                *qpp++ = last_crf; 
-                last_frame_num++;
+                qpp->crf = last_crf; 
+                qpp->next_crf = last_next_crf; 
+                qpp++; len_qpd++; last_frame_num++;
             } // while there are missing frames
         
-        *qpp++ = crf; 
-        if (++len_qpd == QP_BUFFER_SIZE) FATAL ("read_qp: qp array is not loarge enough. Increase QP_BUFFER_SIZE%s\n","")
+        qpp->crf = crf; 
+        qpp->next_crf = next_crf; 
+        qpp++; len_qpd++;
+        if (len_qpd == QP_BUFFER_SIZE) FATAL ("read_qp: qp array is not loarge enough. Increase QP_BUFFER_SIZE%s\n","")
         last_frame_num = frame_num;
         last_crf = crf;
     } // while there are more lines in the file
@@ -1807,6 +1826,7 @@ int read_gps (FILE *fp) {
     if (gpsd==NULL) FATAL("Could not allocate storage to read the gps file%s\n", "")
 
 	// while there are more lines to read from the gps file
+    printf ("Reading gps file\n");
 	while (fgets (lp, MAX_LINE_SIZE, fp) != NULL) {
 		struct s_gps *gpsp = gpsd + ++index;
 
@@ -2343,29 +2363,27 @@ int get_gps_coord (struct frame *framep) {
 		return 0;
 	} // frame timestamp deos not map into the gps file range
 
-	// find the closest before timestamp in gps array (linear search now should be replaced with binary)
+	// find smallest index whose gps time is larger than frame time
 	for (i=0; i<len_gps; i++) {
 		if ((gpsd+i)->epoch_ms > framep->camera_epoch_ms)
 			break; 
 	}
 
-	// i could be larger than the array if the last element was equal to the frame time
-	if (i==len_gps) { // len_gps is 1 more than the last index
-		prev = gpsd+len_gps-1;
-		next = gpsd+len_gps-1;
-		framep->coord.lat = prev->coord.lat;
-		framep->coord.lon = prev->coord.lon;
-		framep->speed = prev->speed;
-	}  else { // interpolate
+	// interpolate between the index found above and index-1
+    if (i < len_gps) { // interporlate
 		prev = gpsd+i-1;
 		next = gpsd+i;
 		double dt = (framep->camera_epoch_ms - prev->epoch_ms)/(next->epoch_ms - prev->epoch_ms);
 		framep->coord.lat = (1-dt)*prev->coord.lat + (dt * next->coord.lat);
 		framep->coord.lon = (1-dt)*prev->coord.lon + (dt * next->coord.lon); 
 		framep->speed = (1-dt)*prev->speed + (dt * next->speed); 
-	} // interpolate
+    } else { // i==len_gps
+		framep->coord.lat = (gpsd+len_gps-1)->coord.lat;
+		framep->coord.lon = (gpsd+len_gps-1)->coord.lon;
+		framep->speed = (gpsd+len_gps-1)->speed;
+	} 
 
-		return 1;
+	return 1;
 } // end of get_gps_coord
 
 // returns length of the read annotation file
@@ -2567,11 +2585,12 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "estate, ");
     fprintf (fp, "chpq, ");
     fprintf (fp, "crf, ");
+    fprintf (fp, "nxt_crf, ");
     fprintf (fp, "EMbps,");
     // fprintf (fp, "DMbps, ");
     fprintf (fp, "Lat, ");
     fprintf (fp, "Lon, ");
-    fprintf (fp, "Spd, ");
+    fprintf (fp, "mph, ");
     fprintf (fp, "Rpt, ");
     fprintf (fp, "skp, ");
     // fprintf (fp, "dlv, ulv, ");     // modulation down / up latency violation
@@ -2631,9 +2650,10 @@ void emit_packet_header (FILE *ps_fp) {
 	// fprintf (ps_fp, "skp, ");
 	fprintf (ps_fp, "c2d, ");
     fprintf (ps_fp, "est,");
-    fprintf (ps_fp, "crf,");
-    fprintf (ps_fp, "EMbps,");
     fprintf (ps_fp, "chpq, ");
+    fprintf (ps_fp, "crf,");
+    fprintf (ps_fp, "nxt_crf,");
+    fprintf (ps_fp, "EMbps,");
 
     // Delivered packet meta data
     fprintf (ps_fp, "retx, ");
@@ -2708,22 +2728,24 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
     // Frame metadata for reference (repeated for every packet)
     fprintf (ps_fp, "%u, ", fp->frame_count);
     fprintf (ps_fp, "%u, ", mdp->packet_num);
-	    if (fp->latest_packet_num == mdp->packet_num) fprintf (ps_fp, "%u, ", fp->latest_packet_num); else fprintf (ps_fp, ", "); 
+	if (fp->latest_packet_num == mdp->packet_num) fprintf (ps_fp, "%u, ", fp->latest_packet_num); else fprintf (ps_fp, ", "); 
     // fprintf (ps_fp, "%u, ", fp->late);
-	    // fprintf (ps_fp, "%u, ", fp->missing);
-	    fprintf (ps_fp, "%u, ", fp->packet_count);          // SzP
-	    fprintf (ps_fp, "%u, ", mdp->video_packet_len);     // SzB
-	    // fprintf (ps_fp, "%.1f, ", fp->DMbps); // DMbps
-	    // fprintf (ps_fp, "%.1f, ", fp->rx_epoch_ms_latest_packet - fp->tx_epoch_ms_1st_packet);
-	    // fprintf (ps_fp, "%.1f, ", fp->rx_epoch_ms_latest_packet - fp->camera_epoch_ms);
-	    // fprintf (ps_fp, "%d, ", fp->repeat_count);
-	    // fprintf (ps_fp, "%u, ", fp->skip_count);
-	    fprintf (ps_fp, "%.1f, ", fp->c2d_frames);
+	// fprintf (ps_fp, "%u, ", fp->missing);
+	fprintf (ps_fp, "%u, ", fp->packet_count);          // SzP
+	fprintf (ps_fp, "%u, ", mdp->video_packet_len);     // SzB
+	// fprintf (ps_fp, "%.1f, ", fp->DMbps); // DMbps
+	// fprintf (ps_fp, "%.1f, ", fp->rx_epoch_ms_latest_packet - fp->tx_epoch_ms_1st_packet);
+	// fprintf (ps_fp, "%.1f, ", fp->rx_epoch_ms_latest_packet - fp->camera_epoch_ms);
+	// fprintf (ps_fp, "%d, ", fp->repeat_count);
+	// fprintf (ps_fp, "%u, ", fp->skip_count);
+	fprintf (ps_fp, "%.1f, ", fp->c2d_frames);
     fprintf (ps_fp, "%d,", brmdp->encoder_state);
     fprintf (ps_fp, "%d, ", chpq);
-    if (have_qp_log && (fp->frame_count <= len_qpd)) 
-        fprintf (ps_fp, "%d,", qpd[fp->frame_count-1]); // -1 because frame 1 is store in entry 0
-    else fprintf (ps_fp, ",");
+    if (have_qp_log && (fp->frame_count <= len_qpd)) {
+        fprintf (ps_fp, "%d,", qpd[fp->frame_count-1].crf); // -1 because frame 1 is store in entry 0
+        fprintf (ps_fp, "%d,", qpd[fp->frame_count-1].next_crf); 
+    }
+    else fprintf (ps_fp, ", , ");
     fprintf (ps_fp, "%.1f,", fp->EMbps); // EMbps
 
     // Delivered packet meta data
@@ -3213,14 +3235,16 @@ void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1
     fprintf (fs_fp, "%.1f, ", p->c2d_frames);
     fprintf (fs_fp, "%d, ", p->brmdp->encoder_state);
     fprintf (fs_fp, "%d, ", chpq);
-    if (have_qp_log && (p->frame_count <= len_qpd)) 
-         fprintf (fs_fp, "%d,", qpd[p->frame_count-1]); // -1 because frame 1 is store in entry 0
-    else fprintf (fs_fp, ",");
+    if (have_qp_log && (p->frame_count <= len_qpd)) {
+         fprintf (fs_fp, "%d,", qpd[p->frame_count-1].crf); // -1 because frame 1 is store in entry 0
+         fprintf (fs_fp, "%d,", qpd[p->frame_count-1].next_crf); // -1 because frame 1 is store in entry 0
+    }
+    else fprintf (fs_fp, ", , ");
     fprintf (fs_fp, "%.1f,", p->EMbps); 
     // fprintf (fs_fp, "%.1f, ", p->DMbps);
     fprintf (fs_fp, "%lf, ", p->coord.lat);
     fprintf (fs_fp, "%lf, ", p->coord.lon);
-    fprintf (fs_fp, "%.1f, ", p->speed);
+    fprintf (fs_fp, "%.1f, ", (p->speed*3600/1600));
     fprintf (fs_fp, "%d, ", p->repeat_count);
     fprintf (fs_fp, "%u, ", p->skip_count);
 
@@ -3605,13 +3629,12 @@ void emit_resumption_stats (
 // outputs per carrier stats and fills out some of the fields of s_carrier structure from cd array
 void emit_packet_stats (struct s_carrier *cp, struct s_metadata *mdp, int carrier_num, struct frame *fp) {
 
-	if (cp->tx) {
-        // if this carrier transmitted this packet
+	if (cp->tx) { // if this carrier transmitted this packet
 	    fprintf (ps_fp, "%0.1f,", cp->rx_epoch_ms - fp->camera_epoch_ms);                       // c2r
 	    // fprintf (ps_fp, "%0.1f,", cp->vx_epoch_ms - fp->camera_epoch_ms);                       // c2v
 	    fprintf (ps_fp, "%0.1f,", cp->t2r_ms);                                                  // t2r
 	    if (cp->len_ld) fprintf (ps_fp, "%0.1f,", cp->r2t_ms); else fprintf (ps_fp, ",");       // r2t
-	    if (cp->len_ld) fprintf (ps_fp, "%0.1f,", cp->est_t2r_ms);                              // est_t2r
+	    if (cp->len_ld) fprintf (ps_fp, "%0.1f,", cp->est_t2r_ms); else fprintf (ps_fp, ",");                               // est_t2r
         // if (cp->len_ld) fprintf (ps_fp, "%.0f,", cp->ert_ms); else fprintf (ps_fp, ",");        // ert
         fprintf (ps_fp, "%d,", cp->socc);                                                       // socc
         // if (cp->len_td) fprintf (ps_fp, "%.1f,", ((float) cp->tdp->actual_rate)/1000); else fprintf (ps_fp, ",");// MMbps
