@@ -208,6 +208,9 @@ struct frame {
 
     int brm_changed;                        // 1 if this encoder quality state change in this frame
     int brm_run_length;                     // valid if brm_changed==1 and counts run length of the previous brm state
+
+    int crf_run_finished;                   // 1 if this frame is end of a crf = 50 run
+    int crf_run_length;                     // valid if crf_run_finished == 1 
 }; // frame
 
 struct stats {
@@ -370,7 +373,7 @@ void update_frame_packet_stats (
     struct s_metadata *cmdp);                // current packet's meta data; current may be NULL at EOF
 
 // called after receiving the last packet of the frame and updates brm stats
-void update_brm (struct frame *fp);
+void update_brm_run_length (struct frame *fp);
 
 // calculates required and delivered bit rates 
 void calculate_Mbps (
@@ -1123,7 +1126,8 @@ SKIP_FILE_LIST:
 
             // update bit rates
             update_bit_rate (cfp, lmdp, cmdp);
-            update_brm (cfp);
+            update_brm_run_length (cfp);
+            update_crf_run_length (cfp); 
             calculate_Mbps ((fdp-1), cfp); 
 
             emit_frame_stats (0, cfp);
@@ -1156,7 +1160,7 @@ SKIP_FILE_LIST:
     if (!lmdp->frame_end) // frame ended abruptly
        cfp->missing += 1; // not the correct number of missing packets but can't do better
     update_bit_rate (cfp, lmdp, cmdp); 
-    update_brm (cfp);
+    update_brm_run_length (cfp);
     calculate_Mbps (fdp, cfp); 
     update_session_frame_stats (ssp, cfp);
 
@@ -2542,10 +2546,9 @@ void init_frame (
     fp->packet_count = fp->latest_packet_count = 1; 
     fp->latest_packet_num = cmdp->packet_num; 
     fp->fast_channel_count = 0;
-    if (first_frame) 
-        fp->brm_changed = 0;
-    if (fp->brm_changed)
-        fp->brm_run_length = 1; 
+    if (first_frame) fp->brm_changed = 0;
+    if (fp->brm_changed) fp->brm_run_length = 1; 
+    // no need to initialize crf_run_lenght and crf_run_finished because the update_ takes care of it
 } // end of init_frame
 
 void print_command_line (FILE *fp) {
@@ -2586,6 +2589,7 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "chpq, ");
     fprintf (fp, "crf, ");
     fprintf (fp, "nxt_crf, ");
+    fprintf (fp, "crf50_rl, ");
     fprintf (fp, "EMbps,");
     // fprintf (fp, "DMbps, ");
     fprintf (fp, "Lat, ");
@@ -3240,6 +3244,7 @@ void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1
          fprintf (fs_fp, "%d,", qpd[p->frame_count-1].next_crf); // -1 because frame 1 is store in entry 0
     }
     else fprintf (fs_fp, ", , ");
+    if (p->crf_run_finished) fprintf (fs_fp, "%d, ", p->crf_run_length); else fprintf (fs_fp, ", ");
     fprintf (fs_fp, "%.1f,", p->EMbps); 
     // fprintf (fs_fp, "%.1f, ", p->DMbps);
     fprintf (fs_fp, "%lf, ", p->coord.lat);
@@ -3294,11 +3299,8 @@ void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1
 
     // bit-rate modulation stats
     fprintf (fs_fp, "%d, ", p->brmdp->bit_rate);
-    if (p->brm_changed) {
-        fprintf (fs_fp, "%d, ", p->brm_run_length);
-    } else
-        fprintf (fs_fp, ","); 
-    if (p->brm_changed && (p->brmdp->encoder_state == 0)) // previous state != 0 i.e low quality
+    if (p->brm_changed) fprintf (fs_fp, "%d, ", p->brm_run_length); else fprintf (fs_fp, ","); 
+    if (p->brm_changed && (p->brmdp->encoder_state == 0)) // low quality run length
         fprintf (fs_fp, "%d,", p->brm_run_length);
     else
         fprintf (fs_fp, ","); 
@@ -4051,7 +4053,7 @@ void calculate_Mbps (struct frame *fp, struct frame *cfp) {
 } // calculate Mbps
 
 // called after receiving the last packet of the frame and updates brm stats
-void update_brm (struct frame *fp) {
+void update_brm_run_length (struct frame *fp) {
 
     struct s_brmdata *brmdp = find_closest_brmdp (fp->tx_epoch_ms_1st_packet, brmdata, len_brmd); 
 
@@ -4065,7 +4067,24 @@ void update_brm (struct frame *fp) {
 
     fp->brmdp = brmdp; 
     return; 
-} // update_brm
+} // update_brm_run_length
+
+// called after receiving the last packet of the frame and updates brm stats
+void update_crf_run_length (struct frame *fp) {
+
+    int qpd_index = fp->frame_count - 1; // since frame_count sarts from 1
+
+    if ((fp->frame_count == 1) || (qpd[qpd_index-1].crf != 50)) // previous frame was not 50
+        // potential start of a run
+        fp->crf_run_length = qpd[qpd_index].crf == 50;
+    else // in middle of a run
+        fp->crf_run_length += qpd[qpd_index].crf == 50;
+
+    fp->crf_run_finished = (qpd[qpd_index].crf == 50) && 
+        (qpd_index+1 >= len_qpd || qpd[qpd_index+1].crf != 50);
+
+    return;
+} // update_crf_run_length
 
 // initializes captures stats
 void init_capture_stats (struct s_capture *p) {
