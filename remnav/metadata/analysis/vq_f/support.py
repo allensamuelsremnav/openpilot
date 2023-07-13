@@ -60,7 +60,8 @@ probe_fields = namedtuple ("probe_fields", "sending_channel, send_TS, latency, r
 
 # chq log
 # CH: 2, chQ:0, qSize: 0, est_bpt2r: 30, ch_inservice: 1, serviceStateTransitionTime: 2042, InGoodQualityTime: 1688092037043, qTranTime: 1688092037043, time: 1688092037043
-chq_fields = namedtuple ("chq_fields", "ch, channel_quality, qsize, est_t2r, IS, ms_since_IS, good_quality_x_TS, ignore, TS")
+# CH: 2, chQ:0, qSize: 0, est_bpt2r: 30, ch_inservice: 1, serviceStateTransitionTime: 2028, InGoodQualityTime: 1689024682615, qTranTime: 1689024682615, time: 1689024682615, ptime: 1689024680615, stage: 0
+chq_fields = namedtuple ("chq_fields", "ch, channel_quality, qsize, est_t2r, IS, ms_since_IS, good_quality_x_TS, ignore, TS, ptime, stage")
 
 # carrier csv
 # packe_number	 sender_timestamp	 receiver_timestamp	 video_packet_len	 frame_start	 frame_number	 frame_rate	 frame_resolution	 frame_end	 camera_timestamp	 retx	 chPacketNum
@@ -214,7 +215,7 @@ def read_worklist (file_name):
                 ipath = line_tokens[3]
                 ipath_defined = True
             else:
-                WARN ("Invalid syntax at line :" + str(i))
+                WARN (f"Invalid syntax at line: {str(i)} {line_tokens[1]}. Ignoring\n")
             
             if stx_defined and srx_defined and ipath_defined:
                 work_list += [file_list_fields (in_dir=ipath, rx_infix=srx, tx_infix=stx)]
@@ -319,6 +320,7 @@ def read_log_file (filename, tuplename):
 
     array = []
     file = open (filename, "r")
+    warnings_count = 0
     for line_num, line in enumerate (file):
         field_list = []
         for fields in line.split(","):
@@ -330,8 +332,11 @@ def read_log_file (filename, tuplename):
         try: 
             array += [tuplename._make(field_list)]
         except:
-            WARN ("WARNING read_log_file: incorrect number of filelds: " + filename  + " Line " + str(line_num) + ": " + " ".join (str(e) for e in field_list) +"\n")
-
+            WARN (f"WARNING read_log_file: incorrect number of filelds: {filename} Line {line_num}: {line} \n")
+            warnings_count += 1
+            if warnings_count >= 10: exit ()
+        if line_num % 100_000 == 0:
+            print (f"at line {line_num}")
     return array
 # end of read_log_file
 
@@ -465,7 +470,6 @@ def spike_analysis (log_dic, out_dir, capture):
     tx_rx_bandwidth = [0]*3
     rx_rx_bandwidth = [0]*3
     sd_bandwidth = [0]*3
-
     
     while service_start_index < len(log_dic["service"]):
     
@@ -555,8 +559,7 @@ def spike_analysis (log_dic, out_dir, capture):
         while start_skip_index < len (log_dic["skip"]):
             if log_dic["skip"][start_skip_index].ch != service_start_line.channel: 
                 start_skip_index +=1
-            else:
-                break
+            else: break
         else: 
             WARN ("Could not find line in skip log correspoiding to service start of channel {c} at {t}".format(
                 c=service_start_line.channel, t=service_start_line.service_transition_TS))
@@ -1165,6 +1168,7 @@ def brm_algo_check (log_dic, out_dir, capture):
                 if num_of_channels_in_poor_quality_state == 3:
                     next_encoder_state = LOW_BIT_RATE 
                     encoder_state_x_TS = current_TS
+
             elif encoder_state == LOW_BIT_RATE: 
                 if num_of_channels_in_poor_quality_state < 2:
                     next_encoder_state = INTERMEDIATE_BIT_RATE
@@ -1176,6 +1180,7 @@ def brm_algo_check (log_dic, out_dir, capture):
                         TS = log_dic["brm"][index].TS,
                         id = ENCODER_ID) 
                     schedule (internal_scheduling_list, new_entry)
+
             elif encoder_state == INTERMEDIATE_BIT_RATE:
                 head = internal_scheduling_list[HEAD]
                 if (num_of_channels_in_poor_quality_state >= 2):
