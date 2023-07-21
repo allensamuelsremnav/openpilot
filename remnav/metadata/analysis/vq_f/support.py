@@ -215,14 +215,18 @@ def read_worklist (file_name):
                 ipath = line_tokens[3]
                 ipath_defined = True
             else:
-                WARN (f"Invalid syntax at line: {str(i)} {line_tokens[1]}. Ignoring\n")
+                warning_str = f"read_worklist: Unsupported or Invalid syntax at line: {str(i)}: {line} {line_tokens[1]}. Ignoring"
+                print (warning_str)
+                WARN (f"{warning_str}\n")
             
             if stx_defined and srx_defined and ipath_defined:
                 work_list += [file_list_fields (in_dir=ipath, rx_infix=srx, tx_infix=stx)]
                 srx_defined = False 
                 stx_defined = False
         except:
-            FATAL ("FATAL read_worklist: Invalid syntax at line {n}: {l} in file {f}".format (n=i, l=line, f=input_file))
+            warning_str = "FATAL read_worklist: Invalid syntax at line {n}: {l} in file {f}".format (n=i, l=line, f=input_file)
+            print (warning_str)
+            WARN (f"{warning_str}\n")
         # end of parse a non-comment line
     # for all lines in the input_file
     return work_list
@@ -444,7 +448,7 @@ def create_chrx_sorted_by_pkt_num (log_dic):
         chrx_a_sorted_by_pkt_num = sorted (chrx_a, key = lambda a: a.pkt_num)
         log_dic.update ({"chrx_sorted_by_pkt_num"+str(i): chrx_a_sorted_by_pkt_num})
     return
-# end of remove_network_duplicates
+# end of create_chrx_sorted_by_pkt_num
 
 def open_output_files (file_name_prefix):
     "Opens output csv file and returns CsvOut object containing it. Redirects stderr to warning file"
@@ -635,20 +639,17 @@ def resume_algo_check (log_dic, capture, out_dir):
     
     while service_index < len(log_dic["service"]) and skip_index < len(log_dic["skip"]):
     
-        # read a a going into service line
+        # read a going into service line
         service_line = log_dic["service"][service_index]
         if (service_line.service_flag == 0): # not going into serivce, so ignore
             service_index += 1
             continue
     
         # find largest (last) packet number that was retired closest to the service resumption 
-        # and channel-x which is all the channels that retired it the earliest
+        # and channel-x, all the channels that retired it the earliest
         index = bisect_left (log_dic["all_latency"], service_line.service_transition_TS, key=lambda a: a.bp_t2r_receive_TS)
-        if (index):
-            index -= 1 # since bisect_left will return index of element with bp_t2r_recevive_TS GE service_transition_TS
-    
+        if (index): index -= 1 # since bisect_left will return index of element with bp_t2r_recevive_TS GE service_transition_TS
         channel = {"x": [0]*3, "t2r": [0]*3, "lrp_num": [0]*3, "lrp_bp_TS": [0]*3}
-
         lrp_num = log_dic["max_bp_pkt_num"][index]
         lrp_bp_TS = log_dic["all_latency"][index].bp_t2r_receive_TS # this is closest bp pkt to service_transition_TS
         while (index >= 0) and (lrp_num == log_dic["max_bp_pkt_num"][index]):
@@ -658,6 +659,7 @@ def resume_algo_check (log_dic, capture, out_dir):
                     # this is the new candidate channel for the lrp so clear out previous candidates
                     for item in channel: channel[item] = [0]*3
                     lrp_bp_TS = line.bp_t2r_receive_TS
+                # else same bp_t2r_receive_TS found so far
                 channel["x"][line.sending_channel] = 1
                 channel["t2r"][line.sending_channel] = line.bp_t2r
                 channel["lrp_num"][line.sending_channel] = line.PktNum
@@ -665,7 +667,7 @@ def resume_algo_check (log_dic, capture, out_dir):
             index -= 1
         # while there are more entries max_bp_pkt_num_list equal to lrp
     
-        # check if there is a mismatch with implementation and we should change our decision
+        # check if there is a race between implementation processes, in which case match implementation decision
         skip_line = log_dic["skip"][skip_index]
         if service_line.service_transition_TS == skip_line.lrp_bp_TS: # race between processes
             channel = {"x": [0]*3, "t2r": [0]*3, "lrp_num": [0]*3, "lrp_bp_TS": [0]*3}
@@ -687,17 +689,24 @@ def resume_algo_check (log_dic, capture, out_dir):
                 channel["found_last_state_x"][line.channel] = 1
             index -= 1
     
-        # find if channel-x has remained in service since transmitting the last retired packet
-        channel.update ({"x_IS": [0]*3})
+        # find if channel-x has remained in service since transmitting the last retired packet or 
+        # has been in service for IN_SERVICE_PERIOD from the resume transition 
+        IN_SERVICE_PERIOD = 15
+        channel["x_IS"] = [0]*3
         for i in range (3):
-            channel["x_IS"][i] = int (\
+            channel["x_IS"][i] = int (
                 # channel supplied lrp
-                channel["x"][i] and \
+                channel["x"][i] and 
                 # channel is in service now
-                channel["last_state_x"][i] and \
-                # channel has been in service transmitting lrp
-                (channel["last_state_x_TS"][i] <= (lrp_bp_TS -30 - channel["t2r"][i])))
-    
+                channel["last_state_x"][i] and (
+                    # channel has been in service for atleast IN_SERVICE_PERIOD prior to resume time
+                    channel["last_state_x_TS"][i] <= (service_line.service_transition_TS - IN_SERVICE_PERIOD)
+                    or
+                    # channel has been in service since it transmitted lrp
+                    channel["last_state_x_TS"][i] <= (channel["lrp_bp_TS"][i] -30 - channel["t2r"][i])
+                    )
+            ) 
+        
         """
         # compute the number of packets to be skipped
         if (sum(channel["x_IS"]) == 0) or (skip_line.qsize==0):
@@ -720,15 +729,10 @@ def resume_algo_check (log_dic, capture, out_dir):
             s=frame_sz_list[lrp_num].frame_szP))
         """
     
-        #
-        # Revised algo 
-        # 
-    
         # relax channel_x to incldue other channels that transmitted packets neighboring lrp in porximity of lrp_bp_TS
+        # Search windows set to 0 to match implementation. So this relaxation is not really implemented
         SEARCH_TS_WINDOW = 0
         SEARCH_PKT_WINDOW = 0
-        IN_SERVICE_PERIOD = 15
-        MAX_SKIP_PACKETS = 20
         start_TS = lrp_bp_TS - SEARCH_TS_WINDOW
         start_TS_index = bisect_left (log_dic["all_latency"], start_TS, key = lambda a: a.bp_t2r_receive_TS)
         stop_TS = min (lrp_bp_TS + SEARCH_TS_WINDOW, skip_line.resume_TS)
@@ -753,45 +757,22 @@ def resume_algo_check (log_dic, capture, out_dir):
             # for all the lines in the search window
         # for all channels
         
-        # relaxed in_service condition
-        channel["x_IS"] = [0]*3
-        channel.update({"x_IS_debug": [0]*3})
-        for i in range (3):
-            channel["x_IS"][i] = int (
-                # channel supplied lrp
-                channel["x"][i] and 
-                # channel is in service now
-                channel["last_state_x"][i] and (
-                    # channel has been in service for atleast IN_SERVICE_PERIOD prior to resume time
-                    channel["last_state_x_TS"][i] <= (service_line.service_transition_TS - IN_SERVICE_PERIOD)
-                    or
-                    # channel has been in service since it transmitted lrp
-                    channel["last_state_x_TS"][i] <= (channel["lrp_bp_TS"][i] -30 - channel["t2r"][i])
-                    )
-            ) 
-            channel["x_IS_debug"][i] = int (
-                channel["last_state_x_TS"][i] <= (service_line.service_transition_TS - IN_SERVICE_PERIOD)  and 
-                not (channel["last_state_x_TS"][i] <= (channel["lrp_bp_TS"][i] -30 - channel["t2r"][i])))
-        
-        # compute lrp_tx_TS and find the index in the carrier csv file that corresponds to that lrp_tx_TS
+        # compute lrp_tx_TS
         channel.update({"lrp_tx_TS": [0]*3})
         for i in range (3):
             if (channel["x_IS"][i]):
+                # next two lines skipped to match the implementation
                 # tx_index = bisect_left (log_dic["chrx_sorted_by_pkt_num"+str(i)], channel["lrp_num"][i], key = lambda a: a.pkt_num)
                 # channel["lrp_tx_TS"][i] = log_dic["chrx"+str(i)][tx_index].tx_TS
                 channel["lrp_tx_TS"][i] = channel["lrp_bp_TS"][i] -30 - channel["t2r"][i]
-    
-        #
-        # if there are multiple candidates for lrp, then select final as lrp_channel. lrp_channel is invalid if x_IS is all 0s
-        #
-    
+
+        # Select final as lrp_channel if there are multiple canndidates . lrp_channel is invalid if x_IS is all 0s
+        """
+        # Algo 1: DEPRECATED TO MATCH THE IMPLEMENTATION
         # initialize lrp_channel to one of channel_x so in case x_IS is 000, rest of the code does not go haywire
         for i in channel["x"]:
             lrp_channel = i
             if i: break
-    
-        """
-        # LRP_channel selection Algo 1: DEPRECATED TO MATCH THE IMPLEMENTATION
         # pick according the the table below. 
         # lrp_num  tx_TS
         #  eq       eq              send any
@@ -825,13 +806,15 @@ def resume_algo_check (log_dic, capture, out_dir):
                     max_lrp_num = channel["lrp_num"][i]
                     lrp_channel = i
         """
-        #
-        # LRP channel selection Algo 2: pick the channel with the smallest t2r
-        #  
+        # Algo 2 to match the implemenattion: 
+        # pick the channel with the smallest t2r or if channel[x_ISa] = 000 then pick the smallest channel[x] 
+        for i in channel["x"]: # initialize lrp_channel to one of channel_x so in case x_IS is 000, rest of the code does not go haywire
+            lrp_channel = i
+            if i: break
         found_a_candidate = 0
         for i in range (3):
             if channel["x_IS"][i]: 
-                if (found_a_candidate == 0):
+                if not found_a_candidate:
                     found_a_candidate = 1
                     min_t2r = channel["t2r"][i]
                     lrp_channel = i
@@ -839,10 +822,8 @@ def resume_algo_check (log_dic, capture, out_dir):
                     min_t2r = channel["t2r"][i]
                     lrp_channel = i
     
-        #
-        # revised skip calculation: skip packets transferred between lrp_tx_TS and lrp_tx_TS + 60 + (resume_TS-lrp_bp_TS)
-        #
-        # first calculate packets to be skipped relative to lrp_num (calculations are invalid if channel["x_IS"] = [0,0,0])
+        # skip calculation
+        # skip packets on the transmit queue of the lrp channel whose tx_TS is lrp_tx_TS + 60 + (resume_TS-lrp_bp_TS)
         chrx_a = log_dic["chrx_sorted_by_pkt_num"+str(lrp_channel)]
         lrp_tx_TS = channel["lrp_tx_TS"][lrp_channel]
         lrp_bp_to_sx_delta = skip_line.resume_TS - channel["lrp_bp_TS"][lrp_channel] if sum (channel["x_IS"]) != 0 else 0 # changed resume TS from service to skip to match implementation
@@ -865,42 +846,19 @@ def resume_algo_check (log_dic, capture, out_dir):
            possible_implementation_stop_TS == chrx_a[next_smaller_tx_TS_index].tx_TS: 
            index = s_skip_index # override computed index to match dynamics
         # match for missing packets in carrier csv because they were skipped
-        # if skip_line.first_pkt_in_Q == 49805:
-            # print ("debug")
-        if lrp_channel == skip_line.ch and chrx_a[qhead_index].pkt_num != skip_line.first_pkt_in_Q and chrx_a[index].pkt_num == (skip_line.first_pkt_in_Q - 1):
+        if lrp_channel == skip_line.ch \
+            and chrx_a[qhead_index].pkt_num != skip_line.first_pkt_in_Q \
+            and chrx_a[index].pkt_num == (skip_line.first_pkt_in_Q - 1):
             last_skip_pkt_num = skip_line.last_skip_pkt_num
         else:
             last_skip_pkt_num = chrx_a[index].pkt_num
 
         # final results
+        MAX_SKIP_PACKETS = 20
         skippable_packets_in_q = max (0, last_skip_pkt_num - skip_line.first_pkt_in_Q + 1)
-        # unretired_skippable_packets = max (0, last_skip_pkt_num + 1 - skip_line.first_pkt_in_Q)
-        # skip_from_lrp_num = int (0.8 * skip_from_lrp_num) # guardbanded to not trigger too many retxi
-        if sum (channel["x_IS"]) == 0: 
-            skip = 0
-        else: 
-            skip = min (skippable_packets_in_q, skip_line.qsize, MAX_SKIP_PACKETS)
+        if sum (channel["x_IS"]) == 0: skip = 0
+        else: skip = min (skippable_packets_in_q, skip_line.qsize, MAX_SKIP_PACKETS)
         err = skip - skip_line.skip
-    
-        """
-        algo_resume_pkt_num = skip_line.qhead + skip if skip_line.qsize else 0
-    
-        index = bisect_left (log_dic["chrx"+str(skip_line.ch)], skip_line.resume_TS, key = lambda a: a.tx_TS)
-        impl_resume_pkt_num = log_dic["chrx"+str(skip_line.ch)][index].pkt_num
-    
-        if sum (channel["x_IS"]) == 0 or skip_line.qsize == 0:
-            skip = 0
-        else:
-            skip = min (skip_line.qsize, MAX_SKIP_PACKETS, max (0, last_skip_pkt_num - resume_pkt_num))
-    
-        # now check if the resuming channel was effective
-        dd_new_resume_index = bisect_left (log_dic["dedup"], resume_pkt_num + skip, key = lambda a: a.pkt_num)
-        dd_new_resume_pkt_num = log_dic["dedup"][dd_new_resume_index].pkt_num
-        dd_new_resume_rx_TS = log_dic["dedup"][dd_new_resume_index].rx_TS # this is the current delivery time of the proposed first packet after resumption
-    
-        diff = resume_rx_TS - dd_new_resume_rx_TS
-        err = skip - skip_line.skip
-        """
     
         # debug print outs
         # resume service related
@@ -910,8 +868,7 @@ def resume_algo_check (log_dic, capture, out_dir):
         s_ch_x_IS = [skip_line.ch0_IS, skip_line.ch1_IS, skip_line.ch2_IS]
         s_IS_now = [skip_line.ch0_IS_now, skip_line.ch1_IS_now, skip_line.ch2_IS_now]
         s_lrp_tx_TS = skip_line.lrp_bp_TS - 30 - skip_line.t2r
-        fout.write ("ch_x,{x}, x_IS,{x_IS},s_ch_x,{sx}, s_x_IS,{sx_IS}, s_IS_now,{i},".format (
-            x=channel["x"], x_IS=channel["x_IS"], sx=s_ch_x, sx_IS=s_ch_x_IS, i=s_IS_now))
+        fout.write (f"ch_x,{channel['x']}, x_IS,{channel['x_IS']}, s_ch_x,{s_ch_x}, s_x_IS,{s_ch_x_IS}, s_IS_now,{s_IS_now},")
         # lrp related
         fout.write ("lrp_ch,{l}, s_lrp_ch,{sl}, lrp_num,{n}, s_lrp_num,{sn}, lrp_bp_TS,{bp_t}, s_lrp_bp_TS,{sbp_t}, lrp_tx_TS,{tx_t}, s_lrp_tx_TS,{stx_t}, t2r,{t2r}, s_t2r,{st2r},".format (
             l=lrp_channel, sl=skip_line.lrp_channel, n=channel["lrp_num"], sn=skip_line.lrp_num, bp_t=channel["lrp_bp_TS"], sbp_t=skip_line.lrp_bp_TS, 
@@ -930,28 +887,23 @@ def resume_algo_check (log_dic, capture, out_dir):
         resume_t2r = chrx_a[resume_index].rx_TS - chrx_a[resume_index].tx_TS
 
         dd_index = bisect_left (log_dic["dedup"], resume_pkt_num, key = lambda a: a.pkt_num)
-        c_d = chrx_a[resume_index].rx_TS - log_dic["dedup"][dd_index].rx_TS
+        c_minus_d = chrx_a[resume_index].rx_TS - log_dic["dedup"][dd_index].rx_TS
 
         chrx_a = log_dic["chrx_sorted_by_pkt_num"+str(lrp_channel)] # not using skip_line.lrp channel since it can be 9
-        # if lrp_num == 24041:
-            # print ("debug")
         lrp_index = min (len (chrx_a) - 1, bisect_left (chrx_a, skip_line.lrp_num, key = lambda a: a.pkt_num))
         lrp_t2r = chrx_a[lrp_index].rx_TS - chrx_a[lrp_index].tx_TS
         last_skip_index = min (len (chrx_a) - 1, bisect_left (chrx_a, skip_line.lrp_num + skip_line.skip, key = lambda a: a.pkt_num))
         last_skip_t2r = chrx_a[last_skip_index].rx_TS - chrx_a[last_skip_index].tx_TS
 
-        fout.write (",res_ch,{c}, lrp_ch,{lc}, lrp_num,{ln}, x_IS,{xIS}, res_pkt_num,{rn}, lrp_t2r,{lt2r}, lskip_t2r,{lst2r}, res_t2r,{rt2r}, qsz,{q}, skip,{s}, c-d,{cmd},".format (
-            c=skip_line.ch, rn=resume_pkt_num, rt2r=resume_t2r, cmd=c_d, xIS=channel["x_IS"], lc=lrp_channel, ln=skip_line.lrp_num, s=skip, lt2r=lrp_t2r,lst2r=last_skip_t2r, q=skip_line.qsize))
-    
+        fout.write (f",res_ch,{skip_line.ch}, lrp_ch,{lrp_channel}, lrp_num,{skip_line.lrp_num}, x_IS,{channel['x_IS']}, res_pkt_num,{resume_pkt_num}, \
+                    lrp_t2r,{lrp_t2r}, lskip_t2r,{last_skip_t2r}, res_t2r,{resume_t2r}, qsz,{skip_line.qsize}, skip,{skip}, c-d,{c_minus_d},")
+        
         """
-        # check against implementation.
-        fout.write ("err,{e},".format (e=err))
-    
-        # efficiency calculations
-        fout.write ("o_res_pkt,{rp}, o_res_TS,{rt}, n_res_pkt,{nrp}, n_res_TS,{nrt}, c-d,{d}, retx,{r}".format (
-            rp=resume_pkt_num, rt=resume_rx_TS, nrp=dd_new_resume_pkt_num, nrt=dd_new_resume_rx_TS, d=diff, r=resume_tx_retx))
+        # if resume packet was selected by dedup
+        #       check how many packets were retx as a result 
+        #
         """
-    
+        
         fout.write ("\n")
     
         if service_index % 1000 == 0: 
@@ -972,6 +924,7 @@ def brm_algo_check (log_dic, out_dir, capture):
 
     print ("Running Channel quality state and BRM modulation checks")
     fout = open_output_files (out_dir + "brm_algo_chk_" + capture.tx_infix)
+    WARN ("THIS IS A TEST\n")
     
     # channel quality state machine states
     GOOD_QUALITY = 0
@@ -1266,50 +1219,73 @@ def skip_effectiveness_check (log_dic, capture, out_dir):
     "checks skip effectiveness by testing if dedup used the first 10 packets from the resume channel. Outputs skip_eff_chk_ file"
 
     print ("Running resume effectiveness checks")
+    if log_dic["skip"] == None or len (log_dic["skip"]) == 0:
+        WARN (f"skip_effectiveness_check: Skip file does not exist. Exititng \n")
+        return
     fout = open_output_files (out_dir + "skip_eff_chk_" + capture.tx_infix)
     
-    for i, is_line in enumerate (log_dic["service"] if log_dic["skip"] == None or len (log_dic["skip"]) == 0 else log_dic["skip"]):
-        if log_dic["skip"] == None or len(log_dic["skip"]) == 0: # skip_decision file does not exist, so use service file
-            resume_ch = is_line.channel
-            resume_TS = is_line.service_transition_TS
-        else: # use skip_decision file
-            resume_ch = is_line.ch
-            resume_TS = is_line.resume_TS
-    
+    dda = log_dic["dedup"]
+    for i, skip_line in enumerate (log_dic["skip"]):
         # check if the first 10 packets of the resuming channel have the best or near best delivery time
-        ch_resume_index = bisect_left (log_dic["chrx"+str(resume_ch)], resume_TS, key=lambda a: a.tx_TS)
+        resume_ch = skip_line.ch
+        resume_chrxa = log_dic["chrx"+str(resume_ch)]
+        resume_TS = skip_line.resume_TS
+        ch_resume_index = bisect_left (resume_chrxa, resume_TS, key=lambda a: a.tx_TS)
     
         for j in range (1): # was 10
             # find resume packet numbers
             ch_index = ch_resume_index + j
-            if ch_index > len(log_dic["chrx"+str(resume_ch)])-1:
-                break # reached the end of the array, no more transmissions to check
-            ch_line = log_dic["chrx"+str(resume_ch)][ch_index]
+            if ch_index > len(resume_chrxa)-1: # reached the end of the array, no more transmissions to check
+                break
+            ch_line = resume_chrxa[ch_index]
             pkt_num = ch_line.pkt_num
     
             # find this packet in the dedup array
-            dd_index = bisect_left (log_dic["dedup"], pkt_num, key = lambda a: a.pkt_num)
-            if (dd_index == len (log_dic["dedup"])) or (log_dic["dedup"][dd_index].pkt_num != pkt_num):
-                WARN ("WARNING Resume effectiveness check: Could not find pkt {p} in dedup array. Res Ch={c} Res_TS={t}\n".format (
+            dd_index = bisect_left (dda, pkt_num, key = lambda a: a.pkt_num)
+            if dd_index == len (dda) or dda[dd_index].pkt_num != pkt_num:
+                WARN ("Resume effectiveness check: Could not find pkt {p} in dedup array. Res Ch={c} Res_TS={t}\n".format (
                     p=pkt_num, c=resume_ch, t=resume_TS))
                 continue # skip checking this packet
             
             # check if resuming channel was effective
+            resume_rx_TS = ch_line.rx_TS
             resume_t2r = ch_line.rx_TS - ch_line.tx_TS
             resume_c2t = ch_line.tx_TS - ch_line.camera_TS if ch_line.camera_TS != 0 else 0
-            resume_rx_TS = ch_line.rx_TS
-            dd_rx_TS = log_dic["dedup"][dd_index].rx_TS
-            dd_tx_TS = log_dic["dedup"][dd_index].tx_TS
-            dd_cx_TS = log_dic["dedup"][dd_index].camera_TS 
+            resume_c2r = resume_c2t + resume_t2r
+
+            dd_rx_TS = dda[dd_index].rx_TS
+            dd_tx_TS = dda[dd_index].tx_TS
+            dd_cx_TS = dda[dd_index].camera_TS 
             dd_c2r = dd_rx_TS - dd_cx_TS if dd_cx_TS != 0 else 0
+
             diff = resume_rx_TS - dd_rx_TS
-            fout.write ("ch,{c}, Res_TS,{t}, run_idx,{i}, ch_idx,{ci}, pkt#,{p}, ch_rx_TS,{crt}, dd_rx_TS,{drt}, c-d,{d},".format (
-                c=resume_ch, t=resume_TS, i=j, ci=ch_index, p=pkt_num, crt=resume_rx_TS, drt=dd_rx_TS, d=diff))
-            if not (log_dic["skip"] == None or len(log_dic["skip"]) == 0):
-                fout.write ("qsz,{q}, ch_x,{x}, ch_x_is,{xis}, lrp,{lrp}, lrp_bp_TS,{lrpt}, c2r,{c2r}, t2r,{t2r}, c2t,{c2t},".format (
-                    q=is_line.qsize, x=[is_line.ch0_x, is_line.ch1_x, is_line.ch2_x], 
-                    xis=[is_line.ch0_IS, is_line.ch1_IS, is_line.ch2_IS], lrp=is_line.lrp_num, lrpt=is_line.lrp_bp_TS,
-                    c2r=dd_c2r, t2r=resume_t2r, c2t=resume_c2t))
+
+            fout.write (f"ch,{resume_ch}, Res_TS,{resume_TS}, run_idx,{j}, ch_idx,{ch_index}, pkt#,{pkt_num}, \
+                res_rx_TS,{resume_rx_TS}, dd_rx_TS,{dd_rx_TS}, c-d,{diff}, qsz,{skip_line.qsize}, skp,{skip_line.skip},")
+
+            # did this packet trigger a retx
+            retx_count = 0
+            retx_index = dd_index - 1
+            while retx_index > 0 and resume_rx_TS < dda[retx_index].rx_TS:
+                # increment retx count if resuming channel actually transmitted this packet
+                res_chrxa_sorted_by_pkt_num = log_dic["chrx_sorted_by_pkt_num"+str(resume_ch)]
+                index = bisect_left (res_chrxa_sorted_by_pkt_num, dda[retx_index].pkt_num, key = lambda a: a.pkt_num)
+                retx_count += 1 if index < len (res_chrxa_sorted_by_pkt_num) and res_chrxa_sorted_by_pkt_num[index].pkt_num == dda[retx_index].pkt_num else 0
+                # retx_count += 1
+                retx_index -= 1
+            fout.write (f"retx,{retx_count}, last_retxP,{dda[dd_index-retx_count].pkt_num}, last_TS,{dda[dd_index-retx_count].rx_TS}, ")
+            # retx is triggered if the resuming channel delivers the packet earlier than the lrp channel delivers that packet
+            if retx_count: # if retx_count is positive means there was a skip and lrp_channel is well defined (not a 9)
+                lrp_chrxa_sorted_by_pkt_num = log_dic["chrx_sorted_by_pkt_num"+str(skip_line.lrp_channel)]
+                lrp_index = bisect_left (lrp_chrxa_sorted_by_pkt_num, pkt_num, key = lambda a: a.pkt_num)
+                lrp_ch_tx_this_pkt = pkt_num == lrp_chrxa_sorted_by_pkt_num[lrp_index].pkt_num
+                lrp_rx_TS = lrp_chrxa_sorted_by_pkt_num[lrp_index].rx_TS
+            fout.write (f"rx_delta,{lrp_rx_TS-resume_rx_TS if retx_count and lrp_ch_tx_this_pkt else -1},")
+
+            fout.write (f"ch_x,{[skip_line.ch0_x, skip_line.ch1_x, skip_line.ch2_x]}, ch_x_is,{[skip_line.ch0_IS, skip_line.ch1_IS, skip_line.ch2_IS]}, \
+                lrp_ch,{skip_line.lrp_channel}, lrp_pkt,{skip_line.lrp_num}, lrp_bp_TS,{skip_line.lrp_bp_TS}, \
+                dd_c2r,{dd_c2r}, res_c2r,{resume_c2r}, res_t2r,{resume_t2r}, res_c2t,{resume_c2t},")
+
             fout.write ("\n")
         # for the first 10 transmissions of the resuming channel
     
@@ -1319,7 +1295,7 @@ def skip_effectiveness_check (log_dic, capture, out_dir):
     
     close_output_files (fout)
     return
-# end of resume_effecitvenes_checks
+# end of skip_effectiveness_checks
 
 """
     ########################################################################################
