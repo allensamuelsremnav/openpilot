@@ -1,4 +1,7 @@
 // TODO: NEED TO SORT GPS INDEX BY TIME OR READ THEM IN IN TIME ORDER
+// TODO: r2t_TS is broken - it needs to made channel agnostic
+// TODO: est_t2r is broken becausae probe packets have been removed
+// TODO: brm time stamp is being incorrectly associated with first packet's time stamp
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -209,8 +212,10 @@ struct frame {
     int brm_changed;                        // 1 if this encoder quality state change in this frame
     int brm_run_length;                     // valid if brm_changed==1 and counts run length of the previous brm state
 
+    int crf_run_length;                     // run of frames with crf == 50
     int crf_run_finished;                   // 1 if this frame is end of a crf = 50 run
-    int crf_run_length;                     // valid if crf_run_finished == 1 
+    int critical_crf_run_length;            // run of crames with crf==50 && 3 channels in poor quality
+    int critical_crf_run_finished;          // 1 if this frame is end of a crical crf run
 }; // frame
 
 struct stats {
@@ -375,10 +380,16 @@ void update_frame_packet_stats (
 // called after receiving the last packet of the frame and updates brm stats
 void update_brm_run_length (struct frame *fp);
 
+// called after receiving the last packet of the frame and updates crf run length
+void update_crf_run_length (struct frame *fp);
+
+// called after receiving the last packet of the frame and updates cirtical crf run length
+void update_critical_crf_run_length (struct frame *pfp, struct frame *cfp);
+
 // calculates required and delivered bit rates 
 void calculate_Mbps (
-    struct frame *fp, 
-    struct frame *cfp);
+    struct frame *pfp,                      // previous frame pointer
+    struct frame *cfp);                     // current frame pointer
 
 // calculates and update bit-rate of n-1 frame
 void update_bit_rate (                      // updates stats of the last frame
@@ -871,7 +882,7 @@ int main (int argc, char* argv[]) {
 
 PROCESS_NEXT_FILE: 
     rx_prep = file_table[flist_idx].rx_pre; 
-    qp_prep = file_table[flist_idx].qp_pre; 
+    sprintf (qp_prep, "%s_%s", "qp",  file_table[flist_idx].qp_pre); 
     sprintf (tx_prep, "%s_%s", "uplink_queue", file_table[flist_idx].tx_pre); 
     sprintf (ld_prep, "%s_%s", "latency", file_table[flist_idx].tx_pre); 
     sprintf (sd_prep, "%s_%s", "service", file_table[flist_idx].tx_pre); 
@@ -1127,8 +1138,9 @@ SKIP_FILE_LIST:
             // update bit rates
             update_bit_rate (cfp, lmdp, cmdp);
             update_brm_run_length (cfp);
-            update_crf_run_length (cfp); 
-            calculate_Mbps ((fdp-1), cfp); 
+            if (have_qp_log) update_crf_run_length (cfp); 
+            if (have_qp_log) update_critical_crf_run_length (fdp-1, cfp); 
+            calculate_Mbps (fdp-1, cfp); 
 
             emit_frame_stats (0, cfp);
 
@@ -1161,7 +1173,7 @@ SKIP_FILE_LIST:
        cfp->missing += 1; // not the correct number of missing packets but can't do better
     update_bit_rate (cfp, lmdp, cmdp); 
     update_brm_run_length (cfp);
-    calculate_Mbps (fdp, cfp); 
+    calculate_Mbps (fdp-1, cfp); 
     update_session_frame_stats (ssp, cfp);
 
     // end of the file so emit both last frame and session stats
@@ -1225,7 +1237,8 @@ void read_worklist (FILE *fp) {
     char line[MAX_LINE_SIZE], *linep = line;
     char token[100], *tokenp = token;
 
-    while (fgets (linep, MAX_LINE_SIZE, fp) != NULL) {
+    while (fgets (line, MAX_LINE_SIZE, fp) != NULL) {
+        linep = line; 
         linep = get_token (linep, '"', tokenp);
 
         // skip lines in comment blocks
@@ -2589,7 +2602,8 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "chpq, ");
     fprintf (fp, "crf, ");
     fprintf (fp, "nxt_crf, ");
-    fprintf (fp, "crf50_rl, ");
+    fprintf (fp, "c50_rl, ");
+    fprintf (fp, "Cc50_rl, ");
     fprintf (fp, "EMbps,");
     // fprintf (fp, "DMbps, ");
     fprintf (fp, "Lat, ");
@@ -2672,7 +2686,7 @@ void emit_packet_header (FILE *ps_fp) {
     // service resumption indicator
 	fprintf (ps_fp, "Pc2t, ");
     fprintf (ps_fp, "Res,");
-    fprintf (ps_fp, "Res_ch,");
+    fprintf (ps_fp, "ch,");
 
     // per carrier meta data
     int i; 
@@ -3244,7 +3258,10 @@ void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1
          fprintf (fs_fp, "%d,", qpd[p->frame_count-1].next_crf); // -1 because frame 1 is store in entry 0
     }
     else fprintf (fs_fp, ", , ");
-    if (p->crf_run_finished) fprintf (fs_fp, "%d, ", p->crf_run_length); else fprintf (fs_fp, ", ");
+    if (have_qp_log && p->crf_run_finished) 
+        fprintf (fs_fp, "%d, ", p->crf_run_length); else fprintf (fs_fp, ", ");
+    if (have_qp_log && p->critical_crf_run_finished) 
+        fprintf (fs_fp, "%d, ", p->critical_crf_run_length); else fprintf (fs_fp, ", ");
     fprintf (fs_fp, "%.1f,", p->EMbps); 
     // fprintf (fs_fp, "%.1f, ", p->DMbps);
     fprintf (fs_fp, "%lf, ", p->coord.lat);
@@ -4033,7 +4050,7 @@ void update_bit_rate (struct frame *fp, struct s_metadata *lmdp, struct s_metada
 
 } // end of update_bit_rate
 
-void calculate_Mbps (struct frame *fp, struct frame *cfp) {
+void calculate_Mbps (struct frame *pfp, struct frame *cfp) {
 
         cfp->EMbps = (cfp->size*8)/frame_period/1000; 
         
@@ -4041,15 +4058,13 @@ void calculate_Mbps (struct frame *fp, struct frame *cfp) {
         if (cfp->frame_count < 3) // can't calculate average
             cfp->DMbps = cfp->EMbps;
         else {
-            int bytes = cfp->size + fp->size + (fp-1)->size;
-            double time = abs(cfp->rx_epoch_ms_latest_packet - (fp-1)->rx_epoch_ms_earliest_packet);
+            int bytes = cfp->size + pfp->size + (pfp-1)->size;
+            double time = abs(cfp->rx_epoch_ms_latest_packet - (pfp-1)->rx_epoch_ms_earliest_packet);
             if (time > 10)
                 cfp->DMbps = (bytes*8)/time/1000; 
             else // not computable reliably so use old value
-                cfp->DMbps = fp->DMbps;
+                cfp->DMbps = pfp->DMbps;
         }
-
-
 } // calculate Mbps
 
 // called after receiving the last packet of the frame and updates brm stats
@@ -4069,7 +4084,7 @@ void update_brm_run_length (struct frame *fp) {
     return; 
 } // update_brm_run_length
 
-// called after receiving the last packet of the frame and updates brm stats
+// called after receiving the last packet of the frame and updates crf run length
 void update_crf_run_length (struct frame *fp) {
 
     int qpd_index = fp->frame_count - 1; // since frame_count sarts from 1
@@ -4082,6 +4097,32 @@ void update_crf_run_length (struct frame *fp) {
 
     fp->crf_run_finished = (qpd[qpd_index].crf == 50) && 
         (qpd_index+1 >= len_qpd || qpd[qpd_index+1].crf != 50);
+
+    return;
+} // update_crf_run_length
+
+// called after receiving the last packet of the frame and updates crf run length
+// updates the run after it finishes because 
+void update_critical_crf_run_length (struct frame *pfp, struct frame *cfp) {
+
+    int qpd_index = cfp->frame_count - 1; // since frame_count sarts from 1
+    int i, chpq=0, chpq_previous_frame=0; 
+    for (i=0; i<3; i++)
+        chpq += cfp->brmdp->channel_quality_state[i]==1 || cfp->brmdp->channel_quality_state[i]==2;
+    if (cfp->frame_count == 1)
+        chpq_previous_frame = 0;
+    else for (i=0; i<3; i++)
+        chpq_previous_frame += pfp->brmdp->channel_quality_state[i]==1 || pfp->brmdp->channel_quality_state[i]==2;
+
+    if ((cfp->frame_count == 1) || (qpd[qpd_index-1].crf != 50) || (chpq_previous_frame !=3)) 
+        // previous frame was not 50 or all 3 channels were not in poor quality
+        // potential start of a run
+        cfp->critical_crf_run_length = qpd[qpd_index].crf==50 && chpq==3;
+    else // in middle of a run
+        cfp->critical_crf_run_length += qpd[qpd_index].crf == 50 && chpq==3;
+
+    cfp->critical_crf_run_finished = (qpd[qpd_index-1].crf == 50) &&  (chpq_previous_frame == 3)
+        && (qpd_index >= len_qpd || qpd[qpd_index].crf != 50 || chpq != 3);
 
     return;
 } // update_crf_run_length
