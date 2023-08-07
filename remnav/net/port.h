@@ -15,7 +15,7 @@ const int32_t OPERATOR_TRAJECTORY_LISTEN = 6002;
 const int32_t OPERATOR_GPSD_TRAJECTORY = 7001;
 
 // Overlay messages from decoder, trajectory planner, and gpsd listener to operator (display).
-const int32_t OPERATOR_OVERLAY_LISTEN = 7777;
+const int32_t OPERATOR_OVERLAY_LISTEN = 2221;
 
 // Decoded video messages from decoder to operator (display).
 const int32_t OPERATOR_VIDEO_LISTEN = 8888;
