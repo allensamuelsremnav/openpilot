@@ -126,7 +126,7 @@ func intervalController(setpoint time.Duration, tickPrev, tickNow time.Time) tim
 }
 
 // Make a Speed class from the TPV message.
-func tpvToSpeed(buf []byte) Speed {
+func tpvToSpeed(buf []byte) *Speed {
 	var tpv gpsd.TPV
 	err := json.Unmarshal(buf, &tpv)
 	if err != nil {
@@ -136,7 +136,11 @@ func tpvToSpeed(buf []byte) Speed {
 	if tpv.Class != classTPV {
 		log.Fatal(errors.New(fmt.Sprintf("expected class %s, got %s", classTPV, tpv.Class)))
 	}
-	return Speed{Class: "SPEED",
+	if tpv.Mode < gpsd.Mode2D {
+		log.Printf("ignoring GPSD message with mode %d", tpv.Mode)
+		return nil
+	}
+	return &Speed{Class: "SPEED",
 		Gpsd:     tpv.Time.UnixMicro(),
 		Received: time.Now().UnixMicro(),
 		Speed:    tpv.Speed}
@@ -178,7 +182,9 @@ func Planner(param PlannerParameters, gpsdCh <-chan []byte, g920Ch <-chan g920.G
 					log.Printf("GPSD channel closed")
 					return
 				}
-				speed = tpvToSpeed(tpv)
+				if maybe := tpvToSpeed(tpv); maybe != nil {
+					speed = *maybe
+				}
 			case report_, okG920 := <-g920Ch:
 				if !okG920 {
 					log.Printf("G920 channel closed")

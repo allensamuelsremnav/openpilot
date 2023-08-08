@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"math"
+	"math/rand"
 	"net"
 	"os"
 	"strconv"
@@ -104,7 +105,8 @@ func tpvMock() <-chan []byte {
 			var tpv gpsd.TPV
 			tpv.Class = gpsd.ClassTPV
 			tpv.Time = tNow
-			tpv.Speed = speed
+			tpv.Mode = gpsd.Mode2D
+			tpv.Speed = speed + rand.NormFloat64() * 0.01
 			bytes, err := json.Marshal(tpv)
 			if err != nil {
 				log.Fatal(err)
