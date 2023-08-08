@@ -1,6 +1,6 @@
 // TODO: NEED TO SORT GPS INDEX BY TIME OR READ THEM IN IN TIME ORDER
 // TODO: r2t_TS is broken - it needs to made channel agnostic
-// TODO: est_t2r is broken becausae probe packets have been removed
+// TODO: est_t2r is broken becausae probe packets have been removed. need to restore probe packets in lsp array
 // TODO: brm time stamp is being incorrectly associated with first packet's time stamp
 #include <stdio.h>
 #include <string.h>
@@ -19,7 +19,7 @@
 #define HZ_5    3
 #define RES_HD  0
 #define RES_SD  1
-#define FILE_TABLE_LEN 100
+#define FILE_TABLE_LEN 1000
 #define CRITICAL_RUN_LENGTH 20
 #define CAPTURE_PERIOD_MINUTES 40
 #define GPS_CAPTURE_PERIOD_MINUTES (CAPTURE_PERIOD_MINUTES * 6)
@@ -74,14 +74,21 @@
 #define OUT_OF_SERVICE 0
 
 struct s_qp {
+    int frame_count;            // starts with 0
     int crf;                    // qp value
     int next_crf;               // filter strength
+    int estate;                 // encoder state derived from the bit-rate guidance
+    float embps;                // output bit rate produced by the encoder
+    double ein_TS;              // encoder in TS in ms
+    double eout_TS;             // encoder out TS in ms
 };
 
 struct s_file_table_entry {
     char rx_pre[500];           // receive side file name prefix
     char tx_pre[500];           // transmit side file name prefix
     char qp_pre[500];           // encoder stat file name prefix
+    char ipath_pre[500];        // ipath prefix
+    char gps_pre[500];           // gps file name prefix
 };
 
 struct s_service {
@@ -192,8 +199,10 @@ struct frame {
     float       nm1_bit_rate;               // bit rate of previous (n-1) frame in Mbps
     unsigned    nm1_size;                   // size of the previous frame
     double      nm1_rx_epoch_ms_earliest_packet;    //rx time stamp of the earliest arriving packet for the previous (n-1) frame
+    int         estate;                     // encoder state - equivalent to bit rate guidance to encoder
     float       EMbps;                      // encoder required bit rate for this frame duration
     float       DMbps;                      // delivered bit rate for this frame
+    float       deficit;                    // accummulated deficit of guided vs encoded  bit rates
 
     double      cdisplay_epoch_ms;          // the time stamp (current) where this frame is expeceted to be displayed
     double      ndisplay_epoch_ms;          // the time stamp when this frame's display will end. Next frame should arrive by this itme.
@@ -207,11 +216,13 @@ struct frame {
 	struct s_coord	coord;					// interpolated coordinates based on gps file
 	float			speed; 					// interpolated speed (m/s) of this frame
 
-    struct s_brmdata *brmdp;                // bit-rate modulation for this frame
+    struct s_brmdata *brmdp;                // brmd entry closest in time to the tx time of the 1st packet of the frame
 
     int brm_changed;                        // 1 if this encoder quality state change in this frame
     int brm_run_length;                     // valid if brm_changed==1 and counts run length of the previous brm state
 
+    int estate_run_length;                  // run of frames with the current encoder state
+    int estate_run_finished;                // 1 if this frame is end of same estate run
     int crf_run_length;                     // run of frames with crf == 50
     int crf_run_finished;                   // 1 if this frame is end of a crf = 50 run
     int critical_crf_run_length;            // run of crames with crf==50 && 3 channels in poor quality
@@ -241,10 +252,14 @@ struct s_session {
     struct stats    br, *brp;               // frame bit-rate stats: count = number of frames below too_low_bit_rate parameter
     struct stats    cts, *ctsp;             // camera time-stamp
     struct stats    rpt, *rptp;             // repeated frames
-    struct stats    estate, *estatep;// estate
+    struct stats    estate, *estatep;       // estate
     struct stats    per_HBR, *per_HBRp;     // % of frames the encoder is in high bit rate mode
-    struct stats    per_IBR, *per_IBRp;     // % of frames the encoder is in intermediate BR mode
+    struct stats    per_IBR1, *per_IBR1p;     // % of frames the encoder is in intermediate BR mode
+    struct stats    per_IBR2, *per_IBR2p;     // % of frames the encoder is in intermediate BR mode
     struct stats    per_LBR, *per_LBRp;     // % of frames the encoder is in the low bit rate mode
+    struct stats    per_ncrf, *per_ncrfp;   // % of frames ncrf>=20
+    struct stats    per_qp50, *per_qp50p;   // % of frames crf=50
+    struct stats    per_cblur, *per_cblurp;   // % of frames crf=50
     // dedup packet level stats
     struct stats    c2v, *c2vp;             // camera to video latency
     struct stats    v2t, *v2tp;             // best encoder to transmit for a packet
@@ -262,7 +277,7 @@ struct s_session {
 };
 
 struct s_capture { // stats for the capture session - the work list
-// 	max c2d	eMBps estate	avg t2r	max t2r	avg c2r	max c2r	% c0 pq	% c1 pq	% c2 pq	% eHBR	%eIBR	%eLBR	% Res eff	dedup retx	c0 retx	c1 retx	c2 retx	pkts	frames	C period	V frrames
+// 	max c2d	eMBps estate	avg t2r	max t2r	avg c2r	max c2r	% c0 pq	% c1 pq	% c2 pq	% eHBR	%eIBR1	% eIBR2 %eLBR %ncfrf % Res eff	dedup retx	c0 retx	c1 retx	c2 retx	pkts	frames	C period	V frrames
     float max_c2d;                         // max c2d in the file
     float avg_eMbps;                        // 
     float avg_estate;
@@ -271,8 +286,12 @@ struct s_capture { // stats for the capture session - the work list
     float avg_c2r;
     float max_c2r;
     float per_eHBR;
-    float per_eIBR; 
+    float per_eIBR1; 
+    float per_eIBR2; 
     float per_eLBR;
+    float per_ncrf;
+    float per_qp50;
+    float per_cblur;
     float dedup_retx;
     float c0_retx;
     float c1_retx; 
@@ -379,6 +398,9 @@ void update_frame_packet_stats (
 
 // called after receiving the last packet of the frame and updates brm stats
 void update_brm_run_length (struct frame *fp);
+
+// called after receiving the last packet of the frame and updates estate run length
+void update_estate_run_length (struct frame *fp);
 
 // called after receiving the last packet of the frame and updates crf run length
 void update_crf_run_length (struct frame *fp);
@@ -608,6 +630,7 @@ char    rx_pre[500], *rx_prep = rx_pre;         // receive side meta data prefix
 char    ld_pre[500], *ld_prep = ld_pre;         // latency file prefix 
 char    sd_pre[500], *sd_prep = sd_pre;         // service file prefix 
 char    qp_pre[500], *qp_prep = qp_pre;         // qp log prefix 
+char    qp1_pre[500], *qp1_prep = qp1_pre;      // qp1 log prefix 
 char    gps_pre[500], *gps_prep = gps_pre;      // gos file prefix
 char    anno_pre[500], *anno_prep = anno_pre;   // annotation file prefix`service file prefix
 FILE    *md_fp = NULL;                          // meta data file name
@@ -633,13 +656,14 @@ float   minimum_acceptable_bitrate = 0.5;       // used for stats generation onl
 unsigned maximum_acceptable_c2rx_latency = 110; // frames considered late if the latency exceeds this 
 unsigned anlist[MAX_NUM_OF_ANNOTATIONS][2];     // mmanual annotations
 int     len_anlist=0;                           // length of the annotation list
-int     have_gps_metadata = 0;                  // set to 1 if gps meta data exists
+int     have_gps_log = 0;                  // set to 1 if gps meta data exists
 int     have_anno_metadata = 0;                 // set to 1 if annotation metad ata exists
 int     have_carrier_metadata = 0;              // set to 1 if per carrier meta data is available
 int     have_tx_log = 0;                        // set to 1 if transmit log is available
 int     have_ld_log = 0;                        // set to 1 if latency log is available
 int     have_sd_log = 0;                        // set to 1 if service log is available
 int     have_qp_log = 0;                        // set to 1 if qp log is
+int     have_qp1_log = 0; 
 int     have_brm_log = 0;                       // 1 if bit-rate modulation log is available
 int     have_avgq_log = 0;                      // 1 if rolling average log is available
 int     new_sendertime_format = 2;              // set to 1 if using embedded sender time format
@@ -702,6 +726,8 @@ int main (int argc, char* argv[]) {
         strcpy (file_table[i].qp_pre, ""); 
         strcpy (file_table[i].rx_pre, ""); 
         strcpy (file_table[i].tx_pre, ""); 
+        strcpy (file_table[i].ipath_pre, ""); 
+        strcpy (file_table[i].gps_pre, ""); 
     }
 
     //  read command line arguments
@@ -731,6 +757,7 @@ int main (int argc, char* argv[]) {
         else if (strcmp (*argv, "-qp_pre") == MATCH) {
             strcpy (qp_prep, *++argv); 
             have_qp_log = 1; 
+            have_qp1_log = 0; 
         }
         // bit-rate modulation logfile
         else if (strcmp (*argv, "-brm_pre") == MATCH) {
@@ -748,7 +775,7 @@ int main (int argc, char* argv[]) {
         }
         // gps data file
         else if (strcmp (*argv, "-gps") == MATCH) {
-            have_gps_metadata = 1;
+            have_gps_log = 1;
             strcpy (gps_prep, *++argv);
         }
         // annotation file
@@ -881,8 +908,11 @@ int main (int argc, char* argv[]) {
     if (flist_idx < 0) goto SKIP_FILE_LIST; 
 
 PROCESS_NEXT_FILE: 
+    ipathp = file_table[flist_idx].ipath_pre;
+    gps_prep = file_table[flist_idx].gps_pre;
     rx_prep = file_table[flist_idx].rx_pre; 
     sprintf (qp_prep, "%s_%s", "qp",  file_table[flist_idx].qp_pre); 
+    sprintf (qp1_prep, "%s_%s", "qp1",  file_table[flist_idx].qp_pre); 
     sprintf (tx_prep, "%s_%s", "uplink_queue", file_table[flist_idx].tx_pre); 
     sprintf (ld_prep, "%s_%s", "latency", file_table[flist_idx].tx_pre); 
     sprintf (sd_prep, "%s_%s", "service", file_table[flist_idx].tx_pre); 
@@ -890,8 +920,9 @@ PROCESS_NEXT_FILE:
     sprintf (avgq_prep, "%s_%s", "avgQ", file_table[flist_idx].tx_pre); 
 
     have_tx_log = have_ld_log = have_sd_log = have_brm_log = 1;
-    have_qp_log = strlen (qp_prep) != 0;
-    have_avgq_log = 0;
+    have_qp_log = strlen (file_table[flist_idx].qp_pre) != 0;
+    have_gps_log = strlen (file_table[flist_idx].gps_pre) != 0;
+    have_qp1_log = 0; have_avgq_log = 0;
 
     printf ("rx_prep: %s\n", rx_prep); 
     printf ("tx_prep: %s\n", tx_prep); 
@@ -936,13 +967,16 @@ SKIP_FILE_LIST:
     // qp log file
     if (have_qp_log) {
          sprintf (bp, "%s%s.log", ipathp, qp_prep); 
-        if ((qp_fp = open_file (bp, "r")) != NULL) {
+        if ((qp_fp = fopen (bp, "r")) != NULL)
             read_qp(qp_fp);
+        else { // check if qp1 file exists instead
+            sprintf (bp, "%s%s.log", ipathp, qp1_prep); 
+            if ((qp_fp = open_file (bp, "r")) != NULL) read_qp(qp_fp);
         }
     }
 
     // gps data file
-    if (have_gps_metadata) {
+    if (have_gps_log) {
         sprintf (bp, "%s%s.csv", ipathp, gps_prep); 
         if ((gps_fp = open_file (bp, "r")) != NULL)
             len_gps = read_gps(gps_fp);
@@ -1138,6 +1172,7 @@ SKIP_FILE_LIST:
             // update bit rates
             update_bit_rate (cfp, lmdp, cmdp);
             update_brm_run_length (cfp);
+            if (have_qp_log) update_estate_run_length (cfp); 
             if (have_qp_log) update_crf_run_length (cfp); 
             if (have_qp_log) update_critical_crf_run_length (fdp-1, cfp); 
             calculate_Mbps (fdp-1, cfp); 
@@ -1173,6 +1208,9 @@ SKIP_FILE_LIST:
        cfp->missing += 1; // not the correct number of missing packets but can't do better
     update_bit_rate (cfp, lmdp, cmdp); 
     update_brm_run_length (cfp);
+    if (have_qp_log) update_estate_run_length (cfp); 
+    if (have_qp_log) update_crf_run_length (cfp); 
+    if (have_qp_log) update_critical_crf_run_length (fdp-1, cfp); 
     calculate_Mbps (fdp-1, cfp); 
     update_session_frame_stats (ssp, cfp);
 
@@ -1233,6 +1271,7 @@ void read_worklist (FILE *fp) {
     int srx_defined = 0;
     int stx_defined = 0;
     int ipath_defined = 0;
+    int gps_defined = 0; 
     int comment_nest_count = 0;
     char line[MAX_LINE_SIZE], *linep = line;
     char token[100], *tokenp = token;
@@ -1285,8 +1324,14 @@ void read_worklist (FILE *fp) {
             if (strlen (tokenp) == 0)
                 FATAL ("read_worklist: Missing file name argument in line: %s", line)
             strcpy (gps_prep, tokenp);
-            have_gps_metadata = 1; 
+            gps_defined = 1; 
         } 
+        else if (strcmp (tokenp, "-no_gps") == MATCH) {
+            gps_defined = 0; 
+        }
+        else if (strcmp (tokenp, "-nogps") == MATCH) {
+            gps_defined = 0; 
+        }
         else if (strcmp (tokenp, "-ipath") == MATCH) {
             get_token (linep, '"', tokenp); // path name
             if (strlen (tokenp) == 0)
@@ -1303,6 +1348,8 @@ void read_worklist (FILE *fp) {
         // end of parse a non-comment line
             
         if (stx_defined && srx_defined) {
+                strcpy (file_table[flist_idx].ipath_pre, ipathp); 
+                if (gps_defined) strcpy (file_table[flist_idx].gps_pre, gps_prep); 
                 flist_idx++;
                 if (flist_idx == FILE_TABLE_LEN)
                     FATAL ("main: file list exceeds table size, increase FILE_TABLE_LEN%s\n", "")
@@ -1402,7 +1449,7 @@ struct s_latency *find_ldp_by_packet_num (int packet_num, double rx_epoch_ms, st
 
 } // find_ldp_by_packet_num
 
-// returns pointer to the lsp equal to or closest smaller lsp to the specified epoch_ms
+// returns pointer to the lsp equal to or closest smaller bp_epoch_ms to the specified epoch_ms
 struct s_latency *find_closest_lsp (double epoch_ms, struct s_latency *lsp, int len_ld) {
 
     struct  s_latency  *left, *right, *current;    // current, left and right index of the search
@@ -1549,8 +1596,18 @@ void read_sd (FILE *fp) {
 } // end of read_sd
 
 // reads qp log file in an array
+// old qp file format
 // CH0-EN [INFO ][1688585482.859] Loop enter on frame 5
 // "CH0-EN [INFO ][1688585482.894] 5th frame crf: 50 next crf: 50
+
+// qp1 file formats
+// CH0-EN [INFO ][1690223028.556] Loop enter on frame 0
+// CH0-EN [INFO ][1690223032.685] 0 bps: expected: 3000000 encoded: 9947040
+// CH0-EN [INFO ][1690223032.685] 0th frame crf: 42 next crf: 0
+// 7-28 onwards
+// CH0-EN [INFO ][1690574133.318] Loop enter on frame 00
+// CH0-EN [INFO ][1690574133.318] 0th frame crf: 0 next crf: 0
+// CH0-EN [INFO ][1690574137.449] 0 bps: expected: 3000000 encoded: 10855920
 
 void read_qp (FILE *fp) {
     // allocate storate for service data log
@@ -1560,34 +1617,28 @@ void read_qp (FILE *fp) {
     
     printf ("Reading qp log file\n"); 
     char qpline [MAX_LINE_SIZE], *qplinep = qpline; 
-    char d[50], frame_num_str[50]; // dummy
-    int n, last_crf, crf, last_next_crf, next_crf, last_frame_num, frame_num; 
-    last_crf = 0; last_next_crf = 0; last_frame_num = -1; 
+    char d[50]; // dummy
+    double dfl; // dummy
+    int dn; // dummy
+    int n, e1, e2, found_line1=0, found_line2=0, found_line3=0, at_first_line=1;  
     while (fgets (qpline, MAX_LINE_SIZE, fp) != NULL) {
-        if ((n = sscanf (qpline, "%s %s %s %s %s %s %d %s %s %d", 
-            d, d, d, frame_num_str, d, d, &crf, d, d, &next_crf)) != 10)
-            continue; 
-
-        // extract frame number
-        if ((n = sscanf (frame_num_str, "%d", &frame_num)) != 1) {
-            WARN ("read_qp: could not find frame number in line %s\n", qpline)
-            continue; 
+        if ((n = sscanf (qpline, "%s %s %[^\[][%lf %s %s %s %s %s %d", 
+            d, d, d, &dfl, d, d, d, d, d, &dn)) == 10)
+            if (at_first_line)
+                at_first_line = 0;
+            else { // found first line of the next info packet
+                qpp++; len_qpd++;
+                if (len_qpd == QP_BUFFER_SIZE) 
+                    FATAL ("read_qp: qp array is not large enough. Increase QP_BUFFER_SIZE%s\n","")
+            }
+        else if ((n = sscanf (qpline, "%s %s %[^\[][%lf %s %d %s %s %d %s %d", 
+            d, d, d, &(qpp->ein_TS), d, &(qpp->frame_count), d, d, &e1, d, &e2)) == 11) {
+            qpp->estate = e1==1500000? 3 : e1==2499900? 1: e1==3999000? 2: 0;
+            qpp->embps = (float) e2 / 1000000;
+            have_qp1_log = 1; 
+        } else if ((n = sscanf (qpline, "%s %s %[^\[][%lf %s %s %s %s %d %s %s %d", 
+            d, d, d, &(qpp->eout_TS), d, d, d, d, &(qpp->crf), d, d, &(qpp->next_crf))) == 12) {
         }
-        // check for jump in frame numbers
-        if (frame_num != last_frame_num+1) 
-            // fill in missing frames with the last known crf value
-            while (last_frame_num < frame_num) {
-                qpp->crf = last_crf; 
-                qpp->next_crf = last_next_crf; 
-                qpp++; len_qpd++; last_frame_num++;
-            } // while there are missing frames
-        
-        qpp->crf = crf; 
-        qpp->next_crf = next_crf; 
-        qpp++; len_qpd++;
-        if (len_qpd == QP_BUFFER_SIZE) FATAL ("read_qp: qp array is not loarge enough. Increase QP_BUFFER_SIZE%s\n","")
-        last_frame_num = frame_num;
-        last_crf = crf;
     } // while there are more lines in the file
 
     // checks
@@ -2543,7 +2594,7 @@ void init_frame (
         fp->camera_epoch_ms += fp->frame_rate==HZ_30? frame_period : fp->frame_rate==HZ_15? 66.66 : fp->frame_rate==HZ_10? 100 : 200;
     } else {
         // abrupt start of this frame AND abrupt end of the previous frame. Now we can't tell how many packets each frame lost
-        // have assigned one missing packet to previous frame. So will assign the remaining packets to this frame. 
+        // have assigned one missing packet to previous fra0e. So will assign the remaining packets to this frame. 
         fp->missing = cmdp->packet_num - (lmdp->packet_num +1) -1; 
         fp->camera_epoch_ms += fp->frame_rate==HZ_30? frame_period : fp->frame_rate==HZ_15? frame_period*2: fp->frame_rate==HZ_10? 100 : 200;
     }
@@ -2561,6 +2612,8 @@ void init_frame (
     fp->fast_channel_count = 0;
     if (first_frame) fp->brm_changed = 0;
     if (fp->brm_changed) fp->brm_run_length = 1; 
+    if (first_frame) fp->estate_run_finished = 0; 
+    if (fp->estate_run_finished) fp->estate_run_length = 1; 
     // no need to initialize crf_run_lenght and crf_run_finished because the update_ takes care of it
 } // end of init_frame
 
@@ -2591,26 +2644,44 @@ void emit_frame_header (FILE *fp) {
     // frame stat header
     fprintf (fp, "F#, ");
     fprintf (fp, "CTS, ");
-    fprintf (fp, "Late, ");
-    fprintf (fp, "Miss, ");
+    fprintf (fp, "c2d, ");
+    fprintf (fp, "est, ");
+    fprintf (fp, "e0r, ");
+    fprintf (fp, "e3r, ");
+    fprintf (fp, "e1r, ");
+    fprintf (fp, "e2r, ");
+    fprintf (fp, "crf, ");
+    fprintf (fp, "ncrf, ");
+    // fprintf (fp, "Late, ");
+    // fprintf (fp, "Miss, ");
     // fprintf (fp, "anno, ");
     // fprintf (fp, "0fst, ");
-    fprintf (fp, "SzB, ");
+    // fprintf (fp, "SzB, ");
     fprintf (fp, "SzP, ");
-    fprintf (fp, "c2d, ");
-    fprintf (fp, "estate, ");
-    fprintf (fp, "chpq, ");
-    fprintf (fp, "crf, ");
-    fprintf (fp, "nxt_crf, ");
-    fprintf (fp, "c50_rl, ");
-    fprintf (fp, "Cc50_rl, ");
-    fprintf (fp, "EMbps,");
+    fprintf (fp, "mbps,");
+    fprintf (fp, "def,");
+    fprintf (fp, "oc0, ");
+    fprintf (fp, "oc1, ");
+    fprintf (fp, "oc2, ");
+    // fprintf (fp, "et2r0, ");
+    // fprintf (fp, "et2r1, ");
+    // fprintf (fp, "et2r2, ");
+    fprintf (fp, "is0, ");
+    fprintf (fp, "is1, ");
+    fprintf (fp, "is2, ");
+    fprintf (fp, "cq0, ");
+    fprintf (fp, "cq1, ");
+    fprintf (fp, "cq2, ");
+    fprintf (fp, "cpq, ");
+    fprintf (fp, "cgq, ");
+    // fprintf (fp, "50rl, ");
+    // fprintf (fp, "crl, ");
     // fprintf (fp, "DMbps, ");
     fprintf (fp, "Lat, ");
     fprintf (fp, "Lon, ");
     fprintf (fp, "mph, ");
-    fprintf (fp, "Rpt, ");
-    fprintf (fp, "skp, ");
+    // fprintf (fp, "Rpt, ");
+    // fprintf (fp, "skp, ");
     // fprintf (fp, "dlv, ulv, ");     // modulation down / up latency violation
 
     fprintf (fp, "1st Pkt, ");
@@ -2620,8 +2691,8 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "c2t, ");
     fprintf (fp, "t2r, ");
     fprintf (fp, "c2r, ");
-    fprintf (fp, "ooo, ");
-    fprintf (fp, "res, ");
+    // fprintf (fp, "ooo, ");
+    // fprintf (fp, "res, ");
     
     // time stamps at the end 
     fprintf (fp, "1st TX_TS, ");
@@ -2629,16 +2700,16 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "last Rx_TS, ");
     fprintf (fp, "earliest Rx_TS, ");
     fprintf (fp, "latest Rx_TS, ");
-    fprintf (fp, "cdsp_TS, ");
-    fprintf (fp, "ndsp_TS, ");
-    fprintf (fp, "early, ");
-    fprintf (fp, "Latest-earliest Rx, ");
-    fprintf (fp, "Last-1st Tx, ");
+    // fprintf (fp, "cdsp_TS, ");
+    // fprintf (fp, "ndsp_TS, ");
+    // fprintf (fp, "early, ");
+    // fprintf (fp, "Latest-earliest Rx, ");
+    // fprintf (fp, "Last-1st Tx, ");
 
     // bit-rate modulation
-    fprintf (fp, "ebr, ");
-    fprintf (fp, "esrl, ");
-    fprintf (fp, "lqsrl,");
+    // fprintf (fp, "ebr, ");
+    // fprintf (fp, "esrl, ");
+    // fprintf (fp, "lqsrl,");
     fprintf (fp, "c0q, ");
     fprintf (fp, "c1q, ");
     fprintf (fp, "c2q, ");
@@ -2668,9 +2739,12 @@ void emit_packet_header (FILE *ps_fp) {
 	// fprintf (ps_fp, "skp, ");
 	fprintf (ps_fp, "c2d, ");
     fprintf (ps_fp, "est,");
-    fprintf (ps_fp, "chpq, ");
+    fprintf (ps_fp, "cpq, ");
+    fprintf (ps_fp, "socc0, ");
+    fprintf (ps_fp, "socc1, ");
+    fprintf (ps_fp, "socc2, ");
     fprintf (ps_fp, "crf,");
-    fprintf (ps_fp, "nxt_crf,");
+    fprintf (ps_fp, "ncrf,");
     fprintf (ps_fp, "EMbps,");
 
     // Delivered packet meta data
@@ -2741,7 +2815,7 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
 
     int i, chpq=0; 
     for (i=0; i<3; i++)
-        chpq += fp->brmdp->channel_quality_state[i]==1 || fp->brmdp->channel_quality_state[i]==2;
+        chpq += brmdp->channel_quality_state[i]==1 || brmdp->channel_quality_state[i]==2;
 
     // Frame metadata for reference (repeated for every packet)
     fprintf (ps_fp, "%u, ", fp->frame_count);
@@ -2759,6 +2833,9 @@ void emit_frame_stats_for_per_packet_file (struct frame *fp, struct s_metadata *
 	fprintf (ps_fp, "%.1f, ", fp->c2d_frames);
     fprintf (ps_fp, "%d,", brmdp->encoder_state);
     fprintf (ps_fp, "%d, ", chpq);
+    fprintf (ps_fp, "%d,", (find_closest_tdp(fp->camera_epoch_ms, td0, len_td0))->occ);
+    fprintf (ps_fp, "%d,", (find_closest_tdp(fp->camera_epoch_ms, td1, len_td1))->occ);
+    fprintf (ps_fp, "%d,", (find_closest_tdp(fp->camera_epoch_ms, td2, len_td2))->occ);
     if (have_qp_log && (fp->frame_count <= len_qpd)) {
         fprintf (ps_fp, "%d,", qpd[fp->frame_count-1].crf); // -1 because frame 1 is store in entry 0
         fprintf (ps_fp, "%d,", qpd[fp->frame_count-1].next_crf); 
@@ -3234,41 +3311,66 @@ void emit_per_packet_analytics (
 void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1 for the last frame of the session 
 
     static int fast_to_slow_edge_count = 0, slow_to_fast_edge_count = 0; 
-    int i, chpq=0; 
-    for (i=0; i<3; i++)
-        chpq += p->brmdp->channel_quality_state[i]==1 || p->brmdp->channel_quality_state[i]==2;
+    struct s_latency *ls0p = find_closest_lsp(p->camera_epoch_ms, ls0, len_ld0);
+    struct s_latency *ls1p = find_closest_lsp(p->camera_epoch_ms, ls1, len_ld1);
+    struct s_latency *ls2p = find_closest_lsp(p->camera_epoch_ms, ls2, len_ld2);
+    struct s_brmdata *brmdp = find_closest_brmdp (p->camera_epoch_ms, brmdata, len_brmd);
+    int i, chpq=0, chgq=0; 
+    for (i=0; i<3; i++) chpq += brmdp->channel_quality_state[i]==1 || brmdp->channel_quality_state[i]==2;
+    // for (i=0; i<3; i++) chpq += brmdp->channel_quality_state[i]!=0;
+    // for (i=0; i<3; i++) chgq += brmdp->channel_quality_state[i]==0;
+    for (i=0; i<3; i++) chgq += brmdp->channel_quality_state[i]==0 || brmdp->channel_quality_state[i]==3;
+    
 
     if ((p->frame_count % 1000) == 0)
         printf ("at frame %d\n", p->frame_count); 
 
-    // for wats tool
     fprintf (fs_fp, "%u, ", p->frame_count);
     fprintf (fs_fp, "%.0lf, ", p->camera_epoch_ms);
-    fprintf (fs_fp, "%u, ", p->late);
-    fprintf (fs_fp, "%u, ", p->missing);
-    // fprintf (fs_fp, "%u, ", p->has_annotation);
-    // fprintf (fs_fp, "%d, ", (p->fast_channel_count != p->packet_count)); 
-    fprintf (fs_fp, "%u, ", p->size);
-    fprintf (fs_fp, "%u, ", p->packet_count);
     fprintf (fs_fp, "%.1f, ", p->c2d_frames);
-    fprintf (fs_fp, "%d, ", p->brmdp->encoder_state);
-    fprintf (fs_fp, "%d, ", chpq);
+    fprintf (fs_fp, "%d, ", p->estate);
+    if (have_qp_log && p->estate==0 && p->estate_run_finished) fprintf (fs_fp, "%d,", p->estate_run_length); else fprintf (fs_fp, "0,");
+    if (have_qp_log && p->estate==3 && p->estate_run_finished) fprintf (fs_fp, "%d,", p->estate_run_length); else fprintf (fs_fp, "0,");
+    if (have_qp_log && p->estate==1 && p->estate_run_finished) fprintf (fs_fp, "%d,", p->estate_run_length); else fprintf (fs_fp, "0,");
+    if (have_qp_log && p->estate==2 && p->estate_run_finished) fprintf (fs_fp, "%d,", p->estate_run_length); else fprintf (fs_fp, "0,");
     if (have_qp_log && (p->frame_count <= len_qpd)) {
          fprintf (fs_fp, "%d,", qpd[p->frame_count-1].crf); // -1 because frame 1 is store in entry 0
          fprintf (fs_fp, "%d,", qpd[p->frame_count-1].next_crf); // -1 because frame 1 is store in entry 0
-    }
-    else fprintf (fs_fp, ", , ");
+    } else fprintf (fs_fp, "0,0,");
+    // fprintf (fs_fp, "%u, ", p->late);
+    // fprintf (fs_fp, "%u, ", p->missing);
+    // fprintf (fs_fp, "%u, ", p->has_annotation);
+    // fprintf (fs_fp, "%d, ", (p->fast_channel_count != p->packet_count)); 
+    // fprintf (fs_fp, "%u, ", p->size);
+    fprintf (fs_fp, "%u, ", p->packet_count);
+    fprintf (fs_fp, "%.1f,", p->EMbps);
+    fprintf (fs_fp, "%.1f,", p->deficit);
+    fprintf (fs_fp, "%d,", (find_closest_tdp(p->camera_epoch_ms, td0, len_td0))->occ);
+    fprintf (fs_fp, "%d,", (find_closest_tdp(p->camera_epoch_ms, td1, len_td1))->occ);
+    fprintf (fs_fp, "%d,", (find_closest_tdp(p->camera_epoch_ms, td2, len_td2))->occ);
+    // fprintf (fs_fp, "%d,", ls0p->t2r_ms + (int) (p->camera_epoch_ms - ls0p->bp_epoch_ms));
+    // fprintf (fs_fp, "%d,", ls1p->t2r_ms + (int) (p->camera_epoch_ms - ls1p->bp_epoch_ms));
+    // fprintf (fs_fp, "%d,", ls2p->t2r_ms + (int) (p->camera_epoch_ms - ls2p->bp_epoch_ms));
+    fprintf (fs_fp, "%d,", (find_closest_sdp(p->camera_epoch_ms, sd0, len_sd0))->state);
+    fprintf (fs_fp, "%d,", (find_closest_sdp(p->camera_epoch_ms, sd1, len_sd1))->state);
+    fprintf (fs_fp, "%d,", (find_closest_sdp(p->camera_epoch_ms, sd2, len_sd2))->state);
+    fprintf (fs_fp, "%d,", brmdp->channel_quality_state[0]);
+    fprintf (fs_fp, "%d,", brmdp->channel_quality_state[1]);
+    fprintf (fs_fp, "%d,", brmdp->channel_quality_state[2]);
+    fprintf (fs_fp, "%d, ", chpq);
+    fprintf (fs_fp, "%d, ", chgq);
+    /*
     if (have_qp_log && p->crf_run_finished) 
-        fprintf (fs_fp, "%d, ", p->crf_run_length); else fprintf (fs_fp, ", ");
+        fprintf (fs_fp, "%d, ", p->crf_run_length); else fprintf (fs_fp, "%d,", 0);
     if (have_qp_log && p->critical_crf_run_finished) 
-        fprintf (fs_fp, "%d, ", p->critical_crf_run_length); else fprintf (fs_fp, ", ");
-    fprintf (fs_fp, "%.1f,", p->EMbps); 
+        fprintf (fs_fp, "%d, ", p->critical_crf_run_length); else fprintf (fs_fp, "%d,", 0);
+    */
     // fprintf (fs_fp, "%.1f, ", p->DMbps);
     fprintf (fs_fp, "%lf, ", p->coord.lat);
     fprintf (fs_fp, "%lf, ", p->coord.lon);
     fprintf (fs_fp, "%.1f, ", (p->speed*3600/1600));
-    fprintf (fs_fp, "%d, ", p->repeat_count);
-    fprintf (fs_fp, "%u, ", p->skip_count);
+    // fprintf (fs_fp, "%d, ", p->repeat_count);
+    // fprintf (fs_fp, "%u, ", p->skip_count);
 
     /*
     // dlv and ulv
@@ -3299,32 +3401,31 @@ void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1
     fprintf (fs_fp, "%.1f, ", p->tx_epoch_ms_1st_packet - p->camera_epoch_ms);      // c2t
     fprintf (fs_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->tx_epoch_ms_1st_packet); // t2r
     fprintf (fs_fp, "%.1f, ", p->rx_epoch_ms_latest_packet - p->camera_epoch_ms);   // Fc2r
-    fprintf (fs_fp, "%u, ", p->out_of_order);
-    fprintf (fs_fp, "%u, ", p->frame_resolution);
+    // fprintf (fs_fp, "%u, ", p->out_of_order);
+    // fprintf (fs_fp, "%u, ", p->frame_resolution);
 
     // time stamps
     fprintf (fs_fp, "%.0lf, ", p->tx_epoch_ms_1st_packet);
     fprintf (fs_fp, "%.0lf, ", p->tx_epoch_ms_last_packet);
     fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_last_packet);
     fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_earliest_packet);
-    fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_latest_packet);
-    fprintf (fs_fp, "%.0lf, ", p->cdisplay_epoch_ms);
-    fprintf (fs_fp, "%.0lf, ", p->ndisplay_epoch_ms);
-    fprintf (fs_fp, "%.01f, ", p->early_ms);
-    fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_latest_packet - p->rx_epoch_ms_earliest_packet);
-    fprintf (fs_fp, "%.0lf, ", p->tx_epoch_ms_last_packet - p->tx_epoch_ms_1st_packet);
+    // fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_latest_packet);
+    // fprintf (fs_fp, "%.0lf, ", p->cdisplay_epoch_ms);
+    // fprintf (fs_fp, "%.0lf, ", p->ndisplay_epoch_ms);
+    // fprintf (fs_fp, "%.01f, ", p->early_ms);
+    // fprintf (fs_fp, "%.0lf, ", p->rx_epoch_ms_latest_packet - p->rx_epoch_ms_earliest_packet);
+    // fprintf (fs_fp, "%.0lf, ", p->tx_epoch_ms_last_packet - p->tx_epoch_ms_1st_packet);
 
     // bit-rate modulation stats
-    fprintf (fs_fp, "%d, ", p->brmdp->bit_rate);
-    if (p->brm_changed) fprintf (fs_fp, "%d, ", p->brm_run_length); else fprintf (fs_fp, ","); 
-    if (p->brm_changed && (p->brmdp->encoder_state == 0)) // low quality run length
-        fprintf (fs_fp, "%d,", p->brm_run_length);
-    else
-        fprintf (fs_fp, ","); 
-    fprintf (fs_fp, "%d, ", p->brmdp->channel_quality_state[0]);
-    fprintf (fs_fp, "%d, ", p->brmdp->channel_quality_state[1]);
-    fprintf (fs_fp, "%d, ", p->brmdp->channel_quality_state[2]);
-    fprintf (fs_fp, "%.0lf, ", p->brmdp->epoch_ms);
+    // fprintf (fs_fp, "%d, ", brmdp->bit_rate);
+    // if (p->brm_changed) fprintf (fs_fp, "%d, ", p->brm_run_length); else fprintf (fs_fp, ","); 
+    // if (p->brm_changed && (brmdp->encoder_state == 0)) // low quality run length
+    //     fprintf (fs_fp, "%d,", p->brm_run_length);
+    // else fprintf (fs_fp, ","); 
+    fprintf (fs_fp, "%d, ", brmdp->channel_quality_state[0]);
+    fprintf (fs_fp, "%d, ", brmdp->channel_quality_state[1]);
+    fprintf (fs_fp, "%d, ", brmdp->channel_quality_state[2]);
+    fprintf (fs_fp, "%.0lf, ", brmdp->epoch_ms);
 
     fprintf (fs_fp, "\n");
             
@@ -3825,11 +3926,18 @@ void update_session_frame_stats (struct s_session *ssp, struct frame *p) {
     // repeated frame 
     update_metric_stats (ssp->rptp, 1, p->repeat_count, 10, 0);
     // encoder state
-    update_metric_stats (ssp->estatep, 1, p->brmdp->encoder_state, 2, 0);
+    update_metric_stats (ssp->estatep, 1, p->estate, 2, 0);
     // bit rate modulation
-    update_metric_stats (ssp->per_HBRp, 1, p->brmdp->encoder_state==0, 1, 0);
-    update_metric_stats (ssp->per_IBRp, 1, p->brmdp->encoder_state==1, 1, 0);
-    update_metric_stats (ssp->per_LBRp, 1, p->brmdp->encoder_state==2, 1, 0);
+    update_metric_stats (ssp->per_HBRp, 1, p->estate==0, 1, 0);
+    update_metric_stats (ssp->per_IBR1p, 1, p->estate==1, 1, 0);
+    update_metric_stats (ssp->per_IBR2p, 1, p->estate==2, 1, 0);
+    update_metric_stats (ssp->per_LBRp, 1, p->estate==3, 1, 0);
+    // ncrf modulation
+    if (have_qp_log && (p->frame_count <= len_qpd)) {
+        update_metric_stats (ssp->per_ncrfp, 1, qpd[p->frame_count-1].next_crf>=20, 1, 0);
+        update_metric_stats (ssp->per_qp50p, 1, qpd[p->frame_count-1].crf==50, 1, 0);
+        update_metric_stats (ssp->per_cblurp, 1, qpd[p->frame_count-1].crf==50 && qpd[p->frame_count-1].next_crf>=20, 1, 0);
+    }
 
     return;
 } // update_session_frame_stats
@@ -3859,8 +3967,12 @@ void emit_session_stats (struct s_session *ssp) {
     compute_metric_stats (ssp->rptp, frame_count); 
     compute_metric_stats (ssp->estatep, frame_count); 
     compute_metric_stats (ssp->per_HBRp, frame_count); 
-    compute_metric_stats (ssp->per_IBRp, frame_count); 
+    compute_metric_stats (ssp->per_IBR1p, frame_count); 
+    compute_metric_stats (ssp->per_IBR2p, frame_count); 
     compute_metric_stats (ssp->per_LBRp, frame_count); 
+    compute_metric_stats (ssp->per_ncrfp, frame_count); 
+    compute_metric_stats (ssp->per_qp50p, frame_count); 
+    compute_metric_stats (ssp->per_cblurp, frame_count); 
     // dedup packet level stats
     compute_metric_stats (ssp->c2vp, ssp->pcp->count); 
     compute_metric_stats (ssp->v2tp, ssp->pcp->count); 
@@ -4052,37 +4164,56 @@ void update_bit_rate (struct frame *fp, struct s_metadata *lmdp, struct s_metada
 
 void calculate_Mbps (struct frame *pfp, struct frame *cfp) {
 
-        cfp->EMbps = (cfp->size*8)/frame_period/1000; 
-        
-        // delivered bit rate
-        if (cfp->frame_count < 3) // can't calculate average
-            cfp->DMbps = cfp->EMbps;
-        else {
-            int bytes = cfp->size + pfp->size + (pfp-1)->size;
-            double time = abs(cfp->rx_epoch_ms_latest_packet - (pfp-1)->rx_epoch_ms_earliest_packet);
-            if (time > 10)
-                cfp->DMbps = (bytes*8)/time/1000; 
-            else // not computable reliably so use old value
-                cfp->DMbps = pfp->DMbps;
-        }
+    // guided, encoded bit rates and accummulated deficit
+    struct s_brmdata *brmdp = find_closest_brmdp (cfp->camera_epoch_ms, brmdata, len_brmd);
+    cfp->estate = have_qp1_log? qpd[cfp->frame_count-1].estate : brmdp->encoder_state; 
+    cfp->EMbps = have_qp1_log? qpd[cfp->frame_count-1].embps : (cfp->size*8)/frame_period/1000; 
+    float gmbps = cfp->estate==0? 6.0 : cfp->estate==1? 2.5 : cfp->estate==2? 4.0 : 1.5;
+    cfp->deficit = gmbps - cfp->EMbps + (cfp->frame_count == 1? 0: pfp->deficit); 
+    
+    // delivered bit rate
+    if (cfp->frame_count < 3) // can't calculate average
+        cfp->DMbps = cfp->EMbps;
+    else {
+        int bytes = cfp->size + pfp->size + (pfp-1)->size;
+        double time = abs(cfp->rx_epoch_ms_latest_packet - (pfp-1)->rx_epoch_ms_earliest_packet);
+        if (time > 10)
+            cfp->DMbps = (bytes*8)/time/1000; 
+        else // not computable reliably so use old value
+            cfp->DMbps = pfp->DMbps;
+    }
 } // calculate Mbps
 
 // called after receiving the last packet of the frame and updates brm stats
 void update_brm_run_length (struct frame *fp) {
 
-    struct s_brmdata *brmdp = find_closest_brmdp (fp->tx_epoch_ms_1st_packet, brmdata, len_brmd); 
+    struct s_brmdata *brmdp = find_closest_brmdp (fp->camera_epoch_ms, brmdata, len_brmd); 
 
-    if (fp->frame_count==1) // first frame
-        fp->brm_changed = 1; 
-    else
-        fp->brm_changed = (brmdp->encoder_state != fp->brmdp->encoder_state);
-
-    if (!fp->brm_changed)
+    if (fp->frame_count==1)
+        fp->brm_changed = 0; 
+    else fp->brm_changed = brmdp->encoder_state != fp->brmdp->encoder_state;
+    if (fp->frame_count==1)
+        fp->brm_run_length = 1; 
+    else if (!fp->brm_changed)
         fp->brm_run_length++;   // will be set to 1 in init_frame if brm_changed == 1
 
     fp->brmdp = brmdp; 
     return; 
 } // update_brm_run_length
+
+// called after receiving the last packet of the frame and updates estate run length
+void update_estate_run_length (struct frame *fp) {
+
+    int qpd_index = fp->frame_count - 1; // since frame_count sarts from 1; 
+
+    if (fp->frame_count==1)
+        fp->estate_run_length = 1; 
+    else if (qpd[qpd_index-1].estate == qpd[qpd_index].estate)
+        fp->estate_run_length++; // will be set to 1 in init_frame if estate_run_finished
+    fp->estate_run_finished = (qpd_index+1 >= len_qpd) || (qpd[qpd_index].estate != qpd[qpd_index+1].estate);
+
+    return;
+}
 
 // called after receiving the last packet of the frame and updates crf run length
 void update_crf_run_length (struct frame *fp) {
@@ -4102,7 +4233,7 @@ void update_crf_run_length (struct frame *fp) {
 } // update_crf_run_length
 
 // called after receiving the last packet of the frame and updates crf run length
-// updates the run after it finishes because 
+// updates the run after it finishes 
 void update_critical_crf_run_length (struct frame *pfp, struct frame *cfp) {
 
     int qpd_index = cfp->frame_count - 1; // since frame_count sarts from 1
@@ -4125,7 +4256,7 @@ void update_critical_crf_run_length (struct frame *pfp, struct frame *cfp) {
         && (qpd_index >= len_qpd || qpd[qpd_index].crf != 50 || chpq != 3);
 
     return;
-} // update_crf_run_length
+} // update_critical_crf_run_length
 
 // initializes captures stats
 void init_capture_stats (struct s_capture *p) {
@@ -4143,6 +4274,17 @@ void update_capture_stats (struct s_session *ssp, struct s_capture *csp) {
 
 // prints captures stats or header based on print_header value
 void emit_capture_stats (int print_header, struct s_session *ssp, FILE *fp) {
+    // fix estate encodings
+    double lbr, ibr1, ibr2; 
+    if (print_header) 
+        ;
+    else if (ssp->per_IBR1p->mean==0 && ssp->per_LBRp->mean==0) { // (0,2) encoding
+        lbr = ssp->per_IBR2p->mean; ibr1 = 0.0; ibr2 = 0.0;
+    } else if (ssp->per_LBRp->mean==0) { // (0,1,2) encoding
+        lbr = ssp->per_IBR2p->mean; ibr1 = 0.0; ibr2 = ssp->per_IBR1p->mean;
+    } else { // (0,1,2,3) encoding
+        lbr = ssp->per_LBRp->mean; ibr1 = ssp->per_IBR1p->mean; ibr2 = ssp->per_IBR2p->mean;
+    }
     if (print_header) fprintf (fp, "capture,"); else fprintf (fp, "%s,", rx_prep);
     if (print_header) fprintf (fp, "cd2,"); else fprintf (fp, "%0.1f,", ssp->c2dp->max); 
     if (print_header) fprintf (fp, "eMbps,"); else fprintf (fp, "%0.2f,", ssp->eMbpsp->mean);
@@ -4152,8 +4294,12 @@ void emit_capture_stats (int print_header, struct s_session *ssp, FILE *fp) {
     if (print_header) fprintf (fp, "avg_c2r,"); else fprintf (fp, "%0.1f,", ssp->c2rp->mean);
     if (print_header) fprintf (fp, "estate,"); else fprintf (fp, "%0.1f,", ssp->estatep->mean);
     if (print_header) fprintf (fp, "per_HBR,"); else fprintf (fp, "%0.2f,", ssp->per_HBRp->mean);
-    if (print_header) fprintf (fp, "per_IBR,"); else fprintf (fp, "%0.2f,", ssp->per_IBRp->mean);
-    if (print_header) fprintf (fp, "per_LBR,"); else fprintf (fp, "%0.2f,", ssp->per_LBRp->mean);
+    if (print_header) fprintf (fp, "per_IBR2,"); else fprintf (fp, "%0.2f,", ibr2);
+    if (print_header) fprintf (fp, "per_IBR1,"); else fprintf (fp, "%0.2f,", ibr1);
+    if (print_header) fprintf (fp, "per_LBR,"); else fprintf (fp, "%0.2f,", lbr);
+    if (print_header) fprintf (fp, "per_ncrfge20,"); else fprintf (fp, "%0.2f,", ssp->per_ncrfp->mean);
+    if (print_header) fprintf (fp, "per_qp50,"); else fprintf (fp, "%0.2f,", ssp->per_qp50p->mean);
+    if (print_header) fprintf (fp, "per_cblur,"); else fprintf (fp, "%0.2f,", ssp->per_cblurp->mean);
     if (print_header) fprintf (fp, "dedup_retx,"); else fprintf (fp, "%d,", ssp->dedup_retxp->count);
     if (print_header) fprintf (fp, "c0_retx,"); else fprintf (fp, "%d,", ssp->c0_retxp->count);
     if (print_header) fprintf (fp, "c1_retx,"); else fprintf (fp, "%d,", ssp->c1_retxp->count);
@@ -4181,7 +4327,11 @@ void init_session_stats (struct s_session *p) {
     p->estatep = &(p->estate); init_metric_stats (p->estatep); 
     p->per_HBRp = &(p->per_HBR); init_metric_stats (p->per_HBRp);
     p->per_LBRp = &(p->per_LBR); init_metric_stats (p->per_LBRp);
-    p->per_IBRp = &(p->per_IBR); init_metric_stats (p->per_IBRp);
+    p->per_IBR1p = &(p->per_IBR1); init_metric_stats (p->per_IBR1p);
+    p->per_IBR2p = &(p->per_IBR2); init_metric_stats (p->per_IBR2p);
+    p->per_ncrfp = &(p->per_ncrf); init_metric_stats (p->per_ncrfp);
+    p->per_qp50p = &(p->per_qp50); init_metric_stats (p->per_qp50p);
+    p->per_cblurp = &(p->per_cblur); init_metric_stats (p->per_cblurp);
     // dedup packet level stats
     p->c2vp = &(p->c2v); init_metric_stats (p->c2vp);
     p->v2tp = &(p->v2t); init_metric_stats (p->v2tp);
