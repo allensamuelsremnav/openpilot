@@ -27,7 +27,7 @@ all_assignments = [
             "Gpsd messages from the gpsd listener to trajectory planner. localhost"),
          # Previously used 7003
          Assignment(
-            "Operator_Overlay_Listen", 7777,
+            "Operator_Overlay_Listen", 2221,
             "Overlay messages from decoder, trajectory planner, and gpsd listener to operator (display)."),
          Assignment(
             "Operator_Video_Listen", 8888,

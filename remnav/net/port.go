@@ -15,7 +15,7 @@ const OperatorTrajectoryListen = 6002
 const OperatorGpsdTrajectory = 7001
 
 // Overlay messages from decoder, trajectory planner, and gpsd listener to operator (display).
-const OperatorOverlayListen = 7777
+const OperatorOverlayListen = 2221
 
 // Decoded video messages from decoder to operator (display).
 const OperatorVideoListen = 8888

@@ -13,7 +13,7 @@ OPERATOR_TRAJECTORY_LISTEN = 6002
 OPERATOR_GPSD_TRAJECTORY = 7001
 
 # Overlay messages from decoder, trajectory planner, and gpsd listener to operator (display).
-OPERATOR_OVERLAY_LISTEN = 7777
+OPERATOR_OVERLAY_LISTEN = 2221
 
 # Decoded video messages from decoder to operator (display).
 OPERATOR_VIDEO_LISTEN = 8888
