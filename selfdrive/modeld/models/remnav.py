@@ -8,7 +8,7 @@ options, arguments = getopt.getopt(
     'p:',           # short arguments, p with argument
     ["port="])       # long arguments, port with argument
 
-port=6379
+port=6380
 
 for o, a in options:
   if o in ('-p', '--port'):
