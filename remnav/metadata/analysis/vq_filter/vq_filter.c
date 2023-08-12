@@ -1,8 +1,3 @@
-/*
-ldp
-*/
-// TODO: r2t_TS is broken - it needs to made channel agnostic
-// TODO: est_t2r is broken becausae probe packets have been removed. need to restore probe packets in lsp array
 // TODO: brm time stamp is being incorrectly associated with first packet's time stamp
 #include <stdio.h>
 #include <string.h>
@@ -68,7 +63,7 @@ ldp
 #define CD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
 #define BRM_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*100*3)
 #define AVGQ_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000*3)
-#define LD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
+#define LD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30*20*3)
 #define SD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
 #define FD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30)
 #define QP_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30)
@@ -152,7 +147,7 @@ struct s_cmetadata {
     int len_avgqd; 
     struct s_latency *ldp;          // latency data for this packet
     struct s_latency *lsp;          // latency data for the packet whose bp_TS is closest to tx_TS of this packet
-    int len_ld; 
+    int len_ld, len_ls; 
     struct s_brmdata *brmdp;
 }; 
 
@@ -363,7 +358,7 @@ struct s_carrier {
     int len_avgqd;
     struct s_latency *ldp;              // ldp sorted by packet_num, lsp sorted by bp_epoch_ms
     struct s_latency *lsp;             // ldp sorted by packet_num, lsp sorted by bp_epoch_ms
-    int len_ld; 
+    int len_ld, len_ls; 
     struct s_brmdata *brmdp;
     struct s_txlog *tdp; 
     // len_brmd is a global
@@ -704,6 +699,7 @@ int     len_avgqd0=0, len_avgqd1=0, len_avgqd2=0;
 struct  s_latency *ld0=NULL, *ld1=NULL, *ld2=NULL, *ldall=NULL;  // latency log data array sorted by packet num
 struct  s_latency *ls0=NULL, *ls1=NULL, *ls2=NULL;  // latency log data array sorted by bp_epoch_ms
 int     len_ld0=0, len_ld1=0, len_ld2=0, len_ldall=0;
+int     len_ls0=0, len_ls1=0, len_ls2=0; 
 struct  s_service *sd0=NULL, *sd1=NULL, *sd2=NULL;  // serivce log data array sorted by state transition time
 int     len_sd0=0, len_sd1=0, len_sd2=0;
 struct  s_qp *qpd=NULL;                         // qp log array
@@ -952,6 +948,7 @@ SKIP_FILE_LIST:
 	len_brmd=0; 
 	len_avgqd0=0, len_avgqd1=0, len_avgqd2=0;        
 	len_ld0=0, len_ld1=0, len_ld2=0, len_ldall=0;
+	len_ls0=0, len_ls1=0, len_ls2=0;
 	len_sd0=0, len_sd1=0, len_sd2=0;
     len_qpd=0;
 
@@ -1431,15 +1428,14 @@ struct s_service *find_closest_smaller_sdp (double epoch_ms, struct s_service *s
 
 } // find_closest_smaller_sdp
 
-// returns pointer to the ldp equal to specified packet num with the bp_epoch closes to 
-// specified epoch. If the packet num does not match, then it returns the packet cloest
-// to the specified epoch
+// returns pointer to the ldp equal to specified packet num.
+// If the packet num does not match, then it returns the smallest numbered packet with bp_epoch closest 
+// to the specified rx_epoch
 struct s_latency *find_ldp_by_packet_num (int packet_num, double rx_epoch_ms, struct s_latency *ldp, int len_ld) {
 
     struct  s_latency  *left, *right, *current;    // current, left and right index of the search
 
     left = ldp; right = ldp + len_ld - 1; 
-
     current = left + (right - left)/2; 
     while (current != left) { // there are more than 2 elements to search
         if (packet_num > current->packet_num) {
@@ -1451,8 +1447,9 @@ struct s_latency *find_ldp_by_packet_num (int packet_num, double rx_epoch_ms, st
         }
     } // while there are more than 2 elements left to search
     
-    // when the while exits, the current (and left) is equal to (if current = left edge) or less than specified packet_num
-    if (right->packet_num == packet_num) 
+    // when the while exits, the current (and left) is (1) equal to (if current = left edge) or (2) less than specified packet_num
+    if (left->packet_num != packet_num //  case 1
+        && right->packet_num == packet_num) // case 2
         left = right; 
     // else no match the back propagated packet got lost, so use the nearest smaller packet
 
@@ -1495,7 +1492,7 @@ struct s_latency *find_closest_lsp (double epoch_ms, struct s_latency *lsp, int 
 // sorts latency data array by packet number
 void sort_ld_by_packet_num (struct s_latency *ldp, int len) {
 
-    int i, j, s, sc=0; 
+    int i, j, s;
 
     for (i=1; i<len; i++) {
         j = i; s = 0; 
@@ -1512,13 +1509,6 @@ void sort_ld_by_packet_num (struct s_latency *ldp, int len) {
                 break;
             j--;
         } // end of while jth elment is smaller than one above it
-        /*
-        if (s > 10) {
-            printf ("packet %d: %d\n", (ldp+j)->packet_num, s);
-            if (++sc > 10)
-                exit (0);
-        }
-        */
     } // for elements in the log data array
 
     return;
@@ -1571,22 +1561,33 @@ int read_ld_line (FILE *fp, struct s_latency *ldp) {
             dummy_str, &ldp->packet_num, 
             dummy_str, &ldp->t2r_ms, 
             dummy_str, &ldp->bp_epoch_ms,
-            dummy_str, &ldp->tx_channel)) !=12)
-        || (ldp->rx_channel != ldp->tx_channel)
-        || (ldp->packet_num == 4294967295) // skip probe packets
-        || (ldp->packet_num == 2147483647)) { // skip probe packets
-
-        if (n != 12) // did not successfully parse this line
-            FWARN(warn_fp, "read_ld_line: Skipping line %s\n", ldlinep)
-
-        // else did not match the channel
-        if (fgets (ldline, MAX_LINE_SIZE, fp) == NULL)
-            // reached end of the file
+            dummy_str, &ldp->tx_channel)) !=12)) {
+        // || (ldp->rx_channel != ldp->tx_channel)
+        // || (ldp->packet_num == 4294967295) // skip probe packets
+        // || (ldp->packet_num == 2147483647)) { // skip probe packets
+        FWARN(warn_fp, "read_ld_line: Skipping line %s\n", ldlinep)
+        if (fgets (ldline, MAX_LINE_SIZE, fp) == NULL) // reached end of the file
             return 0;
     } // while not successfully scanned a transmit log line
-
     return 1;
 } // end of read_ld_line
+
+// returns 1 if probe packet
+int probe_packet (struct s_latency *ldp) {
+    return ldp->packet_num==4294967295 || ldp->packet_num==2147483647;
+}
+
+// adds to per carrier array if sending and receiving channels match
+int add_to_per_carrier_latency_array (int ch, struct s_latency *ldp, int is_probe_packet,  
+struct s_latency *ldp_ch, int *len_ld, struct s_latency *lsp_ch, int *len_ls) {
+    // if (ldp->rx_channel==ch && ldp->tx_channel==ch) {
+    if (ldp->tx_channel==ch) {
+        *lsp_ch = *ldp; (*len_ls)++; 
+        if (!is_probe_packet) {*ldp_ch = *ldp; (*len_ld)++;}
+        return 1; 
+    } // sending and receiving channels are the same
+    return 0; 
+} // end of add_to_per_latency_array
 
 void read_sd (FILE *fp) {
     // allocate storate for service data log
@@ -1671,7 +1672,7 @@ void read_ld (FILE *fp) {
     ld1 = (struct s_latency *) malloc (sizeof (struct s_latency) * LD_BUFFER_SIZE);
     ld2 = (struct s_latency *) malloc (sizeof (struct s_latency) * LD_BUFFER_SIZE);
     ldall = (struct s_latency *) malloc (sizeof (struct s_latency) * LD_BUFFER_SIZE);
-    if (ld0==NULL || ld1==NULL || ld2==NULL || ldall)
+    if (ld0==NULL || ld1==NULL || ld2==NULL || ldall==NULL)
         FATAL("Could not allocate storage to read the latency log file in an array%s\n", "")
     struct s_latency *ld0p=ld0, *ld1p=ld1, *ld2p=ld2, *ldallp=ldall;
     
@@ -1688,10 +1689,25 @@ void read_ld (FILE *fp) {
     struct s_latency ld, *ldp=&ld;
     struct s_latency ls, *lsp=&ls;
 	while (read_ld_line (fp, ldp)) {
-        if      (ldp->rx_channel == 0) {*ld0p = *ls0p = *ldp; len_ld0++; ld0p++; ls0p++;}
-        else if (ldp->rx_channel == 1) {*ld1p = *ls1p = *ldp; len_ld1++; ld1p++; ls1p++;}
-        else if (ldp->rx_channel == 2) {*ld2p = *ls2p = *ldp; len_ld2++; ld2p++; ls2p++;}
-		if (len_ld0==LD_BUFFER_SIZE || len_ld1==LD_BUFFER_SIZE || len_ld2==LD_BUFFER_SIZE)
+        int is_probe_packet = probe_packet (ldp); 
+        if (!is_probe_packet)
+            *ldallp = *ldp; len_ldall++;
+        if (ldp->tx_channel==0) {
+            *ls0p = *ldp; ls0p++; len_ls0++; 
+            if (!is_probe_packet) {*ld0p = *ldp; ld0p++; len_ld0++;}
+        }
+        if (ldp->tx_channel==1) {
+            *ls1p = *ldp; ls1p++; len_ls1++; 
+            if (!is_probe_packet) {*ld1p = *ldp; ld1p++; len_ld1++;}
+        }
+        if (ldp->tx_channel==2) {
+            *ls2p = *ldp; ls2p++; len_ls2++; 
+            if (!is_probe_packet) {*ld2p = *ldp; ld2p++; len_ld2++;}
+        }
+        // add_to_per_carrier_latency_array (0, ldp, is_probe_packet, ld0p, &len_ld0, ls0p, &len_ls0);
+        // add_to_per_carrier_latency_array (1, ldp, is_probe_packet, ld1p, &len_ld1, ls1p, &len_ls1);
+        // add_to_per_carrier_latency_array (2, ldp, is_probe_packet, ld2p, &len_ld2, ls2p, &len_ls2);
+		if (len_ldall==LD_BUFFER_SIZE || len_ls0==LD_BUFFER_SIZE || len_ls1==LD_BUFFER_SIZE || len_ls2==LD_BUFFER_SIZE)
 		    FATAL ("Latency data array is not large enough to read the log file. Increase LD_BUFFER_SIZE%S\n", "")
 	} // while there are more lines to be read
     if (len_ld0==0 && len_ld1==0 && len_ld2==0) FATAL("latency data log file is empty%s", "\n")
@@ -1700,15 +1716,15 @@ void read_ld (FILE *fp) {
     printf ("finished  reading latency file. execution time = %0.1fs\n", execution_time); 
     
     // sort 
-    int i;
-    for (i=0; i<3; i++) {
-        int len_ld = i==0? len_ld0 : i==1? len_ld1 : len_ld2; 
-        ldp = i==0? ld0 : i==1? ld1 : ld2; 
-        sort_ld_by_packet_num (ldp, len_ld); 
-
-        lsp = i==0? ls0 : i==1? ls1 : ls2; 
-        sort_ld_by_bp_epoch_ms (lsp, len_ld);
-    }
+    printf ("Sorting latency data arrays\n"); 
+    start = clock();
+    sort_ld_by_packet_num (ldall, len_ldall);
+    sort_ld_by_packet_num (ld0, len_ld0); // sort_ld_by_bp_epoch_ms (ls0p, len_ls0);
+    sort_ld_by_packet_num (ld1, len_ld1); // sort_ld_by_bp_epoch_ms (ls1p, len_ls1);
+    sort_ld_by_packet_num (ld2, len_ld2); // sort_ld_by_bp_epoch_ms (ls2p, len_ls2);
+    end = clock();
+    execution_time = ((double)(end - start))/CLOCKS_PER_SEC;
+    printf ("finished  sorting latency arrays. execution time = %0.1fs\n", execution_time); 
 
     return; 
 } // read_ld
@@ -2328,7 +2344,7 @@ void read_cd (char *fnamep) {
         struct s_cmetadata *cdp, *csp; 
         struct s_avgqdata *avgqdp; 
         struct s_latency *ldp, *lsp;
-	    int *len_cdp, len_avgqd, len_ld;
+	    int *len_cdp, len_avgqd, len_ld, len_ls;
         char bp[1000];
         FILE *fp; 
 
@@ -2340,15 +2356,15 @@ void read_cd (char *fnamep) {
         switch (i) {
             case 0: cdp = cd0; len_cdp = &len_cd0; csp = cs0; 
                 avgqdp = avgqd0; len_avgqd = len_avgqd0; 
-                ldp = ld0; lsp = ls0; len_ld = len_ld0; 
+                ldp = ld0; lsp = ls0; len_ld = len_ld0; len_ls = len_ls0; 
                 break;
             case 1: cdp = cd1; len_cdp = &len_cd1; csp = cs1;
                 avgqdp = avgqd1; len_avgqd = len_avgqd1; 
-                ldp = ld1; lsp = ls1; len_ld = len_ld1; 
+                ldp = ld1; lsp = ls1; len_ld = len_ld1; len_ls = len_ls1; 
                 break;
             case 2: cdp = cd2; len_cdp = &len_cd2; csp = cs2;
                 avgqdp = avgqd2; len_avgqd = len_avgqd2; 
-                ldp = ld2; lsp = ls2; len_ld = len_ld2; 
+                ldp = ld2; lsp = ls2; len_ld = len_ld2; len_ls = len_ls2; 
                 break;
         } // of switch
 
@@ -2368,7 +2384,7 @@ void read_cd (char *fnamep) {
             if (cdp->len_ld = len_ld) { // latency log file exists
                 // read the latency data for this spacket
                 cdp->ldp = find_ldp_by_packet_num (cdp->packet_num, cdp->rx_epoch_ms, ldp, len_ld);
-                cdp->lsp = find_closest_lsp (cdp->tx_epoch_ms, lsp, len_ld);
+                cdp->lsp = find_closest_lsp (cdp->tx_epoch_ms, lsp, len_ls);
             } // have latency log file
 
             if (len_brmd) // bit-rate modulation data file exists
@@ -2689,9 +2705,9 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "oc0, ");
     fprintf (fp, "oc1, ");
     fprintf (fp, "oc2, ");
-    // fprintf (fp, "et2r0, ");
-    // fprintf (fp, "et2r1, ");
-    // fprintf (fp, "et2r2, ");
+    fprintf (fp, "et2r0, ");
+    fprintf (fp, "et2r1, ");
+    fprintf (fp, "et2r2, ");
     fprintf (fp, "is0, ");
     fprintf (fp, "is1, ");
     fprintf (fp, "is2, ");
@@ -2986,11 +3002,11 @@ int channel_in_good_shape (
     double epoch_TS,
     char *channel, 
     struct s_service *sd, int len_sd, 
-    struct s_latency *ls, int len_ld,
+    struct s_latency *ls, int len_ls,
     struct s_txlog *td, int len_td) {
 
     struct s_service *sdp = find_closest_sdp (epoch_TS, sd, len_sd);
-    struct s_latency *lsp = find_closest_lsp (epoch_TS, ls, len_ld); 
+    struct s_latency *lsp = find_closest_lsp (epoch_TS, ls, len_ls); 
     struct s_txlog *tdp = find_closest_tdp (epoch_TS, td, len_td);
     double est_t2r = lsp->t2r_ms + (epoch_TS - lsp->bp_epoch_ms);
     
@@ -3024,11 +3040,11 @@ int resume_from_beginning (
     // x and y are the two channels other than the one resuming service
     struct s_carrier *cpx,
     struct s_service *sdx, int len_sdx, 
-    struct s_latency *lsx, int len_ldx,
+    struct s_latency *lsx, int len_lsx,
     struct s_txlog *tdx, int len_tdx,
     struct s_carrier *cpy,
     struct s_service *sdy, int len_sdy, 
-    struct s_latency *lsy, int len_ldy,
+    struct s_latency *lsy, int len_lsy,
     struct s_txlog *tdy, int len_tdy) {
     
     struct s_service *prev_state_xp = find_closest_smaller_sdp (cp->state_xp_TS, sd, len_sd); 
@@ -3049,9 +3065,9 @@ int resume_from_beginning (
 
     // determine if other channels are in good shape or not
     cp->channel_x_in_good_shape = 
-        channel_in_good_shape (cp->tx_epoch_ms, "x", sdx, len_sdx, lsx, len_ldx, tdx, len_tdx);
+        channel_in_good_shape (cp->tx_epoch_ms, "x", sdx, len_sdx, lsx, len_lsx, tdx, len_tdx);
     cp->channel_y_in_good_shape =
-       channel_in_good_shape (cp->tx_epoch_ms, "y", sdy, len_sdy, lsy, len_ldy, tdy, len_tdy);
+       channel_in_good_shape (cp->tx_epoch_ms, "y", sdy, len_sdy, lsy, len_lsy, tdy, len_tdy);
 
     // algo 1 for computing resume_from_begining : did not work well
     // resume from the beining if this channel was out of service for less than a frame time
@@ -3211,8 +3227,8 @@ void carrier_metadata_clients (
             c0p->resume_from_beginning = resume_from_beginning (
                 fp, len_fd,
                 c0p, sd0, len_sd0, td0, len_td0, 
-                c1p, sd1, len_sd1, ls1, len_ld1, td1, len_td1, 
-                c2p, sd2, len_sd2, ls2, len_ld2, td2, len_td2);
+                c1p, sd1, len_sd1, ls1, len_ls1, td1, len_td1, 
+                c2p, sd2, len_sd2, ls2, len_ls2, td2, len_td2);
             if (debug) fprintf (dbg_fp, "\n"); 
             /*
             struct s_metadata *mdp = 
@@ -3225,8 +3241,8 @@ void carrier_metadata_clients (
             c1p->resume_from_beginning = resume_from_beginning (
                 fp, len_fd,
                 c1p, sd1, len_sd1, td1, len_td1,
-                c0p, sd0, len_sd0, ls0, len_ld0, td0, len_td0, 
-                c2p, sd2, len_sd2, ls2, len_ld2, td2, len_td2);
+                c0p, sd0, len_sd0, ls0, len_ls0, td0, len_td0, 
+                c2p, sd2, len_sd2, ls2, len_ls2, td2, len_td2);
             if (debug) fprintf (dbg_fp, "\n"); 
             /*
             struct s_metadata *mdp = 
@@ -3240,8 +3256,8 @@ void carrier_metadata_clients (
             c2p->resume_from_beginning = resume_from_beginning (
                 fp, len_fd,
                 c2p, sd2, len_sd2, td2, len_td2, 
-                c0p, sd0, len_sd0, ls0, len_ld0, td0, len_td0, 
-                c1p, sd1, len_sd1, ls1, len_ld1, td1, len_td1);
+                c0p, sd0, len_sd0, ls0, len_ls0, td0, len_td0, 
+                c1p, sd1, len_sd1, ls1, len_ls1, td1, len_td1);
             if (debug) fprintf (dbg_fp, "\n"); 
             /*
             struct s_metadata *mdp = 
@@ -3374,9 +3390,9 @@ void emit_per_packet_analytics (
 void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1 for the last frame of the session 
 
     static int fast_to_slow_edge_count = 0, slow_to_fast_edge_count = 0; 
-    struct s_latency *ls0p = find_closest_lsp(p->camera_epoch_ms, ls0, len_ld0);
-    struct s_latency *ls1p = find_closest_lsp(p->camera_epoch_ms, ls1, len_ld1);
-    struct s_latency *ls2p = find_closest_lsp(p->camera_epoch_ms, ls2, len_ld2);
+    struct s_latency *ls0p = find_closest_lsp(p->camera_epoch_ms, ls0, len_ls0);
+    struct s_latency *ls1p = find_closest_lsp(p->camera_epoch_ms, ls1, len_ls1);
+    struct s_latency *ls2p = find_closest_lsp(p->camera_epoch_ms, ls2, len_ls2);
     struct s_brmdata *brmdp = p->brmdp;
     
     if ((p->frame_count % 1000) == 0)
@@ -3405,9 +3421,9 @@ void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1
     fprintf (fs_fp, "%d,", (find_closest_tdp(p->camera_epoch_ms, td0, len_td0))->occ);
     fprintf (fs_fp, "%d,", (find_closest_tdp(p->camera_epoch_ms, td1, len_td1))->occ);
     fprintf (fs_fp, "%d,", (find_closest_tdp(p->camera_epoch_ms, td2, len_td2))->occ);
-    // fprintf (fs_fp, "%d,", ls0p->t2r_ms + (int) (p->camera_epoch_ms - ls0p->bp_epoch_ms));
-    // fprintf (fs_fp, "%d,", ls1p->t2r_ms + (int) (p->camera_epoch_ms - ls1p->bp_epoch_ms));
-    // fprintf (fs_fp, "%d,", ls2p->t2r_ms + (int) (p->camera_epoch_ms - ls2p->bp_epoch_ms));
+    fprintf (fs_fp, "%d,", ls0p->t2r_ms + (int) (p->camera_epoch_ms - ls0p->bp_epoch_ms));
+    fprintf (fs_fp, "%d,", ls1p->t2r_ms + (int) (p->camera_epoch_ms - ls1p->bp_epoch_ms));
+    fprintf (fs_fp, "%d,", ls2p->t2r_ms + (int) (p->camera_epoch_ms - ls2p->bp_epoch_ms));
     fprintf (fs_fp, "%d,", (find_closest_sdp(p->camera_epoch_ms, sd0, len_sd0))->state);
     fprintf (fs_fp, "%d,", (find_closest_sdp(p->camera_epoch_ms, sd1, len_sd1))->state);
     fprintf (fs_fp, "%d,", (find_closest_sdp(p->camera_epoch_ms, sd2, len_sd2))->state);
@@ -3739,7 +3755,7 @@ void initialize_cp_from_cd ( struct s_metadata *mdp, struct s_carrier *cp, int t
 	if (cdp = find_packet_in_cd (mdp->packet_num, cp->cdhead, cp->len_cd)) { 
         // this channel participated in this packet
         if (cp->len_avgqd = cdp->len_avgqd) cp->avgqdp = cdp->avgqdp;
-        if (cp->len_ld = cdp->len_ld) {cp->ldp = cdp->ldp, cp->lsp = cdp->lsp;}
+        if (cp->len_ld = cdp->len_ld) {cp->ldp = cdp->ldp, cp->lsp = cdp->lsp; cp->len_ls = cdp->len_ls;}
         if (len_brmd) cp->brmdp = cdp->brmdp;
 
         cp->packet_num = cdp->packet_num; 
