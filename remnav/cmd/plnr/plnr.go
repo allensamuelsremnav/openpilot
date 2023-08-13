@@ -176,19 +176,20 @@ func main() {
 
 	logRoot := flag.String("log_root", "D:/remnav_log", "root for log storage")
 
+	mock := flag.Bool("mock", false, "use mocks only; ignore switches for tpv and vidpid ports and g920 vidpid.")
 	tpvPort_ := flag.Int("tpv_port",
 		rnnet.OperatorGpsdTrajectory,
 		"receive TPV messages from this local port (gpsdlisten). use 0 for mock.")
-	vidPID := flag.String("vidpid", "046d:c262", "colon-separated g920 hex vid and pid. use 0:0 for mock.")
-
+	defaultVidPID := "046d:c262"
+	vidPID := flag.String("vidpid", defaultVidPID, "colon-separated g920 hex vid and pid. use 0:0 for mock.")
 	vehiclePort := flag.Int("vehicle_port",
 		rnnet.OperatorTrajectoryListen,
 		"send trajectory requests and received applied messages using bidi. use 0 for mock.")
+
 	bufSize := flag.Int("bufsize",
 		4096,
 		"buffer size for network packets")
 
-	mock := flag.Bool("mock", false, "use mocks")
 	progress := flag.Bool("progress", false, "show progress indicator")
 	verbose := flag.Bool("verbose", false, "verbosity on")
 
@@ -196,6 +197,9 @@ func main() {
 
 	// g920 ids
 	ids := strings.Split(*vidPID, ":")
+	if len(ids) != 2 {
+		log.Fatalf("invalid -vidpid argument %s, expected X:Y", *vidPID)
+	}
 	vid, err := strconv.ParseUint(ids[0], 16, 16)
 	if err != nil {
 		log.Fatal(err)
@@ -205,7 +209,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("%s: vid:pid %04x:%04x (%d:%d)\n", os.Args[0], vid, pid, vid, pid)
 
 	// Planner configuration
 	var configBuf []byte
@@ -235,6 +238,7 @@ func main() {
 		const reportIntervalMs = 5
 		gs = g920Mock(reportIntervalMs, maxSteeringWheel, sinSpeed)
 	} else {
+		log.Printf("%s: vid:pid %04x:%04x (%d:%d)\n", os.Args[0], vid, pid, vid, pid)
 		gs = g920Device(vid, pid, *verbose, *progress)
 	}
 
