@@ -180,7 +180,8 @@ func main() {
 	tpvPort_ := flag.Int("tpv_port",
 		rnnet.OperatorGpsdTrajectory,
 		"receive TPV messages from this local port (gpsdlisten). use 0 for mock.")
-	vidPID := flag.String("vidpid", "046d:c262", "colon-separated g920 hex vid and pid. use 0:0 for mock.")
+	defaultVidPID := "046d:c262"
+	vidPID := flag.String("vidpid", defaultVidPID, "colon-separated g920 hex vid and pid. use 0:0 for mock.")
 	vehiclePort := flag.Int("vehicle_port",
 		rnnet.OperatorTrajectoryListen,
 		"send trajectory requests and received applied messages using bidi. use 0 for mock.")
@@ -196,6 +197,9 @@ func main() {
 
 	// g920 ids
 	ids := strings.Split(*vidPID, ":")
+	if len(ids) != 2 {
+		log.Fatalf("invalid -vidpid argument %s, expected X:Y", *vidPID)
+	}
 	vid, err := strconv.ParseUint(ids[0], 16, 16)
 	if err != nil {
 		log.Fatal(err)
