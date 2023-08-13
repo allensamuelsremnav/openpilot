@@ -63,7 +63,7 @@
 #define CD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
 #define BRM_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*100*3)
 #define AVGQ_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000*3)
-#define LD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30*20*3)
+#define LD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30*20*9)
 #define SD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*1000)
 #define FD_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30)
 #define QP_BUFFER_SIZE (CAPTURE_PERIOD_MINUTES*60*30)
@@ -105,6 +105,11 @@ struct s_latency {
     int packet_num;             // packet number
     int t2r_ms;                 // latency for it 
     double bp_epoch_ms;         // time bp info was received by the sender
+
+    // derived fields from bp dat
+    int max_pkt_so_far;         // largest packet number received up to this packet's bp time
+    int last_rx_pkt;            // most recently received packet by a channel
+    int lrx_t2r_ms;             // t2r of the last_rx_pkt
 }; 
 
 struct s_coord {
@@ -192,6 +197,7 @@ struct frame {
     double      camera_epoch_ms;            // camera timestamp of this frame
     double      nm1_camera_epoch_ms;        // previous frame's camera time stamp
     unsigned    has_annotation;             // set to 1 if this frame was marked in the annotation file; else 0
+    int         center_blur;                // 1 if center camera should be blurred
 
     float       nm1_bit_rate;               // bit rate of previous (n-1) frame in Mbps
     unsigned    nm1_size;                   // size of the previous frame
@@ -374,6 +380,8 @@ struct s_gps {
 	int				count; 						// number of frames that mapped into this gps coord
 }; 
 
+void print_latency_array (struct s_latency *headp, int len, char *file_name);
+
 // frees up storage before exiting
 void  my_free (); 
 int my_exit (int n);
@@ -411,6 +419,12 @@ void update_critical_crf_run_length (struct frame *pfp, struct frame *cfp);
 void calculate_Mbps (
     struct frame *pfp,                      // previous frame pointer
     struct frame *cfp);                     // current frame pointer
+
+// sets center_blur field to 1 if center camera should be blurred
+void calc_center_blur_mask (
+    struct frame *tailp,                    // points to the last element of the current frame list
+    int len_fd,                             // length of the current frame list
+    struct frame *cfp);                     // current frame pointer - not yet on the list
 
 // calculates and update bit-rate of n-1 frame
 void update_bit_rate (                      // updates stats of the last frame
@@ -696,10 +710,10 @@ struct  s_brmdata *brmdata = NULL;              // pointer to the brm data array
 int     len_brmd=0; 
 struct  s_avgqdata *avgqd0=NULL, *avgqd1=NULL, *avgqd2=NULL; // rolling avg data array
 int     len_avgqd0=0, len_avgqd1=0, len_avgqd2=0;        
-struct  s_latency *ld0=NULL, *ld1=NULL, *ld2=NULL, *ldall=NULL;  // latency log data array sorted by packet num
-struct  s_latency *ls0=NULL, *ls1=NULL, *ls2=NULL;  // latency log data array sorted by bp_epoch_ms
-int     len_ld0=0, len_ld1=0, len_ld2=0, len_ldall=0;
-int     len_ls0=0, len_ls1=0, len_ls2=0; 
+struct  s_latency *ld0=NULL, *ld1=NULL, *ld2=NULL;  // per carrier latency log data - no probe pkts - sorted by packet num
+struct  s_latency *ldall=NULL;                      // latency log data all channles - np probe - sorted by bp_epoch_ms
+struct  s_latency *ls0=NULL, *ls1=NULL, *ls2=NULL;  // per carrier latency log data -with probe pkts - sorted by bp_epoch_ms
+int     len_ld0=0, len_ld1=0, len_ld2=0, len_ldall=0, len_ls0=0, len_ls1=0, len_ls2=0; 
 struct  s_service *sd0=NULL, *sd1=NULL, *sd2=NULL;  // serivce log data array sorted by state transition time
 int     len_sd0=0, len_sd1=0, len_sd2=0;
 struct  s_qp *qpd=NULL;                         // qp log array
@@ -1097,7 +1111,6 @@ SKIP_FILE_LIST:
             if (cmdp->frame_start) {
                 // found a clean start
                 init_frame (cfp, lmdp, cmdp, 1); // first frame set to 1
-                get_gps_coord (cfp); 
                 update_session_packet_stats (cfp, cmdp, ssp);
                 waiting_for_first_frame = 0;
             } else 
@@ -1180,26 +1193,26 @@ SKIP_FILE_LIST:
             // call end of frame clients
             //
 
-            // update bit rates
+            // bit rates, blur mask
             update_bit_rate (cfp, lmdp, cmdp);
             update_brm_run_length (fdp-1, cfp);
             if (have_qp_log) update_estate_run_length (cfp); 
             if (have_qp_log) update_crf_run_length (cfp); 
             if (have_qp_log) update_critical_crf_run_length (fdp-1, cfp); 
             calculate_Mbps (fdp-1, cfp); 
+            calc_center_blur_mask (fdp-1, len_fd, cfp); 
 
             if (len_gps) emit_map (cfp, map_fp);
             emit_frame_stats (0, cfp);
 
+            // per carrier - per packet stats
             *fdp = *cfp; len_fd++;
             if (have_carrier_metadata)
                 carrier_metadata_clients (0, ssp, fdp, c0p, c1p, c2p); 
             update_session_frame_stats (ssp, cfp);
 
-
             // now process the new frame
             init_frame (cfp, lmdp, cmdp, 0);    
-            get_gps_coord (cfp); 
             update_session_packet_stats (cfp, cmdp, ssp);
             fdp++; 
         } // start of a new frame
@@ -1463,7 +1476,7 @@ struct s_latency *find_ldp_by_packet_num (int packet_num, double rx_epoch_ms, st
 } // find_ldp_by_packet_num
 
 // returns pointer to the lsp equal to or closest smaller bp_epoch_ms to the specified epoch_ms
-struct s_latency *find_closest_lsp (double epoch_ms, struct s_latency *lsp, int len_ld) {
+struct s_latency *find_closest_lsp (double epoch_ms, struct s_latency *lsp, int len_ld, int left_b) {
 
     struct  s_latency  *left, *right, *current;    // current, left and right index of the search
 
@@ -1478,14 +1491,16 @@ struct s_latency *find_closest_lsp (double epoch_ms, struct s_latency *lsp, int 
             right = current; 
             current = left + (right - left)/2; 
         }
-    } // while there are more than 2 elements left to search
-    
-    // when the while exits, the current is equal to (if current = left edge) or less than epoch_ms
+    } // when while exits, current is equal to (if current = left edge) or less than epoch_ms
+
+    if (left_b) // left bisector - returns pointer to left of entries equal to epoch_ms
+        return current; 
+
+    // else move to the right of the all the entries with bp_epoch_ms == epoch_ms
     // if there is sring of entries that match the epoch_ms, move to the right most edge as it is the most
     // recently arrived information
     while ((current < lsp + len_ld - 1) && ((current+1)->bp_epoch_ms == epoch_ms))
         current++; 
-
     return current; 
 } // find_closest_lsp
 
@@ -1690,10 +1705,18 @@ void read_ld (FILE *fp) {
     struct s_latency ls, *lsp=&ls;
 	while (read_ld_line (fp, ldp)) {
         int is_probe_packet = probe_packet (ldp); 
-        if (!is_probe_packet)
-            *ldallp = *ldp; len_ldall++;
+        if (!is_probe_packet) {
+            *ldallp = *ldp; 
+            if (len_ldall==0) ldallp->max_pkt_so_far = ldallp->packet_num; 
+            else ldallp->max_pkt_so_far = MAX((ldallp-1)->max_pkt_so_far, ldallp->packet_num);
+            ldallp++; len_ldall++;
+        }
         if (ldp->tx_channel==0) {
-            *ls0p = *ldp; ls0p++; len_ls0++; 
+            *ls0p = *ldp; 
+            if (len_ls0==0 || ls0p->)
+                {ls0p->last_rx_pkt = ls0p->packet_num; ls0p->lrx_t2r = ls0p->t2r_ms;}
+            else {}
+            ls0p++; len_ls0++; 
             if (!is_probe_packet) {*ld0p = *ldp; ld0p++; len_ld0++;}
         }
         if (ldp->tx_channel==1) {
@@ -1718,7 +1741,8 @@ void read_ld (FILE *fp) {
     // sort 
     printf ("Sorting latency data arrays\n"); 
     start = clock();
-    sort_ld_by_packet_num (ldall, len_ldall);
+    // sort_ld_by_packet_num (ldall, len_ldall);
+    print_latency_array (ldall, len_ldall, "ldall");
     sort_ld_by_packet_num (ld0, len_ld0); // sort_ld_by_bp_epoch_ms (ls0p, len_ls0);
     sort_ld_by_packet_num (ld1, len_ld1); // sort_ld_by_bp_epoch_ms (ls1p, len_ls1);
     sort_ld_by_packet_num (ld2, len_ld2); // sort_ld_by_bp_epoch_ms (ls2p, len_ls2);
@@ -2384,7 +2408,7 @@ void read_cd (char *fnamep) {
             if (cdp->len_ld = len_ld) { // latency log file exists
                 // read the latency data for this spacket
                 cdp->ldp = find_ldp_by_packet_num (cdp->packet_num, cdp->rx_epoch_ms, ldp, len_ld);
-                cdp->lsp = find_closest_lsp (cdp->tx_epoch_ms, lsp, len_ls);
+                cdp->lsp = find_closest_lsp (cdp->tx_epoch_ms, lsp, len_ls, 0);
             } // have latency log file
 
             if (len_brmd) // bit-rate modulation data file exists
@@ -2415,8 +2439,7 @@ void read_cd (char *fnamep) {
 } // read_cd
 
 // find_packet_in_cd returns pointer to the packet in the carrier metadata array 
-// with the earliest rx_time matching the specified packet. 
-// returns NULL if no match was found, else the specified packet num
+// with the earliest rx_time matching the specified packet. returns NULL if no match was found
 struct s_cmetadata* find_packet_in_cd (int packet_num, struct s_cmetadata *cdhead, int len_cd) {
 
     struct  s_cmetadata *left, *right, *current;    // current, left and right index of the search
@@ -2603,6 +2626,41 @@ void update_frame_packet_stats (
 
 } // end of update_frame_packet_stats
 
+int find_frame_by_pkt_num (struct frame *tailp, int len_fd, int pkt_num) {
+    while (len_fd>0) {
+        if (pkt_num > tailp->last_packet_num)
+            return tailp->frame_count+1; 
+        else if (pkt_num >= tailp->first_packet_num)
+            return tailp->frame_count;
+        tailp--; len_fd--; 
+    }
+} // end of find_frame_by_pkt_num
+
+// sets center_blur field to 1 if center camera should be blurred
+void calc_center_blur_mask (struct frame *tailp, int len_fd, struct frame *cfp) {
+    if (cfp->frame_count==1) { cfp->center_blur = 0; return; }
+    if (cfp->frame_count==979)
+        printf ("debug\n"); 
+    struct s_latency *ldp = find_closest_lsp (cfp->camera_epoch_ms, ldall, len_ldall, 1); 
+    int last_frame_delivered = find_frame_by_pkt_num (tailp, len_fd, ldp->max_pkt_so_far);
+    cfp->center_blur = cfp->frame_count - last_frame_delivered; 
+    return; 
+} // calc_center_blur_mask
+
+void print_latency_array (struct s_latency *headp, int len, char *file_name) {
+    char bp[100]; 
+    sprintf (bp, "%s%s.csv", opath, file_name); 
+    FILE *fp = open_file (bp, "w");
+    while (len>0)  {
+        fprintf (fp, "%d, %d, %d, %d, %d, %.0lf\n", 
+            headp->rx_channel, headp->tx_channel, headp->packet_num, headp->max_pkt_so_far, 
+            headp->t2r_ms, headp->bp_epoch_ms);
+        headp++; len--; 
+    }
+    fclose (fp); 
+    return; 
+}
+
 // initializes the frame structure for a new frame
 void init_frame (
     struct frame *fp,                       // current frame pointer
@@ -2640,6 +2698,7 @@ void init_frame (
         fp->chpq += fp->brmdp->channel_quality_state[i]==1 || fp->brmdp->channel_quality_state[i]==2;
         fp->chgq += fp->brmdp->channel_quality_state[i]==0 || fp->brmdp->channel_quality_state[i]==3;
     }
+    get_gps_coord (fp); 
     fp->out_of_order = /* first_frame? 0: */ cmdp->rx_epoch_ms < lmdp->rx_epoch_ms; 
     fp->first_packet_num = fp->last_packet_num = cmdp->packet_num;
     fp->tx_epoch_ms_1st_packet = fp->tx_epoch_ms_last_packet = cmdp->tx_epoch_ms;
@@ -2694,6 +2753,7 @@ void emit_frame_header (FILE *fp) {
     fprintf (fp, "e2r, ");
     fprintf (fp, "crf, ");
     fprintf (fp, "ncrf, ");
+    fprintf (fp, "cblr,"); 
     // fprintf (fp, "Late, ");
     // fprintf (fp, "Miss, ");
     // fprintf (fp, "anno, ");
@@ -2763,10 +2823,11 @@ void emit_frame_header (FILE *fp) {
 
 // time	epoch_ms	lat	lon	speed
 void emit_map_header (FILE *fp) {
-    fprintf (fp, "time,");
-    fprintf (fp, "epoch_ms,");
     fprintf (fp, "lat,");
     fprintf (fp, "lon,");
+    fprintf (fp, "F#,"); 
+    fprintf (fp, "time,");
+    fprintf (fp, "epoch_ms,");
     fprintf (fp, "mph,");
     fprintf (fp, "c2d,");
     fprintf (fp, "Mbps,");
@@ -2788,10 +2849,11 @@ char *epoch_to_local (time_t rawtime) {
 } // cvt_to_pdt
 
 void emit_map (struct frame *fp, FILE *map_fp) {
-    fprintf (map_fp, "%s,", epoch_to_local (fp->camera_epoch_ms/1000));
-    fprintf (map_fp, "%.0lf,", fp->camera_epoch_ms);
     fprintf (map_fp, "%lf,", fp->coord.lat);
     fprintf (map_fp, "%lf,", fp->coord.lon);
+    fprintf (map_fp, "%d,", fp->frame_count);
+    fprintf (map_fp, "%s,", epoch_to_local (fp->camera_epoch_ms/1000));
+    fprintf (map_fp, "%.0lf,", fp->camera_epoch_ms);
     fprintf (map_fp, "%.1f,", (fp->speed*3600/1600));
     fprintf (map_fp, "%.1f,", fp->c2d_frames);
     fprintf (map_fp, "%.1f,", fp->EMbps);
@@ -3006,7 +3068,7 @@ int channel_in_good_shape (
     struct s_txlog *td, int len_td) {
 
     struct s_service *sdp = find_closest_sdp (epoch_TS, sd, len_sd);
-    struct s_latency *lsp = find_closest_lsp (epoch_TS, ls, len_ls); 
+    struct s_latency *lsp = find_closest_lsp (epoch_TS, ls, len_ls, 0); 
     struct s_txlog *tdp = find_closest_tdp (epoch_TS, td, len_td);
     double est_t2r = lsp->t2r_ms + (epoch_TS - lsp->bp_epoch_ms);
     
@@ -3390,14 +3452,13 @@ void emit_per_packet_analytics (
 void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1 for the last frame of the session 
 
     static int fast_to_slow_edge_count = 0, slow_to_fast_edge_count = 0; 
-    struct s_latency *ls0p = find_closest_lsp(p->camera_epoch_ms, ls0, len_ls0);
-    struct s_latency *ls1p = find_closest_lsp(p->camera_epoch_ms, ls1, len_ls1);
-    struct s_latency *ls2p = find_closest_lsp(p->camera_epoch_ms, ls2, len_ls2);
+    struct s_latency *ls0p = find_closest_lsp(p->camera_epoch_ms, ls0, len_ls0, 0);
+    struct s_latency *ls1p = find_closest_lsp(p->camera_epoch_ms, ls1, len_ls1, 0);
+    struct s_latency *ls2p = find_closest_lsp(p->camera_epoch_ms, ls2, len_ls2, 0);
     struct s_brmdata *brmdp = p->brmdp;
     
     if ((p->frame_count % 1000) == 0)
         printf ("at frame %d\n", p->frame_count); 
-
     fprintf (fs_fp, "%u, ", p->frame_count);
     fprintf (fs_fp, "%.0lf, ", p->camera_epoch_ms);
     fprintf (fs_fp, "%.1f, ", p->c2d_frames);
@@ -3407,9 +3468,11 @@ void emit_frame_stats (int print_header, struct frame *p) {     // last is set 1
     if (have_qp_log && p->estate==1 && p->estate_run_finished) fprintf (fs_fp, "%d,", p->estate_run_length); else fprintf (fs_fp, "0,");
     if (have_qp_log && p->estate==2 && p->estate_run_finished) fprintf (fs_fp, "%d,", p->estate_run_length); else fprintf (fs_fp, "0,");
     if (have_qp_log && (p->frame_count <= len_qpd)) {
-         fprintf (fs_fp, "%d,", qpd[p->frame_count-1].crf); // -1 because frame 1 is store in entry 0
-         fprintf (fs_fp, "%d,", qpd[p->frame_count-1].next_crf); // -1 because frame 1 is store in entry 0
-    } else fprintf (fs_fp, "0,0,");
+        fprintf (fs_fp, "%d,", qpd[p->frame_count-1].crf); // -1 because frame 1 is store in entry 0
+        fprintf (fs_fp, "%d,", qpd[p->frame_count-1].next_crf); // -1 because frame 1 is store in entry 0
+    } else 
+        fprintf (fs_fp, "0,0,");
+    fprintf (fs_fp, "%d,", p->center_blur); 
     // fprintf (fs_fp, "%u, ", p->late);
     // fprintf (fs_fp, "%u, ", p->missing);
     // fprintf (fs_fp, "%u, ", p->has_annotation);
