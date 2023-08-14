@@ -16,8 +16,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-station_ip',help="IP Address of operator station", default="127.0.0.1")
 parser.add_argument('-station_port', help="Port number of operator station", type=int, default=6002)
 parser.add_argument('-vehicle_ip', help='IP Address of OpenPilot', default='127.0.0.1')
-parser.add_argument('-mpc_port', help='Port number for vehicle MPC controller', type=int, default=6380)
-parser.add_argument('-pid_port', help='Port number for vehciel PID controller', type=int, default=6379)
+parser.add_argument('-mpc_port', help='Port number for vehicle MPC controller', type=int, default=6379)
+parser.add_argument('-pid_port', help='Port number for vehciel PID controller', type=int, default=6380)
 parser.add_argument('-i', '-interfaces', metavar='InterfaceName', type=str, nargs='+',
                     help='Names of local NIC interfaces')
 args = parser.parse_args()
@@ -154,23 +154,21 @@ class StationToBridge:
                 if msg['class'] == "TRAJECTORY":
                     if request_timestamp > last_trajectory_timestamp:
                         last_trajectory_timestamp = request_timestamp
-                        StationToBridge.handle_trajectory_message(self.generate_reply(msg))
+                        StationToBridge.handle_trajectory_message(msg)
                     else:
                         logging.info(f"Discarding message to {self.interface}, duplicate")
                 elif msg['class'] == "G920":
                     if request_timestamp > last_g920_timestamp:
                         last_g920_timestamp = request_timestamp
-                        StationToBridge.handle_g920_message(self.generate_reply(msg))
+                        StationToBridge.handle_g920_message(msg)
                     else:
                         logging.info(f"Discarding message to {self.interface}, duplicate")
-
-
 
             except socket.timeout:
                 logging.info(f"Sending beacon from {self.interface} to {station_address}")
                 self.socket.sendto(make_beacon_for_index(self.index), station_address)
 
-    def handle_trajectory_message(self, msg):
+    def handle_trajectory_message(msg):
         ''' Handle receipt of a valid trajectory message. '''
         curvature = msg['curvature']
         if math.isinf(curvature):
@@ -182,13 +180,26 @@ class StationToBridge:
         #
         # Make message in format for MPC controller
         # 
-        msg = f"<{msg['received']}>s {radius}"
+        mpc_msg = f"<{msg['requested']}>c {radius}\r\n"
+        try:
+            vehicle_mpc.socket.send(mpc_msg.encode('utf-8'))
+            logging.info(f"Sent to MPC: {mpc_msg}")
+        except:
+            logging.info("Can't send to MPC, not connected")
 
+    def handle_g920_message(msg):
+        ''' Handle receipt of valid Pedal message '''
+        brake = msg['pedalmiddle']
+        accel = msg['pedalright']
+        if brake != 0:
+            setting = brake
+        else:
+            setting = accel
+        msg = f""
         
 logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)            
-logging.info(f"Starting up")            
-vehicle_mpc = VehicleToBridge('MPC', (args['vehicle_address'], args['mpc_port']), MPC_reply_function)
-vehicle_pid = VehicleToBridge('PID', (args['vehicle_address'], args['pid_port']), PID_reply_function)
+vehicle_mpc = VehicleToBridge('MPC', (args.vehicle_ip, args.mpc_port), make_MPC_reply)
+vehicle_pid = VehicleToBridge('PID', (args.vehicle_ip, args.pid_port), make_PID_reply)
 station_to_bridge = []
 addrs = psutil.net_if_addrs()
 print("Network interfaces are:", addrs.keys())
