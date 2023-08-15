@@ -209,7 +209,7 @@ class Controls:
     # controlsd is driven by can recv, expected at 100Hz
     self.rk = Ratekeeper(100, print_delay_threshold=None)
     self.prof = Profiler(False)  # off by default
-    self.hijacker = Hijack() # remnav
+    self.hijacker = Hijacker() # remnav
 
   def set_initial_state(self):
     if REPLAY:
