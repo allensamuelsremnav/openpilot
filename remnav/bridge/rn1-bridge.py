@@ -15,9 +15,9 @@ import psutil
 parser = argparse.ArgumentParser()
 parser.add_argument('-station_ip',help="IP Address of operator station", default="127.0.0.1")
 parser.add_argument('-station_port', help="Port number of operator station", type=int, default=6002)
-parser.add_argument('-vehicle_ip', help='IP Address of OpenPilot', default='127.0.0.1')
-parser.add_argument('-mpc_port', help='Port number for vehicle MPC controller', type=int, default=6379)
-parser.add_argument('-pid_port', help='Port number for vehciel PID controller', type=int, default=6380)
+parser.add_argument('-vehicle_ip', help='IP Address of OpenPilot', default='192.168.43.1')
+# parser.add_argument('-mpc_port', help='Port number for vehicle MPC controller', type=int, default=6379)
+parser.add_argument('-pid_port', help='Port number for vehciel PID controller', type=int, default=6379)
 parser.add_argument('-i', '-interfaces', metavar='InterfaceName', type=str, nargs='+',
                     help='Names of local NIC interfaces')
 args = parser.parse_args()
@@ -63,6 +63,9 @@ class VehicleToBridge:
         self.name = name
         self.vehicle_address = vehicle_address
         self.handle_reply_function = handle_reply_function
+        self.start()
+    
+    def start(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.thread = threading.Thread(target=self.runner)
@@ -73,6 +76,15 @@ class VehicleToBridge:
         self.socket.close()
         self.thread.join()
 
+    def send(self, msg):
+        try:
+            self.socket.send(msg)
+            logging.info(f"{self.name} Send: {msg}")
+        except:
+            logging.info(f"{self.name} send failure, retrying")
+            self.stop()
+            self.start()
+
     def runner(self):
         logging.info(f"Waiting to connect {self.name} controller at {self.vehicle_address}")
         while self.run:
@@ -81,6 +93,8 @@ class VehicleToBridge:
             except ConnectionRefusedError:
                 continue
             except socket.timeout:
+                continue
+            except OSError:
                 continue
             logging.info(f"Established connection to {self.name} at address {self.socket.getpeername()}")
             while self.run:
@@ -97,20 +111,18 @@ class VehicleToBridge:
                     continue
                 except ConnectionAbortedError:
                     break
+                except ConnectionResetError:
+                    break
 
-def make_MPC_reply(tag):
+def make_PID_reply(tag):
     reply = {
-        'class': 'TRJECTORY_APPLICATION',
+        'class': 'TRAJECTORY_APPLICATION',
         'trajectory': int(tag),
         'applied': time.time_ns()//1000,
         'log': 0
     }
-    logging.info(f"Received MPC Vehicle Tag: {tag}, Reply:{reply}")
+    #    logging.info(f"Received PID Vehicle Tag: {tag}, Reply:{reply}")
     StationToBridge.broadcast_reply(json.dumps(reply))
-
-def make_PID_reply(tag):
-    logging.info(f"Received PID Vehicle Tag: {tag}")
-    pass
 
 
 class StationToBridge:
@@ -132,7 +144,7 @@ class StationToBridge:
         self.thread.run()
 
     def broadcast_reply(m):
-        logging.info(f"Sending through all {len(StationToBridge.instances)} stations: {m}")
+        logging.info(f"Sending: {m}")
         for s in StationToBridge.instances.values():
             s.socket.sendto(make_message_for_index(s.index, m), station_address)
 
@@ -146,9 +158,9 @@ class StationToBridge:
         logging.info(f"Sent {bytes} bytes")
         while True:
             try:
-                logging.info(f"Waiting for response on {self.interface}")
+                # logging.info(f"Waiting for response on {self.interface}")
                 message, address = self.socket.recvfrom(1024)
-                logging.info(f"Received on interface {self.interface} from {address} msg: {message}")
+                logging.info(f"Received from {address} msg: {message}")
                 msg = json.loads(message)
                 request_timestamp = int(msg['requested'])
                 if msg['class'] == "TRAJECTORY":
@@ -156,7 +168,8 @@ class StationToBridge:
                         last_trajectory_timestamp = request_timestamp
                         StationToBridge.handle_trajectory_message(msg)
                     else:
-                        logging.info(f"Discarding message to {self.interface}, duplicate")
+                        #logging.info(f"Discarding message to {self.interface}, duplicate")
+                        pass
                 elif msg['class'] == "G920":
                     if request_timestamp > last_g920_timestamp:
                         last_g920_timestamp = request_timestamp
@@ -164,7 +177,7 @@ class StationToBridge:
                     else:
                         logging.info(f"Discarding message to {self.interface}, duplicate")
 
-            except socket.timeout:
+            except (socket.timeout, ConnectionResetError):
                 logging.info(f"Sending beacon from {self.interface} to {station_address}")
                 self.socket.sendto(make_beacon_for_index(self.index), station_address)
 
@@ -174,18 +187,14 @@ class StationToBridge:
         if math.isinf(curvature):
             radius = 0
         elif curvature == 0:
-            radius = math.inf()
+            radius = 10000000000000.0
         else:
             radius = 1 / curvature
         #
         # Make message in format for MPC controller
         # 
         mpc_msg = f"<{msg['requested']}>c {radius}\r\n"
-        try:
-            vehicle_mpc.socket.send(mpc_msg.encode('utf-8'))
-            logging.info(f"Sent to MPC: {mpc_msg}")
-        except:
-            logging.info("Can't send to MPC, not connected")
+        vehicle_pid.send(mpc_msg.encode('utf-8'))
 
     def handle_g920_message(msg):
         ''' Handle receipt of valid Pedal message '''
@@ -198,7 +207,7 @@ class StationToBridge:
         msg = f""
         
 logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)            
-vehicle_mpc = VehicleToBridge('MPC', (args.vehicle_ip, args.mpc_port), make_MPC_reply)
+# vehicle_mpc = VehicleToBridge('MPC', (args.vehicle_ip, args.mpc_port), make_MPC_reply)
 vehicle_pid = VehicleToBridge('PID', (args.vehicle_ip, args.pid_port), make_PID_reply)
 station_to_bridge = []
 addrs = psutil.net_if_addrs()
