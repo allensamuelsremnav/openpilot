@@ -16,7 +16,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-station_ip',help="IP Address of operator station", default="127.0.0.1")
 parser.add_argument('-station_port', help="Port number of operator station", type=int, default=6002)
 parser.add_argument('-vehicle_ip', help='IP Address of OpenPilot', default='192.168.43.1')
-# parser.add_argument('-mpc_port', help='Port number for vehicle MPC controller', type=int, default=6379)
+parser.add_argument('-acc_port', help='Port number for vehicle ACC controller', type=int, default=6381)
 parser.add_argument('-pid_port', help='Port number for vehciel PID controller', type=int, default=6379)
 parser.add_argument('-i', '-interfaces', metavar='InterfaceName', type=str, nargs='+',
                     help='Names of local NIC interfaces')
@@ -100,6 +100,7 @@ class VehicleToBridge:
             while self.run:
                 try:
                     buffer = self.socket.recv(1024).decode('utf-8')
+                    print(f"{self.name} received {buffer}")
                     #
                     # Need to accumulate partial messages and parse out only till newlines to pass into handle function
                     #
@@ -124,6 +125,9 @@ def make_PID_reply(tag):
     #    logging.info(f"Received PID Vehicle Tag: {tag}, Reply:{reply}")
     StationToBridge.broadcast_reply(json.dumps(reply))
 
+def make_ACC_reply(tag):
+    logging.info(f"Dropping ACC reply {tag}")
+    pass
 
 class StationToBridge:
     '''One per interface'''
@@ -175,7 +179,8 @@ class StationToBridge:
                         last_g920_timestamp = request_timestamp
                         StationToBridge.handle_g920_message(msg)
                     else:
-                        logging.info(f"Discarding message to {self.interface}, duplicate")
+                        #logging.info(f"Discarding message to {self.interface}, duplicate")
+                        pass
 
             except (socket.timeout, ConnectionResetError):
                 logging.info(f"Sending beacon from {self.interface} to {station_address}")
@@ -204,10 +209,11 @@ class StationToBridge:
             setting = brake
         else:
             setting = accel
-        msg = f""
+        acc_msg = f"p {brake} {accel}\r\n"
+        vehicle_acc.send(acc_msg.encode('utf-8'))
         
 logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)            
-# vehicle_mpc = VehicleToBridge('MPC', (args.vehicle_ip, args.mpc_port), make_MPC_reply)
+vehicle_acc = VehicleToBridge('ACC', (args.vehicle_ip, args.acc_port), make_ACC_reply)
 vehicle_pid = VehicleToBridge('PID', (args.vehicle_ip, args.pid_port), make_PID_reply)
 station_to_bridge = []
 addrs = psutil.net_if_addrs()
