@@ -325,9 +325,9 @@ class Hijacker:
       for i in range(0, CONTROL_N):
         t = T_IDXS[i]     # time
         tv = T_variables(t, v_ego, 0, self.bike)
-        lp.psis[i] = tv.orientation.yaw
-        lp.curvatures[i] = 1. / self.bike.getTurningRadius()
-        lp.dPathPoints[i] = tv.position.y
+        lp.psis[i] = float(tv.orientation.yaw)
+        lp.curvatures[i] = float(1. / self.bike.getTurningRadius())
+        lp.dPathPoints[i] = float(tv.position.y)
       if lp.psis[1] < 0:
         lp.curvatures = [-l for l in lp.curvatures]
       if v_ego == 0.0:
