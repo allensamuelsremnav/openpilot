@@ -731,10 +731,10 @@ static void socket_listener() {
     }
 }
 
-template<class T, size_t size>
+/* template<class T, size_t size>
 constexpr const kj::ArrayPtr<const T> to_kj_array_ptr(const std::array<T, size> &arr) {
   return kj::ArrayPtr(arr.data(), arr.size());
-}
+} */
 
 template<size_t size>
 void fill_xyzt(cereal::ModelDataV2::XYZTData::Builder xyzt, const std::array<float, size> &t,
