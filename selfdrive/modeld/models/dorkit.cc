@@ -15,10 +15,10 @@
 
 #define M_SQRT2_2 (M_SQRT2 / 2.0)
 
-#include "selfdrive/common/clutil.h"
-#include "selfdrive/common/params.h"
-#include "selfdrive/common/timing.h"
-#include "selfdrive/common/swaglog.h"
+#include "common/clutil.h"
+#include "common/params.h"
+#include "common/timing.h"
+#include "common/swaglog.h"
 
 #include <capnp/schema.h>
 #include <capnp/dynamic.h>
