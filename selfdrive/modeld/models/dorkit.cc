@@ -968,7 +968,7 @@ void dorkit(ModelState *s, PubMaster& pm, MessageBuilder& omsg_builder, cereal::
     //
     // Construct the new message
     //
-    fill_model(nmsg, net_outputs);
+    fill_model(s, nmsg, net_outputs);
     override_message(nmsg, T_IDXS_FLOAT, X_IDXS_FLOAT);
     if (show_msg) {
       compare_message(omsg, nmsg);
