@@ -946,8 +946,8 @@ void show_message(MessageBuilder &us, MessageBuilder& them) {
   }
 }
 
-void dorkit(PubMaster& pm, MessageBuilder& omsg_builder, cereal::ModelDataV2::Builder &omsg, const ModelOutput& net_outputs) {
-  fill_model(omsg, net_outputs);
+void dorkit(ModelState *s, PubMaster& pm, MessageBuilder& omsg_builder, cereal::ModelDataV2::Builder &omsg, const ModelOutput& net_outputs) {
+  fill_model(s, omsg, net_outputs);
   if (!socket_is_active()) {
     // Normal path
     pm.send("modelV2", omsg_builder);
