@@ -1,4 +1,4 @@
-import json
+import json, platform
 import time
 import socket
 import threading
@@ -8,6 +8,7 @@ import sys
 from netifaces import ifaddresses, AF_INET, interfaces
 import math
 import psutil
+import os
 
 #
 # Parse arguments
@@ -17,17 +18,10 @@ parser.add_argument('-station_ip',help="IP Address of operator station", default
 parser.add_argument('-station_port', help="Port number of operator station", type=int, default=6002) # was 
 parser.add_argument('-vehicle_ip', help='IP Address of OpenPilot', default='192.168.43.1') # was .1
 parser.add_argument('-acc_port', help='Port number for vehicle ACC controller', type=int, default=6381)
-parser.add_argument('-pid_port', help='Port number for vehicle PID controller', type=int, default=6379)
-parser.add_argument('-i', '-interfaces', metavar='InterfaceName', type=str, nargs='+',
-                    help='Names of local NIC interfaces')
+parser.add_argument('-mpc_port', help='Port number for vehicle MPC controller', type=int, default=6379)
+parser.add_argument('-interfaces', metavar='InterfaceName', type=str, nargs='+',
+                    help='Names of local NIC interfaces', default=['wwan0_1', 'wwan1_1', 'wwan2_1'])
 args = parser.parse_args()
-
-def get_ip_cross(interface: str) -> str:
-    """
-    Cross-platform solution that should work under Linux, macOS and
-    Windows.    
-    """
-    return ifaddresses(interface)[AF_INET][0]['addr']
 
 station_address = (args.station_ip, args.station_port)
 
@@ -36,19 +30,15 @@ station_address = (args.station_ip, args.station_port)
 #
 def make_socket_for_interface(interface, bindto = None):
     if not hasattr(socket,'SO_BINDTODEVICE'):
-        print("Doing bind to device")
-        # socket.SO_BINDTODEVICE = 25
+        socket.SO_BINDTODEVICE = 25
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)    
-#    result = sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, interface.encode('utf-8') + '\0'.encode('utf-8'))
-#    assert result == 0
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if platform.system() == 'Linux':
+        result = sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, str(interface + '\0').encode('utf-8'))
+        assert result == 0
     if bindto:
-        print("Binding to ", bindto)
         sock.bind(bindto)
     return sock
-
-# List of remote interfaces: list of tuples ('ipaddr',port)
-remote_interfaces = ()
 
 last_rcv_msg_time = time.time()
 last_rcv_timestamp = 0
@@ -117,14 +107,14 @@ class VehicleToBridge:
                 except ConnectionResetError:
                     break
 
-def make_PID_reply(tag):
+def make_MPC_reply(tag):
     reply = {
         'class': 'TRAJECTORY_APPLICATION',
         'trajectory': int(tag),
         'applied': time.time_ns()//1000,
         'log': 0
     }
-    #logging.info(f"Received PID Vehicle Tag: {tag}, Reply:{reply}")
+    #logging.info(f"Received MPC Vehicle Tag: {tag}, Reply:{reply}")
     StationToBridge.broadcast_reply(json.dumps(reply))
 
 def make_ACC_reply(tag):
@@ -139,15 +129,12 @@ class StationToBridge:
         self.interface = interface
         HEARTBEAT_TIME = 5.0 # seconds
         global last_rcv_msg_time, last_rcv_timestamp
-        #self.ip = get_ip_cross(interface)
-        self.ip = "127.0.0.1"
         self.port = port
-        logging.info(f"Found interface {interface} with IP Address {self.ip}, now listening on port {port}")
-        self.socket = make_socket_for_interface(interface) # , bindto=(self.ip,port))
+        self.socket = make_socket_for_interface(interface, bindto=('',0))
         self.socket.settimeout(HEARTBEAT_TIME)
         self.thread = threading.Thread(target=self.listener)
         StationToBridge.instances[index] = self
-        self.thread.run()
+        self.thread.start()
 
     def broadcast_reply(m):
         #logging.info(f"Sending: {m}")
@@ -157,11 +144,11 @@ class StationToBridge:
     def listener(self):
         last_trajectory_timestamp = 0
         last_g920_timestamp = 0
-        logging.info(f"Sending beacon from {self.interface} to {station_address}")
+        logging.info(f"Sending beacon from {self.interface} at {self.socket.getsockname()[1]} to {station_address}")
         b = make_beacon_for_index(self.index)
         #print("Bytes are: ",b)
         bytes = self.socket.sendto(b, station_address)
-        logging.info(f"Sent {bytes} bytes")
+        # logging.info(f"Sent {bytes} bytes")
         while True:
             try:
                 #logging.info(f"Waiting for response on {self.interface}")
@@ -185,7 +172,7 @@ class StationToBridge:
                         pass
 
             except (socket.timeout, ConnectionResetError):
-                logging.info(f"Sending beacon from {self.interface} to {station_address}")
+                logging.info(f"Sending beacon from {self.interface} at {self.socket.getsockname()[1]} to {station_address}")
                 self.socket.sendto(make_beacon_for_index(self.index), station_address)
 
     def handle_trajectory_message(msg):
@@ -202,8 +189,8 @@ class StationToBridge:
         # Make message in format for MPC controller
         # 
         mpc_msg = f"<{msg['requested']}>c {-radius}\r\n"
-        print(f"Sending trajectory radius {radius}")
-        vehicle_pid.send(mpc_msg.encode('utf-8'))
+        print(f"Sending trajectory radius {-radius}")
+        vehicle_mpc.send(mpc_msg.encode('utf-8'))
 
     def handle_g920_message(msg):
         ''' Handle receipt of valid Pedal message '''
@@ -214,18 +201,20 @@ class StationToBridge:
         else:
             setting = accel
         acc_msg = f"p {brake} {accel}\r\n"
+        print(f"Sending ACC message brake:{brake} accel:{accel}")
         vehicle_acc.send(acc_msg.encode('utf-8'))
         
-logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)            
+logging.basicConfig(format='%(asctime)s.%(msecs)03d %(levelname)s:%(message)s', level=logging.DEBUG, datefmt='%H:%M:%S')
 vehicle_acc = VehicleToBridge('ACC', (args.vehicle_ip, args.acc_port), make_ACC_reply)
-vehicle_pid = VehicleToBridge('PID', (args.vehicle_ip, args.pid_port), make_PID_reply)
+vehicle_mpc = VehicleToBridge('MPC', (args.vehicle_ip, args.mpc_port), make_MPC_reply)
 station_to_bridge = []
-addrs = psutil.net_if_addrs()
-print("Network interfaces are:", addrs.keys())
-print("Network interface list:", interfaces())
 i = 0
-for k in interfaces():
-    print(f"Asking about interface {k}")
+interfaces = args.interfaces
+if platform.system() == 'Windows':
+    interfaces = ["127.0.0.1", "127.0.0.2", "127.0.0.3"]
+print(f"Running on platform {platform.system()}, connecting to interfaces: {interfaces}")
+
+for k in interfaces:
     station_to_bridge.append(StationToBridge(i, k, 10000+i))
     i = i+1
 time.sleep(10000)
