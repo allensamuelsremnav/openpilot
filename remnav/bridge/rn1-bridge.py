@@ -13,11 +13,11 @@ import psutil
 # Parse arguments
 #
 parser = argparse.ArgumentParser()
-parser.add_argument('-station_ip',help="IP Address of operator station", default="127.0.0.1")
-parser.add_argument('-station_port', help="Port number of operator station", type=int, default=6002)
-parser.add_argument('-vehicle_ip', help='IP Address of OpenPilot', default='192.168.43.1')
+parser.add_argument('-station_ip',help="IP Address of operator station", default="96.64.247.70") # was 96.64.247.70
+parser.add_argument('-station_port', help="Port number of operator station", type=int, default=6002) # was 
+parser.add_argument('-vehicle_ip', help='IP Address of OpenPilot', default='192.168.43.1') # was .1
 parser.add_argument('-acc_port', help='Port number for vehicle ACC controller', type=int, default=6381)
-parser.add_argument('-pid_port', help='Port number for vehciel PID controller', type=int, default=6379)
+parser.add_argument('-pid_port', help='Port number for vehicle PID controller', type=int, default=6379)
 parser.add_argument('-i', '-interfaces', metavar='InterfaceName', type=str, nargs='+',
                     help='Names of local NIC interfaces')
 args = parser.parse_args()
@@ -35,13 +35,15 @@ station_address = (args.station_ip, args.station_port)
 # rn1-bridge
 #
 def make_socket_for_interface(interface, bindto = None):
-    if not hasattr(socket,'SO_BINDTODEVICE') :
-        socket.SO_BINDTODEVICE = 25
+    if not hasattr(socket,'SO_BINDTODEVICE'):
+        print("Doing bind to device")
+        # socket.SO_BINDTODEVICE = 25
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)    
 #    result = sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, interface.encode('utf-8') + '\0'.encode('utf-8'))
 #    assert result == 0
     if bindto:
+        print("Binding to ", bindto)
         sock.bind(bindto)
     return sock
 
@@ -79,9 +81,9 @@ class VehicleToBridge:
     def send(self, msg):
         try:
             self.socket.send(msg)
-            logging.info(f"{self.name} Send: {msg}")
+            #logging.info(f"{self.name} Send: {msg}")
         except:
-            logging.info(f"{self.name} send failure, retrying")
+            #logging.info(f"{self.name} send failure, retrying")
             self.stop()
             self.start()
 
@@ -100,7 +102,7 @@ class VehicleToBridge:
             while self.run:
                 try:
                     buffer = self.socket.recv(1024).decode('utf-8')
-                    print(f"{self.name} received {buffer}")
+                    # print(f"{self.name} received {buffer}")
                     #
                     # Need to accumulate partial messages and parse out only till newlines to pass into handle function
                     #
@@ -122,7 +124,7 @@ def make_PID_reply(tag):
         'applied': time.time_ns()//1000,
         'log': 0
     }
-    #    logging.info(f"Received PID Vehicle Tag: {tag}, Reply:{reply}")
+    #logging.info(f"Received PID Vehicle Tag: {tag}, Reply:{reply}")
     StationToBridge.broadcast_reply(json.dumps(reply))
 
 def make_ACC_reply(tag):
@@ -141,14 +143,14 @@ class StationToBridge:
         self.ip = "127.0.0.1"
         self.port = port
         logging.info(f"Found interface {interface} with IP Address {self.ip}, now listening on port {port}")
-        self.socket = make_socket_for_interface(interface, bindto=(self.ip,port))
+        self.socket = make_socket_for_interface(interface) # , bindto=(self.ip,port))
         self.socket.settimeout(HEARTBEAT_TIME)
         self.thread = threading.Thread(target=self.listener)
         StationToBridge.instances[index] = self
         self.thread.run()
 
     def broadcast_reply(m):
-        logging.info(f"Sending: {m}")
+        #logging.info(f"Sending: {m}")
         for s in StationToBridge.instances.values():
             s.socket.sendto(make_message_for_index(s.index, m), station_address)
 
@@ -157,14 +159,14 @@ class StationToBridge:
         last_g920_timestamp = 0
         logging.info(f"Sending beacon from {self.interface} to {station_address}")
         b = make_beacon_for_index(self.index)
-        print("Bytes are: ",b)
+        #print("Bytes are: ",b)
         bytes = self.socket.sendto(b, station_address)
         logging.info(f"Sent {bytes} bytes")
         while True:
             try:
-                # logging.info(f"Waiting for response on {self.interface}")
+                #logging.info(f"Waiting for response on {self.interface}")
                 message, address = self.socket.recvfrom(1024)
-                logging.info(f"Received from {address} msg: {message}")
+                #logging.info(f"Received from {address} msg: {message}")
                 msg = json.loads(message)
                 request_timestamp = int(msg['requested'])
                 if msg['class'] == "TRAJECTORY":
@@ -195,10 +197,12 @@ class StationToBridge:
             radius = 10000000000000.0
         else:
             radius = 1 / curvature
+            #sradius = 7*radius
         #
         # Make message in format for MPC controller
         # 
-        mpc_msg = f"<{msg['requested']}>c {radius}\r\n"
+        mpc_msg = f"<{msg['requested']}>c {-radius}\r\n"
+        print(f"Sending trajectory radius {radius}")
         vehicle_pid.send(mpc_msg.encode('utf-8'))
 
     def handle_g920_message(msg):
