@@ -11,6 +11,7 @@ class Hijacker:
     self.threads = []
     self.brake = 0.0
     self.gas = 0.0
+    self.accel = 0.0
     self.displayTime = 10.0 # seconds between lateral plan messages
     self.nextDisplayTime = time.time() + self.displayTime
     self.hijackMode = True
@@ -75,7 +76,10 @@ class Hijacker:
       try:
         self.brake, self.gas = (float(sline[1]), float(sline[2]))
         if self.brake != 0:
-          self.gas = 0
+          self.accel = -self.brake
+        else:
+          self.accel = self.gas
+        result += f"Got Brake={self.brake} Gas={self.gas} Accel={self.accel}".encode('utf-8')
       except ValueError:
         result += b'Syntax error:' + sline[1] + ' ' + sline[2]
     elif sline[0] == 'q':
