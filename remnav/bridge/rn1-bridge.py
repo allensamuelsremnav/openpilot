@@ -5,7 +5,7 @@ import threading
 import logging
 import argparse
 import sys
-from netifaces import ifaddresses, AF_INET, interfaces
+# from netifaces import ifaddresses, AF_INET, interfaces
 import math
 import psutil
 import os
@@ -35,7 +35,8 @@ def make_socket_for_interface(interface, bindto = None):
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     if platform.system() == 'Linux':
         result = sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, str(interface + '\0').encode('utf-8'))
-        assert result == 0
+        logging.info(f"Binding to {interface}, result is {result}")
+        # assert result == 0
     if bindto:
         sock.bind(bindto)
     return sock
@@ -53,6 +54,7 @@ class VehicleToBridge:
     def __init__(self, name, vehicle_address, handle_reply_function):
         self.run = True
         self.name = name
+        self.connected = False
         self.vehicle_address = vehicle_address
         self.handle_reply_function = handle_reply_function
         self.start()
@@ -69,6 +71,9 @@ class VehicleToBridge:
         self.thread.join()
 
     def send(self, msg):
+        if not self.connected:
+           # print(f"{self.name} not connected skipping {msg}")
+           return
         try:
             self.socket.send(msg)
             #logging.info(f"{self.name} Send: {msg}")
@@ -80,6 +85,7 @@ class VehicleToBridge:
     def runner(self):
         logging.info(f"Waiting to connect {self.name} controller at {self.vehicle_address}")
         while self.run:
+            self.connected = False
             try:
                 self.socket.connect(self.vehicle_address)
             except ConnectionRefusedError:
@@ -89,6 +95,7 @@ class VehicleToBridge:
             except OSError:
                 continue
             logging.info(f"Established connection to {self.name} at address {self.socket.getpeername()}")
+            self.connected = True
             while self.run:
                 try:
                     buffer = self.socket.recv(1024).decode('utf-8')
@@ -121,13 +128,16 @@ def make_ACC_reply(tag):
     logging.info(f"Dropping ACC reply {tag}")
     pass
 
+HEARTBEAT_TIME = 5.0 # seconds
+last_trajectory_timestamp = 0
+last_g920_timestamp = 0
+
 class StationToBridge:
     '''One per interface'''
     instances = {}
     def __init__(self, index, interface, port):
         self.index = index
         self.interface = interface
-        HEARTBEAT_TIME = 5.0 # seconds
         global last_rcv_msg_time, last_rcv_timestamp
         self.port = port
         self.socket = make_socket_for_interface(interface, bindto=('',0))
@@ -137,13 +147,13 @@ class StationToBridge:
         self.thread.start()
 
     def broadcast_reply(m):
-        #logging.info(f"Sending: {m}")
+        logging.info(f"Sending: {m}")
         for s in StationToBridge.instances.values():
             s.socket.sendto(make_message_for_index(s.index, m), station_address)
 
     def listener(self):
-        last_trajectory_timestamp = 0
-        last_g920_timestamp = 0
+        global last_trajectory_timestamp
+        global last_g920_timestamp 
         logging.info(f"Sending beacon from {self.interface} at {self.socket.getsockname()[1]} to {station_address}")
         b = make_beacon_for_index(self.index)
         #print("Bytes are: ",b)
@@ -152,6 +162,7 @@ class StationToBridge:
         while True:
             try:
                 #logging.info(f"Waiting for response on {self.interface}")
+                self.socket.settimeout(HEARTBEAT_TIME)
                 message, address = self.socket.recvfrom(1024)
                 #logging.info(f"Received from {address} msg: {message}")
                 msg = json.loads(message)
@@ -194,6 +205,7 @@ class StationToBridge:
 
     def handle_g920_message(msg):
         ''' Handle receipt of valid Pedal message '''
+        #print(f"G920: {msg}")
         brake = msg['pedalmiddle']
         accel = msg['pedalright']
         if brake != 0:
