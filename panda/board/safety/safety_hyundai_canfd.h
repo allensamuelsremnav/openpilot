@@ -38,12 +38,7 @@ const CanMsg HYUNDAI_CANFD_HDA2_LONG_TX_MSGS[] = {
   {0x200, 1, 8},  // ADRV_0x200
   {0x345, 1, 8},  // ADRV_0x345
   {0x1DA, 1, 32}, // ADRV_0x1da
-
-  // for blinkers
-  {0x165, 1, 24}, // SPAS1
-  {0x16A, 1, 32}, // SPAS2
-  {0x7B1, 1, 8},  // tester present for APRK ECU disable
-  };
+};
 
 const CanMsg HYUNDAI_CANFD_HDA1_TX_MSGS[] = {
   {0x12A, 0, 16}, // LFA
@@ -350,23 +345,6 @@ static int hyundai_canfd_tx_hook(CANPacket_t *to_send) {
       tx = 0;
     }
   }
-  
-  // SPAS: only blinkers
-  if ((addr == 0x165) || (addr == 0x16a)) {
-    // skip counter and checksum
-    for (int i = 3; i < GET_LEN(to_send); i++) {
-      uint8_t val = GET_BYTE(to_send, i);
-      if (i == 16) {
-        // allow blinkers
-        val &= 0x1fU;
-      }
-
-      if (val != 0U) {
-        tx = 0;
-      }
-    }
-  }
-  
   return tx;
 }
 
