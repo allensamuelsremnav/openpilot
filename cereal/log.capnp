@@ -2157,7 +2157,7 @@ struct Microphone {
 struct Event {
   logMonoTime @0 :UInt64;  # nanoseconds
   valid @67 :Bool = true;
-  logMonoTimeUtcMillis @123: UInt64 # milliSeconds
+  logMonoTimeUtcMillis @123: UInt64; # milliSeconds
 
   union {
     # *********** log metadata ***********

@@ -25,10 +25,12 @@ AVG_FREQ_HISTORY = 100
 
 # sec_since_boot is faster, but allow to run standalone too
 try:
-  from common.realtime import sec_since_boot, monotonic_time
+  from common.realtime import sec_since_boot
 except ImportError:
   sec_since_boot = time.time
   print("Warning, using python time.time() instead of faster sec_since_boot")
+
+from common.clock import realtime_time # remnav
 
 context = Context()
 
@@ -50,7 +52,7 @@ def log_from_bytes(dat: bytes) -> capnp.lib.capnp._DynamicStructReader:
 def new_message(service: Optional[str] = None, size: Optional[int] = None) -> capnp.lib.capnp._DynamicStructBuilder:
   dat = log.Event.new_message()
   dat.logMonoTime = int(sec_since_boot() * 1e9)
-  dat.logMonoTimeUtcMillis = int(monotonic_time() * 1e3)
+  dat.logMonoTimeUtcMillis = int(realtime_time() * 1e3)
   dat.valid = True
   if service is not None:
     if size is None:
