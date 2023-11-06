@@ -25,7 +25,7 @@ AVG_FREQ_HISTORY = 100
 
 # sec_since_boot is faster, but allow to run standalone too
 try:
-  from common.realtime import sec_since_boot
+  from common.realtime import sec_since_boot, monotonic_time
 except ImportError:
   sec_since_boot = time.time
   print("Warning, using python time.time() instead of faster sec_since_boot")
@@ -50,6 +50,7 @@ def log_from_bytes(dat: bytes) -> capnp.lib.capnp._DynamicStructReader:
 def new_message(service: Optional[str] = None, size: Optional[int] = None) -> capnp.lib.capnp._DynamicStructBuilder:
   dat = log.Event.new_message()
   dat.logMonoTime = int(sec_since_boot() * 1e9)
+  dat.logMonoTimeUtcMillis = int(monotonic_time() * 1e3)
   dat.valid = True
   if service is not None:
     if size is None:
@@ -173,6 +174,7 @@ class SubMaster:
     self.data = {}
     self.valid = {}
     self.logMonoTime = {}
+    self.logMonoTimeUtcMillis = {}
 
     self.poller = Poller()
     self.non_polled_services = [s for s in services if poll is not None and
@@ -195,6 +197,7 @@ class SubMaster:
 
       self.data[s] = getattr(data, s)
       self.logMonoTime[s] = 0
+      self.logMonoTimeUtcMillis[s] = 0
       self.valid[s] = data.valid
 
   def __getitem__(self, s: str) -> capnp.lib.capnp._DynamicStructReader:
@@ -231,6 +234,7 @@ class SubMaster:
       self.rcv_frame[s] = self.frame
       self.data[s] = getattr(msg, s)
       self.logMonoTime[s] = msg.logMonoTime
+      self.logMonoTimeUtcMillis[s] = msg.logMonoTimeUtcMillis
       self.valid[s] = msg.valid
 
       if self.simulation:
