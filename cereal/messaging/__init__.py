@@ -24,11 +24,11 @@ NO_TRAVERSAL_LIMIT = 2**64-1
 AVG_FREQ_HISTORY = 100
 
 # sec_since_boot is faster, but allow to run standalone too
-try:
-  from common.realtime import sec_since_boot
-except ImportError:
-  sec_since_boot = time.time
-  print("Warning, using python time.time() instead of faster sec_since_boot")
+#try:
+#  from common.realtime import sec_since_boot
+#except ImportError:
+sec_since_boot = time.time
+print("Warning, using python time.time() instead of faster sec_since_boot")
 
 context = Context()
 
