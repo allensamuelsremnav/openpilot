@@ -14,6 +14,8 @@ class Hijacker:
     self.displayTime = 10.0 # seconds between lateral plan messages
     self.nextDisplayTime = time.time() + self.displayTime
     self.hijackMode = True
+    self.accel = 0
+    self.counter = 0
     if unit_test:
       self.connected = True
     else:
@@ -31,9 +33,9 @@ class Hijacker:
     
   def listener_thread(self):
     while True:
-      print("Waiting for socket connection")
+      print("Waiting for socket connection for PEDAL ")
       (clientSocket, address) = self.serversocket.accept()
-      print("Got connection from ", address)
+      print(">>>>>> PEDAL Got connection from ", address)
       t = threading.Thread(target = self.socket_handler_thread, args=(clientSocket,))
       t.start()
       self.threads.append(t)
@@ -75,11 +77,15 @@ class Hijacker:
       try:
         self.brake, self.gas = (float(sline[1]), float(sline[2]))
         if self.brake != 0:
+          self.accel = -self.brake
           self.gas = 0
+        else:
+          self.accel = self.gas
+        print(f">> Pedal Gas {self.gas:.02f} Brake:{self.brake:.02f}")
       except ValueError:
-        result += b'Syntax error:' + sline[1] + ' ' + sline[2]
+        result += b'Syntax error:' + sline[1].encode('utf-8') + ' ' + sline[2].encode('utf-8')
     elif sline[0] == 'q':
-      raise OSError()        
+      raise OSError()
     else:
       result += b'Help Message:\r\n' + \
                 b'p <brake> <gas> : set brake and gas pedals\n' + \
@@ -96,6 +102,9 @@ class Hijacker:
     self.v_ego = v_ego
     if not self.isConnected() and not unit_test:
       return accel
+    self.counter = self.counter + 1
+    if (self.counter % 100) == 0:
+      print(f"Current Accel: {self.accel:.02f}")
     return self.accel
 
 if __name__ == '__main__':

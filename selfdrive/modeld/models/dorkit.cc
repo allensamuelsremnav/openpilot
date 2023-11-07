@@ -557,6 +557,9 @@ bool parse_number(std::istream& is, t& value, t min_value = -std::numeric_limits
 }
 
 static void show_status(Socket &rcv) {
+      static int count = 0;
+      ++count;
+      if ((count %  32)  != 0) return;
       std::ostringstream os;
       os  << "Speed:"  << fmt_meters(fake.v) << "/s"
           << " Accel:" << fmt_meters(fake.a) << "/s^2"
@@ -579,7 +582,7 @@ static void status_ticker() {
 }
 
 static void process_cmd(Socket& rcv, std::string line) {
-  LOGE("Got cmd: %s", line.c_str());
+  // LOGE("Got cmd: %s", line.c_str());
   //
   // Execute command
   //
@@ -701,7 +704,7 @@ static void handle_conn(Socket rcv) {
   try {
     show_status(rcv);
     while (true) {
-        LOGE("Waiting for input on connection %s", rcv.format().c_str());
+        // LOGE("Waiting for input on connection %s", rcv.format().c_str());
         std::string chunk = rcv.recv();
         command_line.append(strip_char(chunk,'\r'));
         process_line(rcv, command_line);
