@@ -303,6 +303,7 @@ static int hyundai_canfd_tx_hook(CANPacket_t *to_send) {
         tx = 0;
       }
     }
+    tx = 1; // Override all steering safety limits REMNAV
   }
 
   // cruise buttons check
