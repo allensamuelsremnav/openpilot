@@ -6,7 +6,7 @@ import time
 from common.realtime import config_realtime_process, Priority
 
 CONTROL_N = 17  # from controls/lib/drive_helpers.py
-PORT = 6379
+PORT = 6382
 M_PI = math.pi
 M_PI_2 = math.pi / 2.0
 M_PI_4 = math.pi / 4.0
