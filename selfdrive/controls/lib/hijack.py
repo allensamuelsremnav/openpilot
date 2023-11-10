@@ -275,12 +275,12 @@ class Hijacker:
     sline = line.split(b' ')
     if sline[0] == b's':
       try:
-        result += self.setSteer(-float(sline[1]))
+        result += self.setSteer(float(sline[1]))
       except ValueError:
         result += b'Syntax error:' + sline[1]
     elif sline[0] == b'c':
       try:
-        radius = -float(sline[1])
+        radius = float(sline[1])
         if abs(radius) <= self.wheelBase:
           result += b'too small radius'
         else:
