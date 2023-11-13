@@ -383,7 +383,7 @@ std::string fmt_meters(float meters) {
   return os.str();
 }
 
-const int port = 6379;
+const int port = 6382;
 
 Socket *log_socket = nullptr;
 bool show_msg = false;
