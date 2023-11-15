@@ -14,12 +14,12 @@ data = {
 "class": "VEHICLE_METADATA",
 "timestamp":  curTS, #epoch-time-ms,
 "ch": 0,   #carrier, 0-2
-"openpilotEngaged": False   #on/off flag
+"openpilotEnabled": False   #on/off flag
 }
 
 while 1:
   sm.update()
-  data["openpilotEngaged"]=sm['carControl'].enabled
+  data["openpilotEnabled"]=sm['carControl'].enabled
   data["timestamp"]=round(time.time()*1000)
   udpsocket.sendto(json.dumps(data).encode(), (UDP_IP,UDP_PORT))
   print("time: ", data["timestamp"], "enabled: ", sm['carControl'].enabled, ", latActive: ", sm['carControl'].latActive, ", longActive: ",  sm['carControl'].longActive)
