@@ -147,7 +147,7 @@ class StationToBridge:
         self.thread.start()
 
     def broadcast_reply(m):
-        logging.info(f"Sending: {m}")
+        #logging.info(f"Sending: {m}")
         for s in StationToBridge.instances.values():
             s.socket.sendto(make_message_for_index(s.index, m), station_address)
 
@@ -179,8 +179,10 @@ class StationToBridge:
                         last_g920_timestamp = request_timestamp
                         StationToBridge.handle_g920_message(msg)
                     else:
-                        #logging.info(f"Discarding message to {self.interface}, duplicate")
+                        #logging.info(f"Discarding G920 message, duplicate {request_timestamp} <= {last_g920_timestamp}")
                         pass
+                else:
+                    logging.info(f"Unknown message class {msg['class']}")
 
             except (socket.timeout, ConnectionResetError):
                 logging.info(f"Sending beacon from {self.interface} at {self.socket.getsockname()[1]} to {station_address}")
@@ -200,7 +202,7 @@ class StationToBridge:
         # Make message in format for MPC controller
         # 
         mpc_msg = f"<{msg['requested']}>c {-radius}\r\n"
-        print(f"Sending trajectory radius {-radius}")
+        #print(f"Sending trajectory radius {-radius}")
         vehicle_mpc.send(mpc_msg.encode('utf-8'))
 
     def handle_g920_message(msg):
@@ -212,8 +214,8 @@ class StationToBridge:
             setting = brake
         else:
             setting = accel
-        acc_msg = f"p {brake} {accel}\r\n"
-        print(f"Sending ACC message brake:{brake} accel:{accel}")
+        acc_msg = f"p {brake*4.0} {accel*4.0}\r\n"
+        print(f"Sending ACC message brake:{brake*4.0} accel:{4.0*accel}")
         vehicle_acc.send(acc_msg.encode('utf-8'))
         
 logging.basicConfig(format='%(asctime)s.%(msecs)03d %(levelname)s:%(message)s', level=logging.DEBUG, datefmt='%H:%M:%S')
