@@ -3,6 +3,8 @@ import threading
 import socket
 import math
 import time
+import json
+from pedal_mapper import pedal_mapper
 
 PORT = 6381
 
@@ -16,6 +18,7 @@ class Hijacker:
     self.hijackMode = True
     self.accel = 0
     self.counter = 0
+    self.pedal_mapper = pedal_mapper()
     if unit_test:
       self.connected = True
     else:
@@ -84,16 +87,33 @@ class Hijacker:
         print(f">> Pedal Gas {self.gas:.02f} Brake:{self.brake:.02f}")
       except ValueError:
         result += b'Syntax error:' + sline[1].encode('utf-8') + ' ' + sline[2].encode('utf-8')
+    elif sline[0] == 'j':
+      try:
+        j = json.loads(sline[' '.join(sline[1:])])
+        self.handle_920_json(j)
+      except json.JSONDecodeError:
+        result += b'JSON decode error'
     elif sline[0] == 'q':
       raise OSError()
     else:
       result += b'Help Message:\r\n' + \
                 b'p <brake> <gas> : set brake and gas pedals\n' + \
+                b'j <json>\n'                                   + \
                 b'H                   : toggle hijack mode\r\n' + \
                 b'q                   : quit / close this socket'
     if len(result) != 0:
       result += b'\r\n'
     return result
+  def handle_920_json(self, j):
+    '''Decoded JSON'''
+    #
+    # Convert Greg's format to the row format used by Gopal's code
+    #
+    row={}
+    param_array = j["parameters"]
+    for param in param_array:
+      row[param['name']] = float(param['value'])
+    self.accel = self.mapper.calc_from_row(row)
 
   #
   # Called by controls thread to re-write the lateral plan message
