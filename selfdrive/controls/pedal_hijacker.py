@@ -4,7 +4,7 @@ import socket
 import math
 import time
 import json
-from selfdrive.controls.pedal_mapper import pedal_mapper
+from selfdrive.controls.pedal_mapper import PedalMapper
 
 PORT = 6381
 
@@ -18,7 +18,7 @@ class Hijacker:
     self.hijackMode = True
     self.accel = 0
     self.counter = 0
-    self.pedal_mapper = pedal_mapper()
+    self.pedal_mapper = PedalMapper()
     self.last_json = None
     if unit_test:
       self.connected = True
