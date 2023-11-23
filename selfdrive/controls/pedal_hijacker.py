@@ -4,7 +4,7 @@ import socket
 import math
 import time
 import json
-from pedal_mapper import pedal_mapper
+from selfdrive.controls.pedal_mapper import pedal_mapper
 
 PORT = 6381
 
@@ -19,6 +19,7 @@ class Hijacker:
     self.accel = 0
     self.counter = 0
     self.pedal_mapper = pedal_mapper()
+    self.last_json = None
     if unit_test:
       self.connected = True
     else:
@@ -88,11 +89,7 @@ class Hijacker:
       except ValueError:
         result += b'Syntax error:' + sline[1].encode('utf-8') + ' ' + sline[2].encode('utf-8')
     elif sline[0] == 'j':
-      try:
-        j = json.loads(sline[' '.join(sline[1:])])
-        self.handle_920_json(j)
-      except json.JSONDecodeError:
-        result += b'JSON decode error'
+      result += self.handle_920_json(sline[1:])
     elif sline[0] == 'q':
       raise OSError()
     else:
@@ -104,17 +101,24 @@ class Hijacker:
     if len(result) != 0:
       result += b'\r\n'
     return result
-  def handle_920_json(self, j):
+  def handle_920_json(self, blob):
     '''Decoded JSON'''
+    try:
+      js = json.loads(blob)
+    except json.JSONDecodeError:
+      return b'JSON decode error'
     #
     # Convert Greg's format to the row format used by Gopal's code
     #
     row={}
-    param_array = j["parameters"]
+    param_array = js["parameters"]
     for param in param_array:
       row[param['name']] = float(param['value'])
     self.accel = self.mapper.calc_from_row(row)
-
+    if self.last_json != js:
+      print("Received: ", js)
+    self.last_json = js
+    return b''
   #
   # Called by controls thread to re-write the lateral plan message
   #
