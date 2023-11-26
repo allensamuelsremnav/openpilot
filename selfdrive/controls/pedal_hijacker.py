@@ -5,6 +5,7 @@ import math
 import time
 import json
 from selfdrive.controls.pedal_mapper import PedalMapper
+from common.conversions import Conversions as CV
 
 PORT = 6381
 
@@ -19,7 +20,7 @@ class Hijacker:
     self.accel = 0
     self.counter = 0
     self.pedal_mapper = PedalMapper()
-    self.last_json = None
+    self.parameters = None
     if unit_test:
       self.connected = True
     else:
@@ -82,7 +83,7 @@ class Hijacker:
         self.brake, self.gas = (float(sline[1]), float(sline[2]))
         if self.brake != 0:
           self.accel = -self.brake
-          self.gas = 0
+          # self.gas = 0
         else:
           self.accel = self.gas
         print(f">> Pedal Gas {self.gas:.02f} Brake:{self.brake:.02f}")
@@ -94,8 +95,8 @@ class Hijacker:
       raise OSError()
     else:
       result += b'Help Message:\r\n' + \
-                b'p <brake> <gas> : set brake and gas pedals\n' + \
-                b'j <json>\n'                                   + \
+                b'p <brake> <gas>     : set brake and gas pedals\n' + \
+                b'j <json>            : load parameters\n' + \
                 b'H                   : toggle hijack mode\r\n' + \
                 b'q                   : quit / close this socket'
     if len(result) != 0:
@@ -104,20 +105,9 @@ class Hijacker:
   def handle_920_json(self, blob):
     '''Decoded JSON'''
     try:
-      js = json.loads(blob)
+      self.parameters = json.loads(blob)["parameters"]
     except json.JSONDecodeError:
       return b'JSON decode error'
-    #
-    # Convert Greg's format to the row format used by Gopal's code
-    #
-    row={}
-    param_array = js["parameters"]
-    for param in param_array:
-      row[param['name']] = float(param['value'])
-    self.accel = self.mapper.calc_from_row(row)
-    if self.last_json != js:
-      print("Received: ", js)
-    self.last_json = js
     return b''
   #
   # Called by controls thread to re-write the lateral plan message
@@ -129,6 +119,17 @@ class Hijacker:
     self.counter = self.counter + 1
     if (self.counter % 100) == 0:
       print(f"Current Accel: {self.accel:.02f}")
+    #
+    # Convert to format used by pedal mapper
+    #
+    row={}
+    for p in self.parameters:
+      row[p['name']] = p['value']
+
+    row['current_speed'] = v_ego * CV.MS_TO_MPH
+    row['x_throttle'] = self.gas
+    row['x_brake'] = self.brake
+    self.accel = self.mapper.calc_from_row(row)
     return self.accel
 
 if __name__ == '__main__':
