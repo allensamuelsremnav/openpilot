@@ -326,9 +326,9 @@ class Hijacker:
       # Save old data
       #
       if lp.psis is not None:
-         lPolyDEPRECATED = [lp.psis[i] for i in range(len(lp.psis))]
-         cPolyDEPRECATED = [lp.curvatures[i] for i in range(len(lp.curvatures))]
-         dPolyDEPRECATED = [lp.dPathPoints[i] for i in range(len(lp.dPathPoints))]
+         lp.lPolyDEPRECATED = [lp.psis[i] for i in range(len(lp.psis))]
+         lp.cPolyDEPRECATED = [lp.curvatures[i] for i in range(len(lp.curvatures))]
+         lp.dPolyDEPRECATED = [lp.dPathPoints[i] for i in range(len(lp.dPathPoints))]
       for i in range(0, CONTROL_N):
         t = T_IDXS[i]     # time
         tv = T_variables(t, v_ego, 0, self.bike)
