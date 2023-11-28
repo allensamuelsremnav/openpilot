@@ -19,7 +19,7 @@ class Hijacker:
     self.hijackMode = True
     self.accel = 0
     self.counter = 0
-    self.pedal_mapper = PedalMapper()
+    self.mapper = PedalMapper()
     self.parameters = None
     if unit_test:
       self.connected = True
@@ -90,7 +90,7 @@ class Hijacker:
       except ValueError:
         result += b'Syntax error:' + sline[1].encode('utf-8') + ' ' + sline[2].encode('utf-8')
     elif sline[0] == b'j':
-      result += self.handle_920_json(sline[1:])
+      result += self.handle_920_json(b' '.join(sline[1:]))
     elif sline[0] == b'q':
       raise OSError()
     else:
@@ -105,7 +105,7 @@ class Hijacker:
   def handle_920_json(self, blob):
     '''Decoded JSON'''
     try:
-      self.parameters = json.loads(blob)["parameters"]
+      self.parameters = json.loads(blob.decode('utf-8'))["parameters"]
     except json.JSONDecodeError:
       return b'JSON decode error'
     return b''
