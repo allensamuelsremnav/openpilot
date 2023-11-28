@@ -123,13 +123,15 @@ class Hijacker:
     # Convert to format used by pedal mapper
     #
     row={}
+    if self.parameters is None:
+      return self.accel
     for p in self.parameters:
       row[p['name']] = p['value']
 
     row['current_speed'] = v_ego * CV.MS_TO_MPH
     row['x_throttle'] = self.gas
     row['x_brake'] = self.brake
-    self.accel = self.mapper.calc_from_row(row)
+    self.accel = self.mapper.calc_from_row(row) * 4.0
     return self.accel
 
 if __name__ == '__main__':
