@@ -89,9 +89,9 @@ class Hijacker:
         print(f">> Pedal Gas {self.gas:.02f} Brake:{self.brake:.02f}")
       except ValueError:
         result += b'Syntax error:' + sline[1].encode('utf-8') + ' ' + sline[2].encode('utf-8')
-    elif sline[0] == 'j':
+    elif sline[0] == b'j':
       result += self.handle_920_json(sline[1:])
-    elif sline[0] == 'q':
+    elif sline[0] == b'q':
       raise OSError()
     else:
       result += b'Help Message:\r\n' + \
