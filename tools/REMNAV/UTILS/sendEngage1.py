@@ -31,6 +31,6 @@ while 1:
      data["openpilotEnabled"]=True
   else:
      data["openpilotEnabled"]=False
-#  data["timestamp"]=round(time.time()*1000)
+  data["timestamp"]=round(time.time()*1000)
   udpsocket.sendto(json.dumps(data).encode(), (UDP_IP,UDP_PORT))
 #  print("time: ", data["timestamp"], "flag,latActive,state,enabled,active: ", data["openpilotEnabled"], sm['carControl'].latActive, sm['controlsState'].state, sm['controlsState'].enabled. sm['controlsState'].active)
