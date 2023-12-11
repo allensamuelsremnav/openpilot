@@ -770,8 +770,7 @@ void fill_xyzt(cereal::XYZTData::Builder xyzt, const std::array<float, size> &t,
 
 #define QUOTED(x) "\"" #x "\""
 
-static void insert_array(std::ostringstream& os, capnp::List<float>::Builder &ary) {
-  auto array = ary.asReader();
+static void insert_array(std::ostringstream& os, capnp::List<float>::Reader &array) {
   os << '[';
   for (size_t i = 0; i < TRAJECTORY_SIZE; ++i) {
     if (isnan(array[i])) break;
@@ -798,11 +797,11 @@ void send_trajectory(cereal::ModelDataV2::Builder &msg) {
     }
     os << QUOTED(timestamp) << ":" << (secs * 1000) + ms;
     os << "," << QUOTED(trajectory) << "{" << QUOTED(x) << ":";
-    insert_array(os, msg.getPosition().getX());
+    insert_array(os, msg.getPosition().getX().asReader());
     os << "," << QUOTED(y) << ":";
-    insert_array(os, msg.getPosition().getY());
+    insert_array(os, msg.getPosition().getY().asReader());
     os << "," << QUOTED(z) << ":";
-    insert_array(os, msg.getPosition().getZ());
+    insert_array(os, msg.getPosition().getZ().asReader());
     os << "}}";
     trajectory_socket->send(os.str());
   }
