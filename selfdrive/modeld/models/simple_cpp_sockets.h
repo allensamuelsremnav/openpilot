@@ -218,9 +218,9 @@ public:
         dest_addr.sin_port = _dest_port;
     }
     void send(string& s) const {
-        ssize_t bytes = ::sendto(m_socket, s.c_data(), s.len(), 0, (sockaddr *)&dest_addr, sizeof(dest_addr));
-        if (bytes != s.len()) {
-            std::cout << "Failed to send string, sent " << bytes << " out of " << s.len() << " Errorno=" << errno << "\n";
+        ssize_t bytes = ::sendto(m_socket, &s[0], s.size(), 0, (sockaddr *)&dest_addr, sizeof(dest_addr));
+        if (bytes != s.size()) {
+            std::cout << "Failed to send string, sent " << bytes << " out of " << s.size() << " Errorno=" << errno << "\n";
             throw send_err();
         }
     }

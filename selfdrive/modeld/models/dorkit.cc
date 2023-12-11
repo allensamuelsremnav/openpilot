@@ -666,11 +666,11 @@ static void process_cmd(Socket& rcv, std::string line) {
     show_msg = true;
     while (show_msg) usleep(50000);  // 50mSec
   } else if (cmd == "t") {
-    u_int16_t port;
-    error = parse_number(is, port, 0, 65535);
+    u_int16_t traj_port;
+    error = parse_number(is, traj_port, 0, 65535);
     if (!error) {
       delete trajectory_socket;
-      trajectory_socket = new UDPSender(rcv.getpeeraddr(), port);
+      trajectory_socket = new UDPSender(rcv.getpeeraddr(), traj_port);
     }
   } else if (cmd == "help" || cmd == "h") {
     rcv.send(helpText());
@@ -771,12 +771,13 @@ void fill_xyzt(cereal::XYZTData::Builder xyzt, const std::array<float, size> &t,
 #define QUOTED(x) "\"" #x "\""
 
 static void insert_array(std::ostringstream& os, float *array) {
-  s << '[';
-  for (size_t i = 0; i < T_IDXS_FLOAT; ++i) {
-    if (i != 0) s << ",";
-
+  os << '[';
+  for (size_t i = 0; i < TRAJECTORY_SIZE; ++i) {
+    if (isnan(array[i]) break;
+    if (i != 0) os << ",";
+    os << std::setprecision(1) << array[i];
   }
-  s << ']';
+  os << ']';
 }
 
 void send_trajectory(cereal::ModelDataV2::Builder &msg) {
@@ -1003,7 +1004,7 @@ void dorkit(ModelState *s, PubMaster& pm, MessageBuilder& omsg_builder, cereal::
     // Normal path
     pm.send("modelV2", omsg_builder);
   } else if (trajectory_socket) {
-    send_trajectory(omsg_builder);
+    send_trajectory(omsg);
     pm.send("modelV2", omsg_builder);
   } else {
     MessageBuilder nmsg_builder;
