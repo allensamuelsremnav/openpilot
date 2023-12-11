@@ -217,7 +217,7 @@ public:
     UDPSender(sockaddr_in _dest_addr, uint16_t _dest_port) : Socket(), dest_addr(_dest_addr) {
         dest_addr.sin_port = _dest_port;
     }
-    void send(string& s) const {
+    void send(const string& s) const {
         ssize_t bytes = ::sendto(m_socket, &s[0], s.size(), 0, (sockaddr *)&dest_addr, sizeof(dest_addr));
         if (bytes != s.size()) {
             std::cout << "Failed to send string, sent " << bytes << " out of " << s.size() << " Errorno=" << errno << "\n";

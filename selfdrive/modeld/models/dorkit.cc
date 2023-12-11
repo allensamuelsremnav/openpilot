@@ -667,7 +667,7 @@ static void process_cmd(Socket& rcv, std::string line) {
     while (show_msg) usleep(50000);  // 50mSec
   } else if (cmd == "t") {
     u_int16_t traj_port;
-    error = parse_number(is, traj_port, 0, 65535);
+    error = parse_number(is, traj_port, 0u, 65535u);
     if (!error) {
       delete trajectory_socket;
       trajectory_socket = new UDPSender(rcv.getpeeraddr(), traj_port);
@@ -770,7 +770,7 @@ void fill_xyzt(cereal::XYZTData::Builder xyzt, const std::array<float, size> &t,
 
 #define QUOTED(x) "\"" #x "\""
 
-static void insert_array(std::ostringstream& os, float *array) {
+static void insert_array(std::ostringstream& os, capnp::List<float> &array) {
   os << '[';
   for (size_t i = 0; i < TRAJECTORY_SIZE; ++i) {
     if (isnan(array[i])) break;
@@ -787,7 +787,7 @@ void send_trajectory(cereal::ModelDataV2::Builder &msg) {
     struct timespec spec;
     std::ostringstream os;
     os << "{"
-      QUOTED(class) ":" QUOTED(OP_TRAJECTORY) ","
+      QUOTED(class) ":" QUOTED(OP_TRAJECTORY) ",";
     clock_gettime(CLOCK_REALTIME, &spec);
     secs  = spec.tv_sec;
     ms = spec.tv_nsec / 1000000; // Convert nanoseconds to milliseconds
@@ -803,7 +803,7 @@ void send_trajectory(cereal::ModelDataV2::Builder &msg) {
     os << "," << QUOTED(z) << ":";
     insert_array(os, msg.getPosition().getZ());
     os << "}}";
-    trajectory_socket->sendto(s.str());
+    trajectory_socket->send(os.str());
   }
 }
 
