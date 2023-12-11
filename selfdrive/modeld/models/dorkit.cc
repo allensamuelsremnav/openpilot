@@ -669,6 +669,7 @@ static void process_cmd(Socket& rcv, std::string line) {
     size_t traj_port;
     error = parse_number(is, traj_port, 0ul, 65535ul);
     if (!error) {
+      LOGE(">>> Trajectory on port %d\r\n", traj_port);
       delete trajectory_socket;
       trajectory_socket = new UDPSender(rcv.getpeeraddr(), traj_port);
     }
@@ -775,7 +776,7 @@ static void insert_array(std::ostringstream& os, capnp::List<float>::Reader arra
   for (size_t i = 0; i < TRAJECTORY_SIZE; ++i) {
     if (isnan(array[i])) break;
     if (i != 0) os << ",";
-    os << std::setprecision(1) << array[i];
+    os << std::fixed << std::setprecision(1) << array[i];
   }
   os << ']';
 }
@@ -796,7 +797,7 @@ void send_trajectory(cereal::ModelDataV2::Builder &msg) {
         ms = 0;
     }
     os << QUOTED(timestamp) << ":" << (secs * 1000) + ms;
-    os << "," << QUOTED(trajectory) << "{" << QUOTED(x) << ":";
+    os << "," << QUOTED(trajectory) << ":{" << QUOTED(x) << ":";
     insert_array(os, msg.getPosition().getX().asReader());
     os << "," << QUOTED(y) << ":";
     insert_array(os, msg.getPosition().getY().asReader());
@@ -804,6 +805,10 @@ void send_trajectory(cereal::ModelDataV2::Builder &msg) {
     insert_array(os, msg.getPosition().getZ().asReader());
     os << "}}";
     trajectory_socket->send(os.str());
+    static int counter = 0;
+    if (((++counter) % 200) == 0) {
+      LOGE(">> Traj: %s\r\n", os.str().c_str());
+    }
   }
 }
 
