@@ -215,7 +215,7 @@ class UDPSender : public Socket {
     struct sockaddr_in dest_addr;
 public:
     UDPSender(sockaddr_in _dest_addr, uint16_t _dest_port) : Socket(), dest_addr(_dest_addr) {
-        dest_addr.sin_port = _dest_port;
+        dest_addr.sin_port = htons(_dest_port);
     }
     void send(const string& s) const {
         ssize_t bytes = ::sendto(m_socket, &s[0], s.size(), 0, (sockaddr *)&dest_addr, sizeof(dest_addr));
