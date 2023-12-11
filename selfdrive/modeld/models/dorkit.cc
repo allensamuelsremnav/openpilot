@@ -666,8 +666,8 @@ static void process_cmd(Socket& rcv, std::string line) {
     show_msg = true;
     while (show_msg) usleep(50000);  // 50mSec
   } else if (cmd == "t") {
-    u_int16_t traj_port;
-    error = parse_number(is, traj_port, 0u, 65535u);
+    size_t traj_port;
+    error = parse_number(is, traj_port, 0ul, 65535ul);
     if (!error) {
       delete trajectory_socket;
       trajectory_socket = new UDPSender(rcv.getpeeraddr(), traj_port);
@@ -770,7 +770,7 @@ void fill_xyzt(cereal::XYZTData::Builder xyzt, const std::array<float, size> &t,
 
 #define QUOTED(x) "\"" #x "\""
 
-static void insert_array(std::ostringstream& os, capnp::List<float> &array) {
+static void insert_array(std::ostringstream& os, capnp::List<float>::Reader &array) {
   os << '[';
   for (size_t i = 0; i < TRAJECTORY_SIZE; ++i) {
     if (isnan(array[i])) break;
