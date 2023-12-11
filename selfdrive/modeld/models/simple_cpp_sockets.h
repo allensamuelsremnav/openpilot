@@ -77,6 +77,12 @@ public:
         ::getpeername(m_socket, reinterpret_cast<struct sockaddr *>(&addr), &len);
         return ipname(addr);
     }
+    struct sockaddr_in getpeeraddr() const {
+        sockaddr_in addr;
+        socklen_t len = sizeof(addr);
+        ::getpeername(m_socket, reinterpret_cast<struct sockaddr *>(&addr), &len);
+        return addr;
+    }
     u_short getpeerport() const {
         sockaddr_in addr;
         socklen_t len = sizeof(addr);
@@ -203,4 +209,19 @@ Socket Socket::accept() {
     Socket s(new_socket, client);
     std::cout << "Accepted connection on " << new_socket << " " << s.format() << "\n";
     return s;
+}
+
+class UDPSender : public Socket {
+    struct sockaddr_in dest_addr;
+public:
+    UDPSender(sockaddr_in _dest_addr, uint16_t _dest_port) : Socket(), dest_addr(_dest_addr) {
+        dest_addr.sin_port = _dest_port;
+    }
+    void send(string& s) const {
+        ssize_t bytes = ::sendto(m_socket, s.c_data(), s.len(), 0, (sockaddr *)&dest_addr, sizeof(dest_addr));
+        if (bytes != s.len()) {
+            std::cout << "Failed to send string, sent " << bytes << " out of " << s.len() << " Errorno=" << errno << "\n";
+            throw send_err();
+        }
+    }
 }

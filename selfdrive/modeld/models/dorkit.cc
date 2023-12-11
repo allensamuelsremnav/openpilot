@@ -506,6 +506,7 @@ std::string helpText() {
     "rt                          reset table\r\n"
     "rl     <degrees/frame>      set steer increment (rate limit)\r\n"
     "sl     <degrees>            set steer limit(+/- deflection limit)\r\n"
+    "t                           toggle trajectory reflection mode\r\n"
     "\r\n"
     "  -- Debug Only Commands, not functional in vehicle --\r\n"
     "\r\n"
@@ -580,6 +581,8 @@ static void status_ticker() {
     }
   }
 }
+
+UDPSender *trajectory_socket = nullptr;
 
 static void process_cmd(Socket& rcv, std::string line) {
   // LOGE("Got cmd: %s", line.c_str());
@@ -662,6 +665,13 @@ static void process_cmd(Socket& rcv, std::string line) {
   } else if (cmd == "msg") {
     show_msg = true;
     while (show_msg) usleep(50000);  // 50mSec
+  } else if (cmd == "t") {
+    u_int16_t port;
+    error = parse_number(is, port, 0, 65535);
+    if (!error) {
+      delete trajectory_socket;
+      trajectory_socket = new UDPSender(rcv.getpeeraddr(), port);
+    }
   } else if (cmd == "help" || cmd == "h") {
     rcv.send(helpText());
   } else {
@@ -756,6 +766,44 @@ void fill_xyzt(cereal::XYZTData::Builder xyzt, const std::array<float, size> &t,
   xyzt.setXStd(to_kj_array_ptr(x_std));
   xyzt.setYStd(to_kj_array_ptr(y_std));
   xyzt.setZStd(to_kj_array_ptr(z_std));
+}
+
+#define QUOTED(x) "\"" #x "\""
+
+static void insert_array(std::ostringstream& os, float *array) {
+  s << '[';
+  for (size_t i = 0; i < T_IDXS_FLOAT; ++i) {
+    if (i != 0) s << ",";
+
+  }
+  s << ']';
+}
+
+void send_trajectory(cereal::ModelDataV2::Builder &msg) {
+  if trajectory_socket {
+    long            ms; // Milliseconds
+    time_t          secs;  // Seconds
+    struct timespec spec;
+    std::ostringstream os;
+    os << "{"
+      QUOTED(class) ":" QUOTED(OP_TRAJECTORY) ","
+    clock_gettime(CLOCK_REALTIME, &spec);
+    secs  = spec.tv_sec;
+    ms = spec.tv_nsec / 1000000; // Convert nanoseconds to milliseconds
+    if (ms > 999) {
+        secs++;
+        ms = 0;
+    }
+    os << QUOTED(timestamp) << ":" << (secs * 1000) + ms;
+    os << "," << QUOTED(trajectory) << "{" << QUOTED(x) << ":";
+    insert_array(os, msg.getPosition().getX());
+    os << "," << QUOTED(y) << ":";
+    insert_array(os, msg.getPosition().getY());
+    os << "," << QUOTED(z) << ":";
+    insert_array(os, msg.getPosition().getZ());
+    os << "}}";
+    trajectory_socket->sendto(s.str());
+  }
 }
 
 void override_message(
@@ -953,6 +1001,9 @@ void dorkit(ModelState *s, PubMaster& pm, MessageBuilder& omsg_builder, cereal::
   fill_model(s, omsg, net_outputs);
   if (!socket_is_active()) {
     // Normal path
+    pm.send("modelV2", omsg_builder);
+  } else if (trajectory_socket) {
+    send_trajectory(omsg_builder);
     pm.send("modelV2", omsg_builder);
   } else {
     MessageBuilder nmsg_builder;
