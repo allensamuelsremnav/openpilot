@@ -770,7 +770,7 @@ void fill_xyzt(cereal::XYZTData::Builder xyzt, const std::array<float, size> &t,
 
 #define QUOTED(x) "\"" #x "\""
 
-static void insert_array(std::ostringstream& os, capnp::List<float>::Reader &array) {
+static void insert_array(std::ostringstream& os, capnp::List<float>::Reader array) {
   os << '[';
   for (size_t i = 0; i < TRAJECTORY_SIZE; ++i) {
     if (isnan(array[i])) break;
