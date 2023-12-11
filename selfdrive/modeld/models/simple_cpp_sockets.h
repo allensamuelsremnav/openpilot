@@ -224,4 +224,4 @@ public:
             throw send_err();
         }
     }
-}
+};

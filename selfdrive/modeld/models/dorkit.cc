@@ -545,7 +545,7 @@ bool parse_degrees(std::istream& is, t& value, std::string error_msg = "degrees"
   }
 }
 template<typename t>
-bool parse_number(std::istream& is, t& value, t min_value = -std::numeric_limits<t>::infinity(), t max_value = std::numeric_limits<t>::infinity(), std::string error_msg = "number") {
+bool parse_number(std::istream& is, t& value, t min_value = std::numeric_limits<t>::min(), t max_value = std::numeric_limits<t>::max(), std::string error_msg = "number") {
   t temp;
   is >> temp;
   if (!is.bad() && temp >= min_value && temp <= max_value) {
@@ -773,7 +773,7 @@ void fill_xyzt(cereal::XYZTData::Builder xyzt, const std::array<float, size> &t,
 static void insert_array(std::ostringstream& os, float *array) {
   os << '[';
   for (size_t i = 0; i < TRAJECTORY_SIZE; ++i) {
-    if (isnan(array[i]) break;
+    if (isnan(array[i])) break;
     if (i != 0) os << ",";
     os << std::setprecision(1) << array[i];
   }
@@ -781,7 +781,7 @@ static void insert_array(std::ostringstream& os, float *array) {
 }
 
 void send_trajectory(cereal::ModelDataV2::Builder &msg) {
-  if trajectory_socket {
+  if (trajectory_socket) {
     long            ms; // Milliseconds
     time_t          secs;  // Seconds
     struct timespec spec;
