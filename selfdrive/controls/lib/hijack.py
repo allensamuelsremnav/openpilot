@@ -4,6 +4,7 @@ import socket
 import math
 import time
 from common.realtime import config_realtime_process, Priority
+from selfdrive.controls.pedal_hijacker import RMState
 
 CONTROL_N = 17  # from controls/lib/drive_helpers.py
 PORT = 6379
@@ -197,6 +198,7 @@ class Hijacker:
     self.v_ego = 0.0
     self.displayTime = math.inf # seconds between lateral plan messages
     self.nextDisplayTime = time.time() + self.displayTime
+    self.rmstate = RMState("Steer")
     self.hijackMode = True
     if unit_test:
       self.bike = BicycleModel(self.steer, self.wheelBase) # Initial
@@ -296,14 +298,18 @@ class Hijacker:
         self.nextDisplayTime = time.time() + self.displayTime
       except ValueError:
         result += b'Syntax error:' + sline[1]
-    elif sline[0] == 'q':
-      raise OSError()        
+    elif sline[0] == b'f':
+        j = json.loads((b' '.join(sline[1:])).decode('utf-8'))
+        self.rmstate.handle_frame_metadata(j)      
+    elif sline[0] == b'q':
+      raise OSError()
     else:
       result += b'Help Message:\r\n' + \
                 b's <steer_angle>     : set raw steering angle\r\n' + \
                 b'c <circle radius>   : set constant radius circle \r\n' + \
                 b'H                   : toggle hijack mode\r\n' + \
                 b'r  <seconds>        : set lateral plan display rate\r\n' + \
+                b'f  <json>           : Frame Metadata message\r\n' + \
                 b'q                   : quit / close this socket'
     if len(result) != 0:
       result += b'\r\n'
@@ -315,6 +321,10 @@ class Hijacker:
   def convert_message(self, lp, v_ego, unit_test = False):
     self.v_ego = v_ego
     if not self.isConnected() and not unit_test:
+      return
+    
+    self.rmstate.update_state()
+    if not self.rmstate.is_engaged():
       return
     
     if self.hijackMode or unit_test:

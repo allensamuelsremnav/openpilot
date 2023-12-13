@@ -9,6 +9,62 @@ from common.conversions import Conversions as CV
 
 PORT = 6381
 
+class RMState:
+  ACTIVE = 1
+  SHORT_OUTAGE = 2
+  LONG_OUTAGE = 3
+  HIJACK_STATE = ["Active", "Short_Outage", "Long_Outage"]
+  # Time constants in Seconds
+  SHORT_OUTAGE_FRAME_THRESHOLD = 500 / 1000
+  SHORT_OUTAGE_MSG_THRESHOLD = 125 / 1000
+  LONG_OUTAGE_FRAME_THRESHOLD = 1000 / 1000
+  LONG_OUTAGE_MSG_THRESHOLD = 200 / 1000
+  REENGAGE_FRAME_THRESHOLD = 400 / 1000
+  REENGAGE_MSG_THRESHOLD = 75 / 1000
+  LONG_OUTAGE_BRAKE_ACC = -0.75
+
+  def __init__(self, name):
+    self.name = name
+    self.state = LONG_OUTAGE
+    self.last_frame_metadata = json.loads("{}")
+    self.last_frame_timestamp = 0
+    self.counter = 0
+
+  def handle_frame_metadata(self, jblob):
+    self.last_msg_TS = time.time()
+    self.last_frame_metadata = jblob
+    self.last_frame_TS = self.last_frame_metadata['frametimestamp']
+
+  def handle_g920(self, jblob):
+    self.last_g920 = jblob
+    if "Rp" in jblob['ButtonState']:
+      self.set_state(ACTIVE)
+
+  def update_state(self):
+    '''Called at arbitrary times to update the Hijack state'''
+    current_TS = time.time()
+    time_since_last_msg = current_TS - self.last_msg_TS
+    time_since_last_frame = current_TS - self.last_frame_TS
+    if time_since_last_frame > LONG_OUTAGE_FRAME_THRESHOLD or time_since_last_msg > LONG_OUTAGE_MSG_THRESHOLD:
+      self.set_state(LONG_OUTAGE)
+    elif self.state == ACTIVE:
+      if time_since_last_frame > SHORT_OUTAGE_FRAME_THRESHOLD or time_since_last_msg > SHORT_OUTAGE_MSG_THRESHOLD:
+        self.set_state(SHORT_OUTAGE)
+    elif self.state == SHORT_OUTAGE:
+      if time_since_last_frame <= REENGAGE_FRAME_THRESHOLD and time_since_last_msg <= REENGAGE_MSG_THRESHOLD:
+        self.set_state(ACTIVE)
+    self.counter = self.counter+1
+    if 0 == (self.counter % 200):
+      printf(f"{self.name} in State:{HIJACK_STATE[self.state]}")
+
+  def set_state(self, new_state):
+    if self.state != new_state:
+      print(f">> {self.name}@{time.time():.03} {HIJACK_STATE[self.state]} => {HIJACK_STATE[new_state]}")
+    self.state = new_state
+
+  def is_engaged(self):
+    return self.state != LONG_OUTAGE
+
 class Hijacker:
   def __init__(self, unit_test = False):
     self.threads = []
@@ -21,6 +77,10 @@ class Hijacker:
     self.counter = 0
     self.mapper = PedalMapper()
     self.parameters = None
+    self.last_frame = 0
+    self.last_message = 0
+    self.last_message_time = time.time()
+    self.rmstate = RMState("Accel")
     if unit_test:
       self.connected = True
     else:
@@ -91,6 +151,8 @@ class Hijacker:
         result += b'Syntax error:' + sline[1].encode('utf-8') + ' ' + sline[2].encode('utf-8')
     elif sline[0] == b'j':
       result += self.handle_920_json(b' '.join(sline[1:]))
+    elif sline[0] == b'f':
+      result += self.handle_frame_metadata(b' '.join(sline[1:]))
     elif sline[0] == b'q':
       raise OSError()
     else:
@@ -105,10 +167,23 @@ class Hijacker:
   def handle_920_json(self, blob):
     '''Decoded JSON'''
     try:
-      self.parameters = json.loads(blob.decode('utf-8'))["parameters"]
+      b = json.loads(blob.decode('utf-8'))
+      self.parameters = b["parameters"]
+      self.rmstate.handle_920_json(b)
     except json.JSONDecodeError:
+      print(f"Bad G920 JSON: {blob}")
       return b'JSON decode error'
     return b''
+
+  def handle_frame_metadata(self, blob):
+    try:
+      self.frame_metadata = json.loads(blob.decode('utf-8'))
+      self.rmstate.handle_frame_metadata(self.frame_metadata)
+    except json.JSONDecodeError:
+      print(f"Bad Frame Metadata: {blob}")
+      return b'JSON decode error'
+    return b''
+
   #
   # Called by controls thread to re-write the lateral plan message
   #
@@ -118,7 +193,7 @@ class Hijacker:
       return accel
     self.counter = self.counter + 1
     if (self.counter % 100) == 0:
-      print(f"Current Accel: {self.accel:.02f}")
+      print(f"Current Accel: {self.accel:.02f} State:{HIJACK_STATE[self.hijack_state]}")
     #
     # Convert to format used by pedal mapper
     #
