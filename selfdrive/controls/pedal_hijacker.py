@@ -6,6 +6,8 @@ import time
 import json
 from selfdrive.controls.pedal_mapper import PedalMapper
 from common.conversions import Conversions as CV
+from cereal import log
+OPState = log.ControlsState.OpenpilotState
 
 PORT = 6381
 
@@ -98,6 +100,7 @@ class Hijacker:
     self.last_message = 0
     self.last_message_time = time.time()
     self.rmstate = RMState("Accel")
+    self.opstate = "startup"
     if unit_test:
       self.connected = True
     else:
@@ -211,15 +214,31 @@ class Hijacker:
     except json.JSONDecodeError:
       print(f"Bad Frame Metadata: {blob}")
       return b'JSON decode error'
-    return b''
+    reply = {
+      "class" : "OPSTATE",
+      "opstate" : self.opstate
+    }
+    return json.dumps(reply).encode('utf-8')
 
   #
   # Called by controls thread to re-write the lateral plan message
   #
-  def modify(self, accel, v_ego, unit_test = False):
+  def modify(self, accel, v_ego, opstate, unit_test = False):
     self.v_ego = v_ego
     if not self.isConnected() and not unit_test:
       return accel
+    if opstate == OPState.disabled:
+      self.opstate = "disabled"
+    elif opstate == OPState.enabled:
+      self.opstate = "enabled"
+    elif opstate == OPState.softDisabling
+      self.opstate = "softDisabling"
+    elif opstate == OPState.overriding:
+      self.opstate = "overriding"
+    elif opstate == OPState.preEnabled:
+      self.opstate = "preEnabled"
+    else:
+      self.opstate = "unknown"
     self.counter = self.counter + 1
     if (self.counter % 100) == 0:
       print(f"Current Accel: {self.accel:.02f} State:{RMState.HIJACK_STATE[self.rmstate.state]}")
