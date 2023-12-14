@@ -2,6 +2,7 @@
 import threading
 import socket
 import math
+import json
 import time
 from common.realtime import config_realtime_process, Priority
 from selfdrive.controls.pedal_hijacker import RMState
@@ -323,15 +324,13 @@ class Hijacker:
     if not self.isConnected() and not unit_test:
       return
     
+    # Now, compute my own psi, curvature, curvatureRates
+    self.bike = BicycleModel(self.steer, self.wheelBase) # Initial
     self.rmstate.update_state()
     if not self.rmstate.is_engaged():
       return
     
     if self.hijackMode or unit_test:
-      #
-      # Now, compute my own psi, curvature, curvatureRates
-      #
-      self.bike = BicycleModel(self.steer, self.wheelBase) # Initial
       #
       # Save old data
       #

@@ -15,12 +15,12 @@ class RMState:
   LONG_OUTAGE = 3
   HIJACK_STATE = ["Startup", "Active", "Short_Outage", "Long_Outage"]
   # Time constants in Seconds
-  SHORT_OUTAGE_FRAME_THRESHOLD = 500 / 1000
-  SHORT_OUTAGE_MSG_THRESHOLD = 125 / 1000
-  LONG_OUTAGE_FRAME_THRESHOLD = 1000 / 1000
-  LONG_OUTAGE_MSG_THRESHOLD = 200 / 1000
-  REENGAGE_FRAME_THRESHOLD = 400 / 1000
-  REENGAGE_MSG_THRESHOLD = 75 / 1000
+  SHORT_OUTAGE_FRAME_THRESHOLD = 500
+  SHORT_OUTAGE_MSG_THRESHOLD = 125
+  LONG_OUTAGE_FRAME_THRESHOLD = 1000
+  LONG_OUTAGE_MSG_THRESHOLD = 200
+  REENGAGE_FRAME_THRESHOLD = 400
+  REENGAGE_MSG_THRESHOLD = 75
   LONG_OUTAGE_BRAKE_ACC = -0.75
 
   def __init__(self, name):
@@ -32,33 +32,43 @@ class RMState:
     self.last_msg_TS = 0
     self.last_frame_TS = 0
     self.last_frame_metadata = None
+    self.frame_count = 0
 
   def handle_frame_metadata(self, jblob):
-    self.last_msg_TS = time.time()
+    self.last_msg_TS = int(time.time() * 1000)
     self.last_frame_metadata = jblob
     self.last_frame_TS = self.last_frame_metadata['frametimestamp']
+    self.frame_count = self.frame_count + 1
+    if 0 == (self.frame_count % 100):
+       print(f"Got frame metadata message msg_TS:{self.last_msg_TS} FrameTS:{self.last_frame_TS}")
 
   def handle_920_json(self, jblob):
     self.last_g920 = jblob
-    if "Rp" in jblob['ButtonState']:
-      self.set_state(RMState.ACTIVE)
+    if "ButtonEvents" in jblob:
+      if "RP" in jblob['ButtonEvents']:
+        self.set_state(RMState.ACTIVE)
+    else:
+      print(f"No ButtonEvents in jblob: {jblob}")
 
   def update_state(self):
     '''Called at arbitrary times to update the Hijack state'''
-    current_TS = time.time()
+    current_TS = int(time.time() * 1000)
     time_since_last_msg = current_TS - self.last_msg_TS
     time_since_last_frame = current_TS - self.last_frame_TS
     if time_since_last_frame > RMState.LONG_OUTAGE_FRAME_THRESHOLD or time_since_last_msg > RMState.LONG_OUTAGE_MSG_THRESHOLD:
+      print(f"LONG_OUTAGE: {time_since_last_frame} > {RMState.LONG_OUTAGE_FRAME_THRESHOLD} or {time_since_last_msg} > {RMState.LONG_OUTAGE_MSG_THRESHOLD}")
       self.set_state(RMState.LONG_OUTAGE)
     elif self.state == RMState.ACTIVE:
       if time_since_last_frame > RMState.SHORT_OUTAGE_FRAME_THRESHOLD or time_since_last_msg > RMState.SHORT_OUTAGE_MSG_THRESHOLD:
+        print(f"Active->Short outage: {time_since_last_frame} > {RMState.SHORT_OUTAGE_FRAME_THRESHOLD} or {time_since_last_msg} > {RMState.SHORT_OUTAGE_MSG_THRESHOLD}")
         self.set_state(RMState.SHORT_OUTAGE)
     elif self.state == RMState.SHORT_OUTAGE:
       if time_since_last_frame <= RMState.REENGAGE_FRAME_THRESHOLD and time_since_last_msg <= RMState.REENGAGE_MSG_THRESHOLD:
+        print(f"Short->Active {time_since_last_frame} <= {RMState.REENGAGE_FRAME_THRESHOLD} and {time_since_last_msg} <= {RMState.REENGAGE_MSG_THRESHOLD}")
         self.set_state(RMState.ACTIVE)
     self.counter = self.counter+1
     if 0 == (self.counter % 200):
-      print(f"{self.name} in State:{RMState.HIJACK_STATE[self.state]}")
+      print(f"{self.name} in State:{RMState.HIJACK_STATE[self.state]} last_msg:{time_since_last_msg} last_frame:{time_since_last_frame}")
 
   def set_state(self, new_state):
     if self.state != new_state:
@@ -78,6 +88,7 @@ class Hijacker:
     self.hijackMode = True
     self.accel = 0
     self.counter = 0
+    self.pedal_count = 0
     self.mapper = PedalMapper()
     self.parameters = None
     self.last_frame = 0
@@ -149,29 +160,41 @@ class Hijacker:
           # self.gas = 0
         else:
           self.accel = self.gas
-        print(f">> Pedal Gas {self.gas:.02f} Brake:{self.brake:.02f}")
+        self.pedal_count = self.pedal_count + 1
+        if 0 == (self.pedal_count % 100):
+          print(f">> Pedal Gas {self.gas:.02f} Brake:{self.brake:.02f}")
       except ValueError:
         result += b'Syntax error:' + sline[1].encode('utf-8') + ' ' + sline[2].encode('utf-8')
     elif sline[0] == b'j':
       result += self.handle_920_json(b' '.join(sline[1:]))
+    elif sline[0] == b'm':
+      result += self.handle_parameters(b' '.join(sline[1:]))
     elif sline[0] == b'f':
       result += self.handle_frame_metadata(b' '.join(sline[1:]))
     elif sline[0] == b'q':
       raise OSError()
     else:
       result += b'Help Message:\r\n' + \
-                b'p <brake> <gas>     : set brake and gas pedals\n' + \
-                b'j <json>            : load parameters\n' + \
+                b'p <brake> <gas>     : set brake and gas pedals\r\n' + \
+                b'm <json>            : load parameters\r\n' + \
+                b'j <json>            : 920 message\r\n' + \
                 b'H                   : toggle hijack mode\r\n' + \
                 b'q                   : quit / close this socket'
     if len(result) != 0:
       result += b'\r\n'
     return result
+  def handle_parameters(self, blob):
+    try:
+      b = json.loads(blob.decode('utf-8'))
+      self.parameters = b["parameters"]
+    except:
+      print(f"Bad parameters message: {blob}")
+    return b''
+
   def handle_920_json(self, blob):
     '''Decoded JSON'''
     try:
       b = json.loads(blob.decode('utf-8'))
-      self.parameters = b["parameters"]
       self.rmstate.handle_920_json(b)
     except json.JSONDecodeError:
       print(f"Bad G920 JSON: {blob}")
@@ -190,6 +213,10 @@ class Hijacker:
   #
   # Called by controls thread to re-write the lateral plan message
   #
+  def modify(self, accel, v_ego, unit_test = False):
+    self.v_ego = v_ego
+  def modify(self, accel, v_ego, unit_test = False):
+    self.v_ego = v_ego
   def modify(self, accel, v_ego, unit_test = False):
     self.v_ego = v_ego
     if not self.isConnected() and not unit_test:
@@ -211,8 +238,4 @@ class Hijacker:
     row['x_brake'] = self.brake
     self.accel = self.mapper.calc_from_row(row) * 4.0
     return self.accel
-
-if __name__ == '__main__':
-  x = Hijacker(True)
-
 
