@@ -13,7 +13,7 @@ class RMState:
   ACTIVE = 1
   SHORT_OUTAGE = 2
   LONG_OUTAGE = 3
-  HIJACK_STATE = ["Startup", "Active", "Short_Outage", "Long_Outage"]
+  HIJACK_STATE = ["safety_driver", "fully_remote", "short_outage", "long_outage"]
   # Time constants in Seconds
   SHORT_OUTAGE_FRAME_THRESHOLD = 500
   SHORT_OUTAGE_MSG_THRESHOLD = 125
@@ -77,6 +77,9 @@ class RMState:
 
   def is_engaged(self):
     return self.state != RMState.LONG_OUTAGE
+
+  def getState(self):
+    return RMState.HIJACK_STATE[self.state]
 
 class Hijacker:
   def __init__(self, unit_test = False):
@@ -213,10 +216,6 @@ class Hijacker:
   #
   # Called by controls thread to re-write the lateral plan message
   #
-  def modify(self, accel, v_ego, unit_test = False):
-    self.v_ego = v_ego
-  def modify(self, accel, v_ego, unit_test = False):
-    self.v_ego = v_ego
   def modify(self, accel, v_ego, unit_test = False):
     self.v_ego = v_ego
     if not self.isConnected() and not unit_test:
