@@ -13,7 +13,7 @@ class RMState:
   ACTIVE = 1
   SHORT_OUTAGE = 2
   LONG_OUTAGE = 3
-  HIJACK_STATE = ["Active", "Short_Outage", "Long_Outage"]
+  HIJACK_STATE = ["Startup", "Active", "Short_Outage", "Long_Outage"]
   # Time constants in Seconds
   SHORT_OUTAGE_FRAME_THRESHOLD = 500 / 1000
   SHORT_OUTAGE_MSG_THRESHOLD = 125 / 1000
@@ -25,45 +25,48 @@ class RMState:
 
   def __init__(self, name):
     self.name = name
-    self.state = LONG_OUTAGE
+    self.state = RMState.LONG_OUTAGE
     self.last_frame_metadata = json.loads("{}")
     self.last_frame_timestamp = 0
     self.counter = 0
+    self.last_msg_TS = 0
+    self.last_frame_TS = 0
+    self.last_frame_metadata = None
 
   def handle_frame_metadata(self, jblob):
     self.last_msg_TS = time.time()
     self.last_frame_metadata = jblob
     self.last_frame_TS = self.last_frame_metadata['frametimestamp']
 
-  def handle_g920(self, jblob):
+  def handle_920_json(self, jblob):
     self.last_g920 = jblob
     if "Rp" in jblob['ButtonState']:
-      self.set_state(ACTIVE)
+      self.set_state(RMState.ACTIVE)
 
   def update_state(self):
     '''Called at arbitrary times to update the Hijack state'''
     current_TS = time.time()
     time_since_last_msg = current_TS - self.last_msg_TS
     time_since_last_frame = current_TS - self.last_frame_TS
-    if time_since_last_frame > LONG_OUTAGE_FRAME_THRESHOLD or time_since_last_msg > LONG_OUTAGE_MSG_THRESHOLD:
-      self.set_state(LONG_OUTAGE)
-    elif self.state == ACTIVE:
-      if time_since_last_frame > SHORT_OUTAGE_FRAME_THRESHOLD or time_since_last_msg > SHORT_OUTAGE_MSG_THRESHOLD:
-        self.set_state(SHORT_OUTAGE)
-    elif self.state == SHORT_OUTAGE:
-      if time_since_last_frame <= REENGAGE_FRAME_THRESHOLD and time_since_last_msg <= REENGAGE_MSG_THRESHOLD:
-        self.set_state(ACTIVE)
+    if time_since_last_frame > RMState.LONG_OUTAGE_FRAME_THRESHOLD or time_since_last_msg > RMState.LONG_OUTAGE_MSG_THRESHOLD:
+      self.set_state(RMState.LONG_OUTAGE)
+    elif self.state == RMState.ACTIVE:
+      if time_since_last_frame > RMState.SHORT_OUTAGE_FRAME_THRESHOLD or time_since_last_msg > RMState.SHORT_OUTAGE_MSG_THRESHOLD:
+        self.set_state(RMState.SHORT_OUTAGE)
+    elif self.state == RMState.SHORT_OUTAGE:
+      if time_since_last_frame <= RMState.REENGAGE_FRAME_THRESHOLD and time_since_last_msg <= RMState.REENGAGE_MSG_THRESHOLD:
+        self.set_state(RMState.ACTIVE)
     self.counter = self.counter+1
     if 0 == (self.counter % 200):
-      printf(f"{self.name} in State:{HIJACK_STATE[self.state]}")
+      print(f"{self.name} in State:{RMState.HIJACK_STATE[self.state]}")
 
   def set_state(self, new_state):
     if self.state != new_state:
-      print(f">> {self.name}@{time.time():.03} {HIJACK_STATE[self.state]} => {HIJACK_STATE[new_state]}")
+      print(f">> {self.name}@{time.time():.03} {RMState.HIJACK_STATE[self.state]} => {RMState.HIJACK_STATE[new_state]}")
     self.state = new_state
 
   def is_engaged(self):
-    return self.state != LONG_OUTAGE
+    return self.state != RMState.LONG_OUTAGE
 
 class Hijacker:
   def __init__(self, unit_test = False):
@@ -193,7 +196,7 @@ class Hijacker:
       return accel
     self.counter = self.counter + 1
     if (self.counter % 100) == 0:
-      print(f"Current Accel: {self.accel:.02f} State:{HIJACK_STATE[self.hijack_state]}")
+      print(f"Current Accel: {self.accel:.02f} State:{RMState.HIJACK_STATE[self.rmstate.state]}")
     #
     # Convert to format used by pedal mapper
     #
