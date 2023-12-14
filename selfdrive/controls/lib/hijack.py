@@ -288,7 +288,7 @@ class Hijacker:
           result += b'too small radius'
         else:
           result += self.setSteer(math.asin(self.wheelBase / radius))
-          result = self.rmstate.getState()
+          result = '{"uimode":"' + self.rmstate.getState() + '"}'
       except ValueError:
         result += b'Syntax error:' + sline[1]
     elif sline[0] == b'H':
