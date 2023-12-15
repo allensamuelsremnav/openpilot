@@ -230,6 +230,7 @@ class Hijacker:
     config_realtime_process(4, Priority.CTRL_HIGH)
     clientSocket.send(b"Hello Remnav\r\n")
     line = b''
+    msg_count = 0
     try:
       while True:
         chunk = clientSocket.recv(1024)
@@ -239,9 +240,11 @@ class Hijacker:
         for cc in chunk:
           c = chr(cc).encode()
           if c == b'\r' or c == b'\n':
-            clientSocket.send(b'Got Cmd:' + line + b'\r\n')
             r = self.process_line(line)
-            if r is not None:
+            if r is not None and len(r) != 0 and r != b'\r\n':
+              msg_count = msg_count + 1
+              if 0 == (msg_count % 100):
+                print(f"LIB: {r}")
               clientSocket.send(r)
             line = b''
           else:
@@ -287,8 +290,8 @@ class Hijacker:
         if abs(radius) <= self.wheelBase:
           result += b'too small radius'
         else:
-          result += self.setSteer(math.asin(self.wheelBase / radius))
-          result = '{"uimode":"' + self.rmstate.getState() + '", "timestamp":{self.rmstate.last_msg_TS}}'
+          self.setSteer(math.asin(self.wheelBase / radius))
+          result += ('{"uimode":"' + self.rmstate.getState() + f'", "timestamp":{self.rmstate.last_msg_TS}' + '}').encode('utf-8')
       except ValueError:
         result += b'Syntax error:' + sline[1]
     elif sline[0] == b'H':
@@ -300,12 +303,15 @@ class Hijacker:
         self.nextDisplayTime = time.time() + self.displayTime
       except ValueError:
         result += b'Syntax error:' + sline[1]
+    elif sline[0] == b'j':
+        j = json.loads((b' '.join(sline[1:])).decode('utf-8'))
+        self.rmstate.handle_920_json(j)
     elif sline[0] == b'f':
         j = json.loads((b' '.join(sline[1:])).decode('utf-8'))
-        self.rmstate.handle_frame_metadata(j)      
+        self.rmstate.handle_frame_metadata(j) 
     elif sline[0] == b'q':
       raise OSError()
-    else:
+    elif sline[0] == b'h':
       result += b'Help Message:\r\n' + \
                 b's <steer_angle>     : set raw steering angle\r\n' + \
                 b'c <circle radius>   : set constant radius circle \r\n' + \
@@ -322,12 +328,12 @@ class Hijacker:
   #
   def convert_message(self, lp, v_ego, unit_test = False):
     self.v_ego = v_ego
+    self.rmstate.update_state()
     if not self.isConnected() and not unit_test:
       return
     
     # Now, compute my own psi, curvature, curvatureRates
     self.bike = BicycleModel(self.steer, self.wheelBase) # Initial
-    self.rmstate.update_state()
     if not self.rmstate.is_engaged():
       return
     

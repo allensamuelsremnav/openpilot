@@ -47,8 +47,11 @@ class RMState:
   def handle_920_json(self, jblob):
     self.last_g920 = jblob
     if "ButtonEvents" in jblob:
-      if "RP" in jblob['ButtonEvents']:
-        self.set_state(RMState.ACTIVE)
+      if jblob['ButtonEvents'] is not None:
+        if "RP" in jblob['ButtonEvents']:
+          self.set_state(RMState.ACTIVE)
+        else:
+          print(f"920: {jblob}")
     else:
       print(f"No ButtonEvents in jblob: {jblob}")
 
@@ -58,7 +61,7 @@ class RMState:
     time_since_last_msg = current_TS - self.last_msg_TS
     time_since_last_frame = current_TS - self.last_frame_TS
     if time_since_last_frame > RMState.LONG_OUTAGE_FRAME_THRESHOLD or time_since_last_msg > RMState.LONG_OUTAGE_MSG_THRESHOLD:
-      print(f"LONG_OUTAGE: {time_since_last_frame} > {RMState.LONG_OUTAGE_FRAME_THRESHOLD} or {time_since_last_msg} > {RMState.LONG_OUTAGE_MSG_THRESHOLD}")
+      print(f"LONG_OUTAGE:current:{current_TS} last_msg: {self.last_msg_TS} {time_since_last_frame} > {RMState.LONG_OUTAGE_FRAME_THRESHOLD} or last_frame: {self.last_frame_TS} {time_since_last_msg} > {RMState.LONG_OUTAGE_MSG_THRESHOLD}")
       self.set_state(RMState.LONG_OUTAGE)
     elif self.state == RMState.ACTIVE:
       if time_since_last_frame > RMState.SHORT_OUTAGE_FRAME_THRESHOLD or time_since_last_msg > RMState.SHORT_OUTAGE_MSG_THRESHOLD:
@@ -137,7 +140,6 @@ class Hijacker:
         for cc in chunk:
           c = chr(cc).encode()
           if c == b'\r' or c == b'\n':
-            clientSocket.send(b'Got Cmd:' + line + b'\r\n')
             r = self.process_line(line)
             if r is not None:
               clientSocket.send(r)
@@ -157,6 +159,8 @@ class Hijacker:
     if chr(line[0]) == '<':
       tag,line = line[1:].split(b'>')
       result += b'<' + tag + b'>'
+    else:
+      tag = None
     sline = line.split(b' ')
     if sline[0] == b'p':
       try:
@@ -168,11 +172,11 @@ class Hijacker:
           self.accel = self.gas
         self.pedal_count = self.pedal_count + 1
         if 0 == (self.pedal_count % 100):
-          print(f">> Pedal Gas {self.gas:.02f} Brake:{self.brake:.02f}")
+          print(f">> Pedal Gas {self.gas:.02f} Brake:{self.brake:.02f} tag:{tag}")
       except ValueError:
         result += b'Syntax error:' + sline[1].encode('utf-8') + ' ' + sline[2].encode('utf-8')
     elif sline[0] == b'j':
-      result += self.handle_920_json(b' '.join(sline[1:]))
+      result += self.handle_920_msg(b' '.join(sline[1:]))
     elif sline[0] == b'm':
       result += self.handle_parameters(b' '.join(sline[1:]))
     elif sline[0] == b'f':
@@ -197,7 +201,7 @@ class Hijacker:
       print(f"Bad parameters message: {blob}")
     return b''
 
-  def handle_920_json(self, blob):
+  def handle_920_msg(self, blob):
     '''Decoded JSON'''
     try:
       b = json.loads(blob.decode('utf-8'))
@@ -227,11 +231,12 @@ class Hijacker:
     self.v_ego = v_ego
     if not self.isConnected() and not unit_test:
       return accel
+    self.rmstate.update_state()
     if opstate == OPState.disabled:
       self.opstate = "disabled"
     elif opstate == OPState.enabled:
       self.opstate = "enabled"
-    elif opstate == OPState.softDisabling
+    elif opstate == OPState.softDisabling:
       self.opstate = "softDisabling"
     elif opstate == OPState.overriding:
       self.opstate = "overriding"
