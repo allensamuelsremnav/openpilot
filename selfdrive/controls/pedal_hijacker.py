@@ -18,9 +18,9 @@ class RMState:
   HIJACK_STATE = ["safety_driver", "fully_remote", "short_outage", "long_outage"]
   # Time constants in Seconds
   SHORT_OUTAGE_FRAME_THRESHOLD = 500
-  SHORT_OUTAGE_MSG_THRESHOLD = 125
-  LONG_OUTAGE_FRAME_THRESHOLD = 1000
-  LONG_OUTAGE_MSG_THRESHOLD = 200
+  SHORT_OUTAGE_MSG_THRESHOLD = 250 # 125
+  LONG_OUTAGE_FRAME_THRESHOLD = 1500 # 1000
+  LONG_OUTAGE_MSG_THRESHOLD = 500 # 200
   REENGAGE_FRAME_THRESHOLD = 400
   REENGAGE_MSG_THRESHOLD = 75
   LONG_OUTAGE_BRAKE_ACC = -0.75
@@ -35,6 +35,7 @@ class RMState:
     self.last_frame_TS = 0
     self.last_frame_metadata = None
     self.frame_count = 0
+    self.long_outage_count = 0
 
   def handle_frame_metadata(self, jblob):
     self.last_msg_TS = int(time.time() * 1000)
@@ -61,7 +62,9 @@ class RMState:
     time_since_last_msg = current_TS - self.last_msg_TS
     time_since_last_frame = current_TS - self.last_frame_TS
     if time_since_last_frame > RMState.LONG_OUTAGE_FRAME_THRESHOLD or time_since_last_msg > RMState.LONG_OUTAGE_MSG_THRESHOLD:
-      print(f"LONG_OUTAGE:current:{current_TS} last_msg: {self.last_msg_TS} {time_since_last_frame} > {RMState.LONG_OUTAGE_FRAME_THRESHOLD} or last_frame: {self.last_frame_TS} {time_since_last_msg} > {RMState.LONG_OUTAGE_MSG_THRESHOLD}")
+      self.long_outage_count = self.long_outage_count + 1
+      if 0 == (self.long_outage_count % 20) or self.state != RMState.LONG_OUTAGE:
+        print(f"LONG_OUTAGE:current:{current_TS} last_msg: {self.last_msg_TS} {time_since_last_msg} > {RMState.LONG_OUTAGE_MSG_THRESHOLD} frame: {time_since_last_frame} > {RMState.LONG_OUTAGE_FRAME_THRESHOLD}")
       self.set_state(RMState.LONG_OUTAGE)
     elif self.state == RMState.ACTIVE:
       if time_since_last_frame > RMState.SHORT_OUTAGE_FRAME_THRESHOLD or time_since_last_msg > RMState.SHORT_OUTAGE_MSG_THRESHOLD:
