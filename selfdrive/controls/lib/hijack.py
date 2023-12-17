@@ -200,6 +200,7 @@ class Hijacker:
     self.displayTime = math.inf # seconds between lateral plan messages
     self.nextDisplayTime = time.time() + self.displayTime
     self.rmstate = RMState("Steer")
+    self.previous_rmstate = 0
     self.hijackMode = True
     if unit_test:
       self.bike = BicycleModel(self.steer, self.wheelBase) # Initial
@@ -291,6 +292,9 @@ class Hijacker:
           result += b'too small radius'
         else:
           self.setSteer(math.asin(self.wheelBase / radius))
+          if self.previous_rmstate != self.rmstate.getState():
+             self.previous_rmstate = self.rmstate.getState()
+             print(f">>> UIMODE: {self.previous_rmstate}")
           result += ('{"uimode":"' + self.rmstate.getState() + f'", "timestamp":{self.rmstate.last_msg_TS}' + '}').encode('utf-8')
       except ValueError:
         result += b'Syntax error:' + sline[1]

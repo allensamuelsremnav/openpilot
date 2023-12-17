@@ -585,7 +585,7 @@ static void status_ticker() {
 UDPSender *trajectory_socket = nullptr;
 
 static void process_cmd(Socket& rcv, std::string line) {
-  // LOGE("Got cmd: %s", line.c_str());
+  LOGE("MPC Got cmd: %s", line.c_str());
   //
   // Execute command
   //
@@ -670,8 +670,10 @@ static void process_cmd(Socket& rcv, std::string line) {
     error = parse_number(is, traj_port, 0ul, 65535ul);
     if (!error) {
       LOGE(">>> Trajectory on port %d\r\n", traj_port);
-      delete trajectory_socket;
+     delete trajectory_socket;
       trajectory_socket = new UDPSender(rcv.getpeeraddr(), traj_port);
+    } else {
+      LOGE(">> Bad trajectory command");
     }
   } else if (cmd == "help" || cmd == "h") {
     rcv.send(helpText());
@@ -697,6 +699,7 @@ static void process_line(Socket& rcv, std::string& line) {
   //
   // Parse line and execute
   //
+  LOGE("Got line %s", line.c_str());
   auto nl = line.find("\n");
   while (nl != std::string::npos) {
     auto cmd = line.substr(0, nl);
@@ -715,7 +718,7 @@ static void handle_conn(Socket rcv) {
   try {
     show_status(rcv);
     while (true) {
-        // LOGE("Waiting for input on connection %s", rcv.format().c_str());
+        LOGE("Waiting for input on connection %s", rcv.format().c_str());
         std::string chunk = rcv.recv();
         command_line.append(strip_char(chunk,'\r'));
         process_line(rcv, command_line);

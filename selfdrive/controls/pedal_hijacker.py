@@ -18,11 +18,11 @@ class RMState:
   HIJACK_STATE = ["safety_driver", "fully_remote", "short_outage", "long_outage"]
   # Time constants in Seconds
   SHORT_OUTAGE_FRAME_THRESHOLD = 500
-  SHORT_OUTAGE_MSG_THRESHOLD = 250 # 125
+  SHORT_OUTAGE_MSG_THRESHOLD = 500 # 250 # 125
   LONG_OUTAGE_FRAME_THRESHOLD = 1500 # 1000
-  LONG_OUTAGE_MSG_THRESHOLD = 500 # 200
+  LONG_OUTAGE_MSG_THRESHOLD = 1500 # 500 # 200
   REENGAGE_FRAME_THRESHOLD = 400
-  REENGAGE_MSG_THRESHOLD = 75
+  REENGAGE_MSG_THRESHOLD = 400 # 75
   LONG_OUTAGE_BRAKE_ACC = -0.75
 
   def __init__(self, name):
@@ -31,19 +31,30 @@ class RMState:
     self.last_frame_metadata = json.loads("{}")
     self.last_frame_timestamp = 0
     self.counter = 0
+    self.last_recv_TS = 0
     self.last_msg_TS = 0
     self.last_frame_TS = 0
     self.last_frame_metadata = None
     self.frame_count = 0
     self.long_outage_count = 0
+    self.last_update_TS = int(time.time() * 1000)
+    self.previous_msg_TS = 0
 
   def handle_frame_metadata(self, jblob):
-    self.last_msg_TS = int(time.time() * 1000)
+    self.last_rcv_TS = int(time.time() * 1000)
     self.last_frame_metadata = jblob
+    self.previous_msg_TS = self.last_msg_TS
+    self.last_msg_TS = self.last_frame_metadata['timestamp']
     self.last_frame_TS = self.last_frame_metadata['frametimestamp']
     self.frame_count = self.frame_count + 1
-    if 0 == (self.frame_count % 100):
-       print(f"Got frame metadata message msg_TS:{self.last_msg_TS} FrameTS:{self.last_frame_TS}")
+    msg_delay = self.last_rcv_TS - self.last_msg_TS
+    msg_time = self.last_msg_TS - self.previous_msg_TS
+    if msg_delay > RMState.LONG_OUTAGE_MSG_THRESHOLD or msg_time > 50:
+       drop_time = self.last_msg_TS - self.previous_msg_TS
+       print(f"{self.name} Received Late: inter_msg_time: {msg_time} this_msg_lag:{msg_delay} Msg:{self.last_msg_TS} > {RMState.LONG_OUTAGE_MSG_THRESHOLD} Frame:{self.last_frame_TS}")
+    if 0 == (self.frame_count % 1000):
+       print(f"Got frame metadata message msg_TS:{self.last_msg_TS} msg_diff: {self.last_rcv_TS-self.last_msg_TS} Frame_diff:{self.last_rcv_TS-self.last_frame_TS}")
+
 
   def handle_920_json(self, jblob):
     self.last_g920 = jblob
@@ -59,12 +70,14 @@ class RMState:
   def update_state(self):
     '''Called at arbitrary times to update the Hijack state'''
     current_TS = int(time.time() * 1000)
+    time_since_last_update = current_TS - self.last_update_TS
     time_since_last_msg = current_TS - self.last_msg_TS
     time_since_last_frame = current_TS - self.last_frame_TS
     if time_since_last_frame > RMState.LONG_OUTAGE_FRAME_THRESHOLD or time_since_last_msg > RMState.LONG_OUTAGE_MSG_THRESHOLD:
       self.long_outage_count = self.long_outage_count + 1
-      if 0 == (self.long_outage_count % 20) or self.state != RMState.LONG_OUTAGE:
-        print(f"LONG_OUTAGE:current:{current_TS} last_msg: {self.last_msg_TS} {time_since_last_msg} > {RMState.LONG_OUTAGE_MSG_THRESHOLD} frame: {time_since_last_frame} > {RMState.LONG_OUTAGE_FRAME_THRESHOLD}")
+      if 0 == (self.long_outage_count % 1) or self.state != RMState.LONG_OUTAGE:
+        msg_time = self.last_msg_TS - self.previous_msg_TS
+        print(f"{self.name} LONG_OUTAGE: inter_message_delay:{msg_time} last_pid:{time_since_last_update} last_msg: {self.last_msg_TS} {time_since_last_msg} > {RMState.LONG_OUTAGE_MSG_THRESHOLD} frame: {time_since_last_frame} > {RMState.LONG_OUTAGE_FRAME_THRESHOLD}")
       self.set_state(RMState.LONG_OUTAGE)
     elif self.state == RMState.ACTIVE:
       if time_since_last_frame > RMState.SHORT_OUTAGE_FRAME_THRESHOLD or time_since_last_msg > RMState.SHORT_OUTAGE_MSG_THRESHOLD:
@@ -77,6 +90,8 @@ class RMState:
     self.counter = self.counter+1
     if 0 == (self.counter % 200):
       print(f"{self.name} in State:{RMState.HIJACK_STATE[self.state]} last_msg:{time_since_last_msg} last_frame:{time_since_last_frame}")
+    # update
+    self.last_update_TS = current_TS
 
   def set_state(self, new_state):
     if self.state != new_state:
