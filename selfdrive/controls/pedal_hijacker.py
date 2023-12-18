@@ -98,6 +98,15 @@ class RMState:
       print(f">> {self.name}@{time.time():.03} {RMState.HIJACK_STATE[self.state]} => {RMState.HIJACK_STATE[new_state]}")
     self.state = new_state
 
+  def is_long_outage(self):
+    return self.state == RMState.LONG_OUTAGE
+
+  def is_short_outage(self):
+    return self.state == RMState.SHORT_OUTAGE
+
+  def is_active(self):
+    return self.state == RMState.ACTIVE
+
   def is_engaged(self):
     return self.state != RMState.LONG_OUTAGE
 
@@ -265,6 +274,7 @@ class Hijacker:
     self.counter = self.counter + 1
     if (self.counter % 100) == 0:
       print(f"Current Accel: {self.accel:.02f} State:{RMState.HIJACK_STATE[self.rmstate.state]}")
+
     #
     # Convert to format used by pedal mapper
     #
@@ -278,5 +288,11 @@ class Hijacker:
     row['x_throttle'] = self.gas
     row['x_brake'] = self.brake
     self.accel = self.mapper.calc_from_row(row) * 4.0
-    return self.accel
+    if self.rmstate.is_short_outage():
+       the_accel = min(self.accel, accel)
+    elif self.rmstate.is_long_outage():
+       the_accel = min(accel, RMState.LONG_OUTAGE_BRAKE_ACC)
+    else:
+       the_accel = self.accel
+    return the_accel
 

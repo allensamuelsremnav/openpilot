@@ -201,6 +201,7 @@ class Hijacker:
     self.nextDisplayTime = time.time() + self.displayTime
     self.rmstate = RMState("Steer")
     self.previous_rmstate = 0
+    self.rmstate_counter = 0
     self.hijackMode = True
     if unit_test:
       self.bike = BicycleModel(self.steer, self.wheelBase) # Initial
@@ -335,12 +336,15 @@ class Hijacker:
     self.rmstate.update_state()
     if not self.isConnected() and not unit_test:
       return
-    
+
     # Now, compute my own psi, curvature, curvatureRates
     self.bike = BicycleModel(self.steer, self.wheelBase) # Initial
-    if not self.rmstate.is_engaged():
-      return
-    
+    self.rmstate_counter = self.rmstate_counter + 1
+    if 0 == (self.rmstate_counter % 100):
+       print(f"Steering now in state: {self.rmstate.getState()}")
+    if not self.rmstate.is_active():
+       return
+
     if self.hijackMode or unit_test:
       #
       # Save old data
