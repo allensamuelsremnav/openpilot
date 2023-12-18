@@ -34,7 +34,6 @@ class RMState:
     self.last_recv_TS = 0
     self.last_msg_TS = 0
     self.last_frame_TS = 0
-    self.last_frame_metadata = None
     self.frame_count = 0
     self.long_outage_count = 0
     self.last_update_TS = int(time.time() * 1000)
