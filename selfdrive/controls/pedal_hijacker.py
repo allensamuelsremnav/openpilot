@@ -40,6 +40,9 @@ class RMState:
     self.previous_msg_TS = 0
 
   def handle_frame_metadata(self, jblob):
+    if self.last_msg_TS >= jblob['timestamp']:
+      print(f"Dropping old frame: old:{self.last_msg_TS} current:{jblob['timestamp']}")
+      return
     self.last_rcv_TS = int(time.time() * 1000)
     self.last_frame_metadata = jblob
     self.previous_msg_TS = self.last_msg_TS
@@ -48,7 +51,9 @@ class RMState:
     self.frame_count = self.frame_count + 1
     msg_delay = self.last_rcv_TS - self.last_msg_TS
     msg_time = self.last_msg_TS - self.previous_msg_TS
-    if msg_delay > RMState.LONG_OUTAGE_MSG_THRESHOLD or msg_time > 50:
+    if msg_time > 50:
+       print(f"{self.name}  Long Interframe: msg_time:{msg_time} last:{self.last_msg_TS}  previous:{self.previous_msg_TS} last_frame_TS:{self.last_frame_TS} ")
+    if msg_delay > RMState.LONG_OUTAGE_MSG_THRESHOLD:
        drop_time = self.last_msg_TS - self.previous_msg_TS
        print(f"{self.name} Received Late: inter_msg_time: {msg_time} this_msg_lag:{msg_delay} Msg:{self.last_msg_TS} > {RMState.LONG_OUTAGE_MSG_THRESHOLD} Frame:{self.last_frame_TS}")
     if 0 == (self.frame_count % 1000):
@@ -63,8 +68,8 @@ class RMState:
           self.set_state(RMState.ACTIVE)
         else:
           print(f"920: {jblob}")
-    else:
-      print(f"No ButtonEvents in jblob: {jblob}")
+    # else:
+      # print(f"No ButtonEvents in jblob: {jblob}")
 
   def update_state(self):
     '''Called at arbitrary times to update the Hijack state'''
@@ -270,9 +275,6 @@ class Hijacker:
       self.opstate = "preEnabled"
     else:
       self.opstate = "unknown"
-    self.counter = self.counter + 1
-    if (self.counter % 100) == 0:
-      print(f"Current Accel: {self.accel:.02f} State:{RMState.HIJACK_STATE[self.rmstate.state]}")
 
     #
     # Convert to format used by pedal mapper
@@ -293,5 +295,8 @@ class Hijacker:
        the_accel = min(accel, RMState.LONG_OUTAGE_BRAKE_ACC)
     else:
        the_accel = self.accel
+    self.counter = self.counter + 1
+    if (self.counter % 100) == 0:
+      print(f"Current Mapper: {self.accel:.02f} OP:{accel} result:{the_accel} State:{RMState.HIJACK_STATE[self.rmstate.state]}")
     return the_accel
 
