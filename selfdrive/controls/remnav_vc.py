@@ -44,7 +44,7 @@ def log_info(msg):
     cloudlog.info(">>Remnav: %s", msg)
 
 def log_critical(msg):
-    print("***>>> ", msg)
+    # Critical messages are always dumped onto the OP screen.
     cloudlog.critical(">>>Remnav: %s", msg)
 
 
@@ -80,7 +80,7 @@ class VCState(GlobalThread):
         '''
         log_info(f"Binding socket to {VC_PORT_NUMBER}")
         self.socket.bind(('', VC_PORT_NUMBER))
-        log_info(f"Socket bound: {self.socket}")
+        log_info(f"Socket bound: to {self.socket.getsockname()}")
         while running:
             message, address = self.socket.recvfrom(1500)
             log_info(f"From:{address} : {message}")
