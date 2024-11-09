@@ -252,7 +252,9 @@ class OPState(GlobalThread):
                 log_info(f"OP.Enabled {self.last_enabled}->{self.op_enabled}")
             if (timestamp() - self.last_status) > 5000:
                 self.last_status = timestamp()
-                log_info(f"OP STATUS: Enabled:{self.op_enabled} Speed:{self.speed} Steering:{self.steering} {"GasPressed" if self.accelerator_override else ""} {"Braking" if self.brake_override else ""}")
+                gas = "GasPressed" if self.accelerator_override else ""
+                brk = "BrakePressed" if self.brake_override else ""
+                log_info(f"OP STATUS: Enabled:{self.op_enabled} Speed:{self.speed} Steering:{self.steering} {gas} {brk}")
 
 class RemnavHijacker:
     def __init__(self):
