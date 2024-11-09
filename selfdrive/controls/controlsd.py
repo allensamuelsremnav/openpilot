@@ -103,12 +103,13 @@ class Controls:
 
     self.joystick_mode = self.params.get_bool("JoystickDebugMode") or self.CP.notCar
     self.hijacker = RemnavHijacker()
+    print(f"Hijacker is {self.hijacker}")
 
     # set alternative experiences from parameters
     self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
     self.CP.alternativeExperience = 0
     if not self.disengage_on_accelerator:
-      self.CP.alternativeExperience |= ALTERNATIVE_EXPERIENCE.DISABLE_DISENGAGE_ON_GASAGE_ON_GAS
+      self.CP.alternativeExperience |= ALTERNATIVE_EXPERIENCE.DISABLE_DISENGAGE_ON_GAS
 
     # read params
     self.is_metric = self.params.get_bool("IsMetric")

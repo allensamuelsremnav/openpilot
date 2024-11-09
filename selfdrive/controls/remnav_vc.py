@@ -55,7 +55,7 @@ class VCState(GlobalThread):
         self.steering = 0
         self.op_steering = 0
         self.op_acceleration = 0
-        self.wan_status = VCState.WAN_LONG_OUTAGE
+        self.wan_status = WAN_LONG_OUTAGE
         self.current_enable = True # Until we tie into OP local enable...
         self.last_address = ('localhost', 0)
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -218,8 +218,9 @@ class OPState(GlobalThread):
                 cloudlog.info("OP Enable %s->%s", (self.op_enabled, sm['carControl'].enabled))
             self.op_enabled = sm['carControl'].enabled
 
-class VCHijacker:
+class RemnavHijacker:
     def __init__(self):
+        cloudlog.info("Successfully initialized RemnavHijacker")
         pass
     
     def hijacker(self, accel, steer, curvature):
