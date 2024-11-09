@@ -624,9 +624,9 @@ class Controls:
                                                                              self.desired_curvature_rate, self.sm['liveLocationKalman'])
       actuators.curvature = self.desired_curvature
 
-      actuators.accel, 
-      actuators.steer,
-      actuators.curvature = self.hijacker(actuators.accel, actuators.steer, actuators.curvature)
+      actuators.accel, \
+      actuators.steer, \
+      actuators.curvature = self.hijacker.hijack(actuators.accel, actuators.steer, actuators.curvature)
 
     else:
       lac_log = log.ControlsState.LateralDebugState.new_message()

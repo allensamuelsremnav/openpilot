@@ -19,6 +19,7 @@ However, any thread can read any of the global objects.
 #
 VC_PORT_NUMBER = 7777
 APPLIED_TIMESTAMP_DELTA = 10 # Estimate of application delay
+LAN_TIMEOUT = 1000 # In milliseconds
 
 import threading, socket, json, time, os
 from system.swaglog import cloudlog
@@ -32,6 +33,7 @@ running = True # Thread running
 WAN_NORMAL = 'normal'
 WAN_SHORT_OUTAGE = 'short_outage'
 WAN_LONG_OUTAGE = 'long_outage'
+LAN_OUTAGE = 'lan_outage'
 
 STATE_SAFETY_DRIVER = 'safety_driver'
 STATE_REMOTE_READY = 'remote_ready'
@@ -65,9 +67,11 @@ class VCState(GlobalThread):
         '''
         Listen to socket, process messages that are recevied on it
         '''
-        self.socket.bind(('localhost', VC_PORT_NUMBER))
+        self.socket.bind(('', VC_PORT_NUMBER))
+        print("Socket bound")
         while running:
             message, address = self.socket.recvfrom(1500)
+            print(f"From:{address} : {message}")
             if self.last_address != address:
                 cloudlog.info("New client found %s", address)
                 self.last_address = address
@@ -189,11 +193,15 @@ class VCState(GlobalThread):
 
 class TimerState(GlobalThread):
     def __init__(self):
-        self.last_received_time = 0
+        pass
 
     def runner(self):
         while running:
-            time.sleep(.250)
+            time.sleep(1.0)
+            if (timestamp() - vc.last_received_timestamp) > LAN_TIMEOUT && vc.wan_status != LAN_TIMEOUT:
+                print(">>> LAN TIMEOUT DETECTED <<<")
+                vc.wan_status = LAN_TIMEOUT
+                vc.state = STATE_SAFETY_DRIVER
 
 
 class OPState(GlobalThread):
@@ -223,7 +231,7 @@ class RemnavHijacker:
         cloudlog.info("Successfully initialized RemnavHijacker")
         pass
     
-    def hijacker(self, accel, steer, curvature):
+    def hijack(self, accel, steer, curvature):
         if vc.state != STATE_REMOTE_DRIVER:
             return (accel, steer, curvature)
         else:
