@@ -41,11 +41,11 @@ STATE_REMOTE_DRIVER = 'remote_driver'
 
 def log_info(msg):
     print(">>>>>> %s", msg)
-    cloudlog.info(msg, "")
+    cloudlog.info(">>Remnav: %s", msg)
 
 def log_critical(msg):
     print("***>>> %s", msg)
-    cloudlog.critical(msg)
+    cloudlog.critical(">>>Remnav: %s", msg)
 
 
 def timestamp():
