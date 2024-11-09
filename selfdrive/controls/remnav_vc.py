@@ -39,13 +39,13 @@ STATE_SAFETY_DRIVER = 'safety_driver'
 STATE_REMOTE_READY = 'remote_ready'
 STATE_REMOTE_DRIVER = 'remote_driver'
 
-def log_info(msg, args, *e):
-    print(">>>>>> %s", msg % args)
-    cloudlog.info(msg, args, *e)
+def log_info(msg):
+    print(">>>>>> %s", msg)
+    cloudlog.info(msg, "")
 
-def log_critical(msg, args, *e):
-    print("***>>> %s", msg % args)
-    cloudlog.critical(msg, args, *e)
+def log_critical(msg):
+    print("***>>> %s", msg)
+    cloudlog.critical(msg)
 
 
 def timestamp():
@@ -77,22 +77,22 @@ class VCState(GlobalThread):
         Listen to socket, process messages that are recevied on it
         '''
         self.socket.bind(('', VC_PORT_NUMBER))
-        log_info("Socket bound",)
+        log_info("Socket bound")
         while running:
             message, address = self.socket.recvfrom(1500)
-            log_info("From:{%s} : {%s}", (address, message))
+            log_info(f"From:{address} : {message}")
             if self.last_address != address:
-                log_info("New client found %s", address)
+                log_info(f"New client found {address}"))
                 self.last_address = address
             try:
                 msg = json.loads(message)
             except json.JSONDecodeError as e:
-                log_critical("Unparseable JSON received: %s", message, e)
+                log_critical(f"Unparseable JSON received: {message}")
             else:
                 try:
                     self.process_message(msg)
                 except ValueError as e:
-                    log_critical("Bad message contents: %s", message, e)
+                    log_critical(f"Bad message contents: {message}")
                 else:
                     self.send_response(False)
     
@@ -104,7 +104,7 @@ class VCState(GlobalThread):
         Extract message components and update state
         '''
         if msg['timestamp'] <= self.last_message_timestamp or msg['message_id'] <= self.last_message_id:
-            log_info("Ignoring apparent late/duplicate message id: %s timestamp: %s", (msg['message_id'], msg['timestamp']))
+            log_info(f"Ignoring apparent late/duplicate message id: {msg['message_id']} timestamp: {msg['timestamp']}")
             return
         self.last_received_timestamp = timestamp()
         self.last_message_timestamp = msg['timestamp']
@@ -122,7 +122,7 @@ class VCState(GlobalThread):
             if msg['wan_status'] in (WAN_NORMAL, WAN_SHORT_OUTAGE, WAN_LONG_OUTAGE):
                 self.wan_status = msg['wan_status']
             else:
-                log_critical("Unknown value for wan_status: %s", msg['wan_status'])
+                log_critical(f"Unknown value for wan_status: {msg['wan_status']}")
         self.update_state()
 
     def generate_response(self, timeout):
@@ -189,11 +189,7 @@ class VCState(GlobalThread):
             self.state = STATE_REMOTE_READY
         elif self.wan_status == WAN_NORMAL:
             if self.op_steering != self.steering or self.op_acceleration != self.acceleration:
-                log_info("Received: Steering: %s->%s Acceleration: %s->%s", (
-                    self.op_steering, self.steering,
-                    self.op_acceleration, self.acceleration
-                ))
-                pass # Need to apply acceleration and steering variables.
+                log_info(f"Received: Steering: {self.op_steering}->{self.steering} Acceleration: {self.op_acceleration}->{self.acceleration}")
             self.op_steering = self.steering
             self.op_acceleration = self.acceleration
         else:
@@ -208,7 +204,7 @@ class TimerState(GlobalThread):
         while running:
             time.sleep(1.0)
             if (timestamp() - vc.last_received_timestamp) > LAN_TIMEOUT and vc.wan_status != LAN_TIMEOUT:
-                print(">>> LAN TIMEOUT DETECTED <<<")
+                log_critical("LAN TIMEOUT DETECTED")
                 vc.wan_status = LAN_TIMEOUT
                 vc.state = STATE_SAFETY_DRIVER
 
@@ -232,14 +228,16 @@ class OPState(GlobalThread):
             self.speed = sm['carState'].vEgo
             self.steering = sm['carState'].steeringAngleDeg
             if self.op_enabled != sm['carControl'].enabled:
-                log_info("OP Enable %s->%s", (self.op_enabled, sm['carControl'].enabled))
+                log_info(f"OP Enable {self.op_enabled}->{sm['carControl'].enabled}")
             self.op_enabled = sm['carControl'].enabled
 
 class RemnavHijacker:
     def __init__(self):
         log_info("Successfully initialized RemnavHijacker")
-        pass
-    
+        vc.start()
+        timer.start()
+        op.start()
+   
     def hijack(self, accel, steer, curvature):
         if vc.state != STATE_REMOTE_DRIVER:
             return (accel, steer, curvature)
@@ -249,7 +247,4 @@ class RemnavHijacker:
 vc = VCState()
 timer = TimerState()
 op = OPState()
-vc.start()
-timer.start()
-op.start()
 
