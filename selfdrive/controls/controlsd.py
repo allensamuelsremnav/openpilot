@@ -626,7 +626,7 @@ class Controls:
 
       actuators.accel, \
       actuators.steer, \
-      actuators.curvature = self.hijacker.hijack(actuators.accel, actuators.steer, actuators.curvature)
+      actuators.curvature = self.hijacker.hijack(actuators.accel, actuators.steer, actuators.curvature, CS)
 
     else:
       lac_log = log.ControlsState.LateralDebugState.new_message()

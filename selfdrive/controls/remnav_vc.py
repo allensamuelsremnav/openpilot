@@ -235,6 +235,7 @@ class OPState(GlobalThread):
         self.steering_override = False
         self.brake_override = False
         self.last_enabled = False
+        self.last_status = timestamp()
 
     def override(self):
         return self.accelerator_override or self.steering_override or self.brake_override
@@ -249,6 +250,9 @@ class OPState(GlobalThread):
             self.op_enabled = sm['carControl'].enabled
             if self.op_enabled != self.last_enabled:
                 log_info(f"OP.Enabled {self.last_enabled}->{self.op_enabled}")
+            if (timestamp() - self.last_status) > 5000:
+                self.last_status = timestamp()
+                log_info(f"OP STATUS: Enabled:{self.op_enabled} Speed:{self.speed} Steering:{self.steering} {"GasPressed" if self.accelerator_override else ""} {"Braking" if self.brake_override else ""}")
 
 class RemnavHijacker:
     def __init__(self):
@@ -257,7 +261,11 @@ class RemnavHijacker:
         timer.start()   
         op.start()
    
-    def hijack(self, accel, steer, curvature):
+    def hijack(self, accel, steer, curvature, CS):
+        # Some car events show up in CS, not in messages...
+        op.accelerator_override = CS.gasPressed
+        op.brake_override = CS.brakePressed
+
         if vc.state != STATE_REMOTE_DRIVER:
             return (accel, steer, curvature)
         else:
