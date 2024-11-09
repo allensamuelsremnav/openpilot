@@ -52,5 +52,5 @@ while True:
         'request_enable': request_enable,
     }
 
+    print(f"Sending to:{dest_address}: {json.dumps(msg)}")
     s.sendto(json.dumps(msg).encode(), dest_address)
-    print(f"Sending: {json.dumps(msg)}")

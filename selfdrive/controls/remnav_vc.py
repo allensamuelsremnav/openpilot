@@ -150,7 +150,7 @@ class VCState(GlobalThread):
             'steering_override': op.steering_override,
             'brake_override': op.brake_override,
             'timeout': timeout,
-            'state': self.current_state
+            'state': self.state
         }          
 
     def update_state(self):
