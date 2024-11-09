@@ -93,12 +93,15 @@ class VCState(GlobalThread):
             except json.JSONDecodeError as e:
                 log_critical(f"Unparseable JSON received: {message}")
             else:
-                try:
-                    self.process_message(msg)
-                except ValueError as e:
-                    log_critical(f"Bad message contents: {message}")
+                if isinstance(msg, dict):
+                    try:
+                        self.process_message(msg)
+                    except ValueError as e:
+                        log_critical(f"Bad message contents: {message}")
+                    else:
+                        self.send_response(False)
                 else:
-                    self.send_response(False)
+                    log_critical(f"Bad Message: Not Dictionary: {msg}")
     
     def send_response(self, timeout):
         self.socket.sendto(self.generate_response(timeout), self.last_address)
@@ -216,8 +219,8 @@ class TimerState(GlobalThread):
                 vc.state = STATE_SAFETY_DRIVER
                 self.last_timeout = timestamp()
                 self.first_timeout = self.last_timeout
-            if (timestamp() - self.last_timeout) > 5 and vc.wan_status == LAN_TIMEOUT:
-                log_info("Continued LAN Outage for {timestamp() - self.first_timeout} seconds")
+            if (timestamp() - self.last_timeout) > 5000 and vc.wan_status == LAN_TIMEOUT:
+                log_info(f"Continued LAN Outage for {(timestamp() - self.first_timeout)//1000} seconds")
                 self.last_timeout = timestamp()
 
 class OPState(GlobalThread):
