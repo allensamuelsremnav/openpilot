@@ -40,11 +40,11 @@ STATE_REMOTE_READY = 'remote_ready'
 STATE_REMOTE_DRIVER = 'remote_driver'
 
 def log_info(msg):
-    print(">>>>>> %s", msg)
+    print(">>>>>> " , msg)
     cloudlog.info(">>Remnav: %s", msg)
 
 def log_critical(msg):
-    print("***>>> %s", msg)
+    print("***>>> ", msg)
     cloudlog.critical(">>>Remnav: %s", msg)
 
 
@@ -53,6 +53,7 @@ def timestamp():
 
 class GlobalThread:
     def start(self):
+        log_info(f"Starting thread {self.runner}")
         self.thread = threading.Thread(target=self.runner, args=())
 
 class VCState(GlobalThread):
@@ -76,8 +77,9 @@ class VCState(GlobalThread):
         '''
         Listen to socket, process messages that are recevied on it
         '''
+        log_info(f"Binding socket to {VC_PORT_NUMBER}")
         self.socket.bind(('', VC_PORT_NUMBER))
-        log_info("Socket bound")
+        log_info(f"Socket bound: {self.socket}")
         while running:
             message, address = self.socket.recvfrom(1500)
             log_info(f"From:{address} : {message}")
@@ -201,12 +203,15 @@ class TimerState(GlobalThread):
         pass
 
     def runner(self):
+        log_info("In TimerState::runner")
         while running:
             time.sleep(1.0)
             if (timestamp() - vc.last_received_timestamp) > LAN_TIMEOUT and vc.wan_status != LAN_TIMEOUT:
                 log_critical("LAN TIMEOUT DETECTED")
                 vc.wan_status = LAN_TIMEOUT
                 vc.state = STATE_SAFETY_DRIVER
+            else:
+                log_info("Wakeup")
 
 
 class OPState(GlobalThread):
@@ -223,12 +228,15 @@ class OPState(GlobalThread):
     
     def runner(self):
         sm = messaging.SubMaster(['carState', 'carControl'])
+        log_info("OpState: runner")
         while running:
-            sm.update()
+            sm.update(1.0)
             self.speed = sm['carState'].vEgo
             self.steering = sm['carState'].steeringAngleDeg
             if self.op_enabled != sm['carControl'].enabled:
                 log_info(f"OP Enable {self.op_enabled}->{sm['carControl'].enabled}")
+            else:
+                log_info(f"OP: No change")
             self.op_enabled = sm['carControl'].enabled
 
 class RemnavHijacker:
@@ -239,6 +247,7 @@ class RemnavHijacker:
         op.start()
    
     def hijack(self, accel, steer, curvature):
+        log_info(f"Hijack requested: {vc.state}")
         if vc.state != STATE_REMOTE_DRIVER:
             return (accel, steer, curvature)
         else:
