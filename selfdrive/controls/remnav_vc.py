@@ -55,6 +55,7 @@ class GlobalThread:
     def start(self):
         log_info(f"Starting thread {self.runner}")
         self.thread = threading.Thread(target=self.runner, args=())
+        self.thread.start()
 
 class VCState(GlobalThread):
     def __init__(self):
@@ -210,8 +211,6 @@ class TimerState(GlobalThread):
                 log_critical("LAN TIMEOUT DETECTED")
                 vc.wan_status = LAN_TIMEOUT
                 vc.state = STATE_SAFETY_DRIVER
-            else:
-                log_info("Wakeup")
 
 
 class OPState(GlobalThread):
@@ -230,24 +229,21 @@ class OPState(GlobalThread):
         sm = messaging.SubMaster(['carState', 'carControl'])
         log_info("OpState: runner")
         while running:
-            sm.update(1.0)
+            sm.update()
             self.speed = sm['carState'].vEgo
             self.steering = sm['carState'].steeringAngleDeg
             if self.op_enabled != sm['carControl'].enabled:
                 log_info(f"OP Enable {self.op_enabled}->{sm['carControl'].enabled}")
-            else:
-                log_info(f"OP: No change")
             self.op_enabled = sm['carControl'].enabled
 
 class RemnavHijacker:
     def __init__(self):
         log_info("Successfully initialized RemnavHijacker")
         vc.start()
-        timer.start()
+        timer.start()   
         op.start()
    
     def hijack(self, accel, steer, curvature):
-        log_info(f"Hijack requested: {vc.state}")
         if vc.state != STATE_REMOTE_DRIVER:
             return (accel, steer, curvature)
         else:
