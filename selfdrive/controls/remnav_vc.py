@@ -82,7 +82,7 @@ class VCState(GlobalThread):
             message, address = self.socket.recvfrom(1500)
             log_info(f"From:{address} : {message}")
             if self.last_address != address:
-                log_info(f"New client found {address}"))
+                log_info(f"New client found {address}")
                 self.last_address = address
             try:
                 msg = json.loads(message)
