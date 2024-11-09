@@ -152,7 +152,8 @@ class VCState(GlobalThread):
             'steering_override': op.steering_override,
             'brake_override': op.brake_override,
             'timeout': timeout,
-            'state': self.state
+            'state': self.state,
+            'op_enabled': op.op_enabled,
         }          
 
     def update_state(self):
@@ -233,6 +234,7 @@ class OPState(GlobalThread):
         self.accelerator_override = False
         self.steering_override = False
         self.brake_override = False
+        self.last_enabled = False
 
     def override(self):
         return self.accelerator_override or self.steering_override or self.brake_override
@@ -242,11 +244,12 @@ class OPState(GlobalThread):
         log_info("OpState: runner")
         while running:
             sm.update()
+            log_info("Got op message")
             self.speed = sm['carState'].vEgo
             self.steering = sm['carState'].steeringAngleDeg
-            if self.op_enabled != sm['carControl'].enabled:
-                log_info(f"OP Enable {self.op_enabled}->{sm['carControl'].enabled}")
             self.op_enabled = sm['carControl'].enabled
+            if self.op_enabled != self.last_enabled:
+                log_info(f"OP.Enabled {self.last_enabled}->{self.op_enabled}")
 
 class RemnavHijacker:
     def __init__(self):
