@@ -104,7 +104,9 @@ class VCState(GlobalThread):
                     log_critical(f"Bad Message: Not Dictionary: {msg}")
     
     def send_response(self, timeout):
-        self.socket.sendto(self.generate_response(timeout), self.last_address)
+        js = self.generate_response(timeout)
+        s = json.dumps(js).encode()
+        self.socket.sendto(s, self.last_address)
     
     def process_message(self, msg):
         '''
