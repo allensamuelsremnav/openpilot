@@ -82,6 +82,7 @@ class VCState(GlobalThread):
         self.socket.bind(('', VC_PORT_NUMBER))
         log_info(f"Socket bound: to {self.socket.getsockname()}")
         while running:
+            log_info(f"Waiting for input on socket {self.socket.getsockname()}")
             message, address = self.socket.recvfrom(1500)
             log_info(f"From:{address} : {message}")
             if self.last_address != address:
