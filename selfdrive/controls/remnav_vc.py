@@ -202,6 +202,8 @@ class VCState(GlobalThread):
 
 class TimerState(GlobalThread):
     def __init__(self):
+        self.last_timeout = timestamp()
+        self.first_timeout = timestamp()
         pass
 
     def runner(self):
@@ -212,7 +214,11 @@ class TimerState(GlobalThread):
                 log_critical("LAN TIMEOUT DETECTED")
                 vc.wan_status = LAN_TIMEOUT
                 vc.state = STATE_SAFETY_DRIVER
-
+                self.last_timeout = timestamp()
+                self.first_timeout = self.last_timeout
+            if (timestamp() - self.last_timeout) > 5 and vc.wan_status == LAN_TIMEOUT:
+                log_info("Continued LAN Outage for {timestamp() - self.first_timeout} seconds")
+                self.last_timeout = timestamp()
 
 class OPState(GlobalThread):
     def __init__(self):
