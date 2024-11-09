@@ -244,7 +244,6 @@ class OPState(GlobalThread):
         log_info("OpState: runner")
         while running:
             sm.update()
-            log_info("Got op message")
             self.speed = sm['carState'].vEgo
             self.steering = sm['carState'].steeringAngleDeg
             self.op_enabled = sm['carControl'].enabled
