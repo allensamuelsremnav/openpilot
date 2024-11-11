@@ -19,7 +19,7 @@ However, any thread can read any of the global objects.
 #
 VC_PORT_NUMBER = 7777
 APPLIED_TIMESTAMP_DELTA = 10 # Estimate of application delay
-LAN_TIMEOUT = 1000 # In milliseconds
+LAN_TIMEOUT = 1000000 # In milliseconds
 
 import threading, socket, json, time, os
 from system.swaglog import cloudlog
@@ -255,7 +255,7 @@ class OPState(GlobalThread):
                 self.last_status = timestamp()
                 gas = "GasPressed" if self.accelerator_override else ""
                 brk = "BrakePressed" if self.brake_override else ""
-                log_info(f"STATUS: State:{vc.state} Enabled:{self.op_enabled} Speed:{self.speed} Steering:{self.steering} {gas} {brk}")
+                log_info(f"STATUS: State:{vc.state} WAN:{vc.wan_status} OP_Enabled:{self.op_enabled} Speed:{self.speed} Steering:{self.steering} {gas} {brk}")
 
 class RemnavHijacker:
     def __init__(self):
