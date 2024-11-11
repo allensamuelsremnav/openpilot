@@ -4,7 +4,7 @@ import socket, threading, json, time
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.bind(('', 0))
 print(f"Bound UDP Port to {s.getsockname()}")
-dest_address=(('172.25.203.145', 7777))
+dest_address=(('localhost', 7777))
 
 def listener():
     print("Waiting for UDP response")
