@@ -33,7 +33,7 @@ running = True # Thread running
 WAN_NORMAL = 'normal'
 WAN_SHORT_OUTAGE = 'short_outage'
 WAN_LONG_OUTAGE = 'long_outage'
-LAN_OUTAGE = 'lan_outage'
+WAN_LAN_OUTAGE = 'lan_outage'
 
 STATE_SAFETY_DRIVER = 'safety_driver'
 STATE_REMOTE_READY = 'remote_ready'
@@ -222,7 +222,7 @@ class TimerState(GlobalThread):
             time.sleep(1.0)
             if (timestamp() - vc.last_received_timestamp) > LAN_TIMEOUT and vc.wan_status != LAN_TIMEOUT:
                 log_critical("LAN TIMEOUT DETECTED")
-                vc.wan_status = LAN_TIMEOUT
+                vc.wan_status = WAN_LAN_OUTAGE
                 vc.state = STATE_SAFETY_DRIVER
                 self.last_timeout = timestamp()
                 self.first_timeout = self.last_timeout
@@ -259,7 +259,7 @@ class OPState(GlobalThread):
                 self.last_status = timestamp()
                 gas = "GasPressed" if self.accelerator_override else ""
                 brk = "BrakePressed" if self.brake_override else ""
-                log_info(f"STATUS: State:{vc.state} WAN:{vc.wan_status} OP_Enabled:{self.op_enabled} Speed:{self.speed} Steering:{self.steering} {gas} {brk}")
+                log_info(f"STATUS: State:{vc.state} WAN:{vc.wan_status} OP_Enabled:{self.op_enabled} Request:{vc.request_enabled} Speed:{self.speed} Steering:{self.steering} {gas} {brk}")
 
 class RemnavHijacker:
     def __init__(self):
