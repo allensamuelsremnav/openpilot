@@ -185,7 +185,7 @@ class VCState(GlobalThread):
             log_info("SAFETY_DRIVER -> REMOTE_READY")
             self.state = STATE_REMOTE_READY
         elif self.current_enable:
-            log_info("Enable Ignored: Override:%s Wan:%s", (op.override(), self.wan_status))
+            log_info(f"Enable Ignored: Override:{op.override()} Wan:{self.wan_status}")
 
     def state_remote_driver(self):
         '''
