@@ -250,6 +250,7 @@ class OPState(GlobalThread):
             self.op_enabled = sm['carControl'].enabled
             if self.op_enabled != self.last_enabled:
                 log_info(f"OP.Enabled {self.last_enabled}->{self.op_enabled}")
+                self.last_enabled = self.op_enabled
             if (timestamp() - self.last_status) > 5000:
                 self.last_status = timestamp()
                 gas = "GasPressed" if self.accelerator_override else ""
