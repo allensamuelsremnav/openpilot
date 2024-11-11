@@ -182,8 +182,12 @@ class VCState(GlobalThread):
         Vehicle in safety_driver state.
         '''
         if self.current_enable and not op.override() and self.wan_status == WAN_NORMAL:
-            log_info("SAFETY_DRIVER -> REMOTE_READY")
-            self.state = STATE_REMOTE_READY
+            if self.request_enable:
+                log_info("SAFETY_DRIVER -> REMOTE_DRIVER")
+                self.state = STATE_REMOTE_DRIVER
+            else:
+                log_info("SAFETY_DRIVER -> REMOTE_READY")
+                self.state = STATE_REMOTE_READY
         elif self.current_enable:
             log_info(f"Enable Ignored: Override:{op.override()} Wan:{self.wan_status}")
 
