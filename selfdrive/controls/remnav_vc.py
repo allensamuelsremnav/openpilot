@@ -3,42 +3,52 @@
 '''
 OpenPilot implementation of a Remnav Vehicle Controller
 
-This implementation creates three independent threads.
+There are three classes. Each class has a global singleton instance and an associated thread.
 
 (1) Is the external message processor, it reads JSON messages from a UDP socket and executes them generated a result JSON
-(2) This is the internal timer/timeout thread. It's responsible for any action of the VC that's indpendent on a received message
+(2) This is the internal timer/timeout thread. It's responsible for any action of the VC that's indpendent of a received message
 (3) This is the internal OpenPilot message processor. It listens for OpenPilot messages and extracts any sensor data.
 
-Each thread has associated with it a singleton global object. That object is only mutated by the associated thread,
-However, any thread can read any of the global objects.
+Generally, objects are mutated only by their associated thread and are read-only to other threads. However, there are some exceptions to this.
 
 '''
 
 #
 # Configurable Constants
 #
+# All times are in milliSeconds
+# All distances are in meters
+#
+
+# UDP Port for communication
 VC_PORT_NUMBER = 7777
-APPLIED_TIMESTAMP_DELTA = 10 # Estimate of application delay
-LAN_TIMEOUT = 1000000 # In milliseconds
+
+# Estimated delay from receipt of a message and it's application to the local actuators
+APPLIED_TIMESTAMP_DELTA = 10
+
+# Wall time without a receipt of a message before declaring a local communication failure
+LAN_TIMEOUT = 1000000 #
 
 import threading, socket, json, time, os
 from system.swaglog import cloudlog
 import cereal.messaging as messaging
 
-if __name__ == "__main__":
-        pass
-
 running = True # Thread running
 
+# States of the vc.wan_status variable
 WAN_NORMAL = 'normal'
 WAN_SHORT_OUTAGE = 'short_outage'
 WAN_LONG_OUTAGE = 'long_outage'
 WAN_LAN_OUTAGE = 'lan_outage'
 
+# states of the vc.state variable
 STATE_SAFETY_DRIVER = 'safety_driver'
 STATE_REMOTE_READY = 'remote_ready'
 STATE_REMOTE_DRIVER = 'remote_driver'
 
+#
+# Centralized logging functions
+#
 def log_info(msg):
     print(">>>>>> " , msg)
     cloudlog.info(">>Remnav: %s", msg)
@@ -47,17 +57,19 @@ def log_critical(msg):
     # Critical messages are always dumped onto the OP screen.
     cloudlog.critical(">>>Remnav: %s", msg)
 
-
 def timestamp():
+    '''Generate internal timestamp'''
     return int(time.time() * 1000)
 
 class GlobalThread:
+    '''Base class for all single/threaded objects'''
     def start(self):
-        log_info(f"Starting thread {self.runner}")
+        log_info(f"Starting thread {self.runner.__qualname__}")
         self.thread = threading.Thread(target=self.runner, args=())
         self.thread.start()
 
 class VCState(GlobalThread):
+    '''The external thread, this also holds the vast majority of state'''
     def __init__(self):
         self.last_message_id = -1
         self.last_message_timestamp = -1
@@ -66,11 +78,10 @@ class VCState(GlobalThread):
         self.request_enable = False
         self.acceleration = 0
         self.steering = 0
-        self.op_steering = 0
-        self.op_acceleration = 0
+        self.last_steering = 0
+        self.last_acceleration = 0
         self.wan_status = WAN_LONG_OUTAGE
-        self.current_enable = True # Until we tie into OP local enable...
-        self.last_address = ('localhost', 0)
+        self.client_address = ('localhost', 0)
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.state = STATE_SAFETY_DRIVER
 
@@ -78,16 +89,15 @@ class VCState(GlobalThread):
         '''
         Listen to socket, process messages that are recevied on it
         '''
-        log_info(f"Binding socket to {VC_PORT_NUMBER}")
         self.socket.bind(('', VC_PORT_NUMBER))
         log_info(f"Socket bound: to {self.socket.getsockname()}")
         while running:
-            log_info(f"Waiting for input on socket {self.socket.getsockname()}")
+            #log_info(f"Waiting for input on socket {self.socket.getsockname()}")
             message, address = self.socket.recvfrom(1500)
-            log_info(f"From:{address} : {message}")
-            if self.last_address != address:
-                log_info(f"New client found {address}")
-                self.last_address = address
+            #log_info(f"From:{address} : {message}")
+            if self.client_address != address:
+                log_info(f"New client found at {address}")
+                self.client_address = address
             try:
                 msg = json.loads(message)
             except json.JSONDecodeError as e:
@@ -97,16 +107,20 @@ class VCState(GlobalThread):
                     try:
                         self.process_message(msg)
                     except ValueError as e:
+                        # Typically if you get here, you're missing a field in the JSON message that "process_message" consideres as not optional.
                         log_critical(f"Bad message contents: {message}")
                     else:
+                        # Now that the message has been successfully validated, update the local state according.
+                        self.update_state()
                         self.send_response(False)
                 else:
                     log_critical(f"Bad Message: Not Dictionary: {msg}")
     
     def send_response(self, timeout):
+        '''Generate a response message. '''
         js = self.generate_response(timeout)
         s = json.dumps(js).encode()
-        self.socket.sendto(s, self.last_address)
+        self.socket.sendto(s, self.client_address)
     
     def process_message(self, msg):
         '''
@@ -132,7 +146,6 @@ class VCState(GlobalThread):
                 self.wan_status = msg['wan_status']
             else:
                 log_critical(f"Unknown value for wan_status: {msg['wan_status']}")
-        self.update_state()
 
     def generate_response(self, timeout):
         ts = timestamp()
@@ -147,13 +160,12 @@ class VCState(GlobalThread):
             'steering': self.steering,
             'current_steering': self.steering, # since there's no feedback from OP
             'current_speed': op.speed,
-            'current_enable': self.current_enable,
+            'current_enable': op.enabled,
             'accelerator_override': op.accelerator_override,
             'steering_override': op.steering_override,
             'brake_override': op.brake_override,
             'timeout': timeout,
             'state': self.state,
-            'op_enabled': op.op_enabled,
         }          
 
     def update_state(self):
@@ -173,7 +185,10 @@ class VCState(GlobalThread):
         '''
         Vehicle is ready to enable remote operation
         '''
-        if self.request_enable:
+        if not op.enabled or op.override():
+            log_info("Remove Ready -> Safety Driver, No OP Enable")
+            self.state = STATE_SAFETY_DRIVER
+        elif self.request_enable:
             log_info("Remote Ready -> Remote Driver")
             self.state = STATE_REMOTE_DRIVER
 
@@ -181,34 +196,31 @@ class VCState(GlobalThread):
         '''
         Vehicle in safety_driver state.
         '''
-        if self.current_enable and not op.override() and self.wan_status == WAN_NORMAL:
+        if op.enabled and not op.override() and self.wan_status == WAN_NORMAL:
             if self.request_enable:
                 log_info("SAFETY_DRIVER -> REMOTE_DRIVER")
                 self.state = STATE_REMOTE_DRIVER
             else:
                 log_info("SAFETY_DRIVER -> REMOTE_READY")
                 self.state = STATE_REMOTE_READY
-        elif self.current_enable:
-            log_info(f"Enable Ignored: Override:{op.override()} Wan:{self.wan_status}")
+        elif self.request_enable:
+            log_info(f"Enable Ignored: OpEnable:{op.enabled} Override:{op.override()} Wan:{self.wan_status}")
 
     def state_remote_driver(self):
         '''
         Vehicle in remote driving state
         '''
-        if not self.request_enable:
+        if op.override() or not op.enabled or self.wan_status != WAN_NORMAL:
+            log_info("Safety Driver Override -> Safety Driver")
+            self.state = STATE_SAFETY_DRIVER
+        elif not self.request_enable:
             log_info("Remote Driver -> Remote Ready")
             self.state = STATE_REMOTE_READY
-        elif op.override():
-            log_info("Safety Driver Override -> Remote Ready")
-            self.state = STATE_REMOTE_READY
-        elif self.wan_status == WAN_NORMAL:
-            if self.op_steering != self.steering or self.op_acceleration != self.acceleration:
-                log_info(f"Received: Steering: {self.op_steering}->{self.steering} Acceleration: {self.op_acceleration}->{self.acceleration}")
-            self.op_steering = self.steering
-            self.op_acceleration = self.acceleration
         else:
-            # WAN Outage of some flavor
-            pass
+            if self.last_steering != self.steering or self.last_acceleration != self.acceleration:
+                log_info(f"Received: Steering: {self.last_steering}->{self.steering} Acceleration: {self.last_acceleration}->{self.acceleration}")
+            self.last_steering = self.steering
+            self.last_acceleration = self.acceleration
 
 class TimerState(GlobalThread):
     def __init__(self):
@@ -232,7 +244,7 @@ class TimerState(GlobalThread):
 
 class OPState(GlobalThread):
     def __init__(self):
-        self.op_enabled = False
+        self.enabled = False
         self.speed = 0
         self.steering = 0
         self.accelerator_override = False
@@ -251,15 +263,27 @@ class OPState(GlobalThread):
             sm.update()
             self.speed = sm['carState'].vEgo
             self.steering = sm['carState'].steeringAngleDeg
-            self.op_enabled = sm['carControl'].enabled
-            if self.op_enabled != self.last_enabled:
-                log_info(f"OP.Enabled {self.last_enabled}->{self.op_enabled}")
-                self.last_enabled = self.op_enabled
+            self.enabled = sm['carControl'].enabled
+            if self.enabled != self.last_enabled:
+                log_info(f"OP.Enabled {self.last_enabled}->{self.enabled}")
+                self.last_enabled = self.enabled
             if (timestamp() - self.last_status) > 5000:
                 self.last_status = timestamp()
                 gas = "GasPressed" if self.accelerator_override else ""
                 brk = "BrakePressed" if self.brake_override else ""
-                log_info(f"STATUS: State:{vc.state} WAN:{vc.wan_status} OP_Enabled:{self.op_enabled} Request:{vc.request_enabled} Speed:{self.speed} Steering:{self.steering} {gas} {brk}")
+                log_info(f"STATUS: State:{vc.state} WAN:{vc.wan_status} OP_Enabled:{self.enabled} Request:{vc.request_enabled} Speed:{self.speed} Steering:{self.steering} {gas} {brk}")
+
+
+# Wheelbase for Vehicle
+WHEELBASE = 2.78892 # 2018 Highlander
+
+import math
+
+def curvature_to_steering(curvature):
+    '''Convert incoming curvature value to an OpenPilot Steering Value'''
+    radius = 1.0 / curvature
+    angle = math.asin(WHEELBASE / radius)
+    return math.copysign(angle, curvature) * 4.0
 
 class RemnavHijacker:
     def __init__(self):
@@ -269,16 +293,29 @@ class RemnavHijacker:
         op.start()
    
     def hijack(self, accel, steer, curvature, CS):
+        '''Openpilot calls this function on every iteration of the PID controller when enabled. '''
         # Some car events show up in CS, not in messages...
         op.accelerator_override = CS.gasPressed
         op.brake_override = CS.brakePressed
+        op.steering_override = CS.steeringPressed
 
         if vc.state != STATE_REMOTE_DRIVER:
+            # Reflect back the inputs, i.e., no change
             return (accel, steer, curvature)
         else:
+            # override the controls
             return (vc.acceleration, vc.steering, curvature)
 
-vc = VCState()
-timer = TimerState()
-op = OPState()
+def do_unit_tests():
+
+    pass
+
+if __name__ == "main":
+    # Invoked from command line, this is the unit test case.
+    do_unit_tests()
+else:
+    # Loaded, meaning this is production usage in OpenPilot
+    vc = VCState()
+    timer = TimerState()
+    op = OPState()
 
