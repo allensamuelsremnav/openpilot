@@ -16,7 +16,7 @@ Generally, objects are mutated only by their associated thread and are read-only
 #
 # Configurable Constants
 #
-# All times are in milliSeconds
+# All times are in microseconds
 # All distances are in meters
 #
 
@@ -24,14 +24,15 @@ Generally, objects are mutated only by their associated thread and are read-only
 VC_PORT_NUMBER = 7777
 
 # Estimated delay from receipt of a message and it's application to the local actuators
-APPLIED_TIMESTAMP_DELTA = 10
+APPLIED_TIMESTAMP_DELTA = 10_000
 
 # Wall time without a receipt of a message before declaring a local communication failure
-LAN_TIMEOUT = 1000000 #
+LAN_TIMEOUT = 10_000_000
 
 import threading, socket, json, time, os
-from system.swaglog import cloudlog
-import cereal.messaging as messaging
+if 'VC_UNIT_TEST' not in os.environ:
+    from system.swaglog import cloudlog
+    import cereal.messaging as messaging
 
 running = True # Thread running
 
@@ -46,33 +47,55 @@ STATE_SAFETY_DRIVER = 'safety_driver'
 STATE_REMOTE_READY = 'remote_ready'
 STATE_REMOTE_DRIVER = 'remote_driver'
 
+# valid message ids
+BEACON_ID = 0
+TRAJECTORY_ID = 1
+G920_ID = 2
+FRAME_METADATA_ID = 3
+
 #
 # Centralized logging functions
 #
 def log_info(msg):
-    print(">>>>>> " , msg)
-    cloudlog.info(">>Remnav: %s", msg)
+    if 'VC_UNIT_TEST' not in os.environ:
+        cloudlog.info(">>Remnav: %s", msg)
 
 def log_critical(msg):
     # Critical messages are always dumped onto the OP screen.
-    cloudlog.critical(">>>Remnav: %s", msg)
+    print(">>>>>> " , msg)
+    if 'VC_UNIT_TEST' not in os.environ:
+        cloudlog.critical(">>>Remnav: %s", msg)
+
+def log_file (msg, direction):
+    if 'VC_UNIT_TEST' in os.environ:
+        if direction == 'tx':
+            tx_file_writer.save_message (msg)
+        elif direction == 'rx':
+            rx_file_writer.save_message (msg)
+        else:
+            log_critical (f'unrecoginzied log_file direction {direction}')
 
 def timestamp():
     '''Generate internal timestamp'''
-    return int(time.time() * 1000)
+    return int(time.time() * 1_000_000)
 
 class GlobalThread:
     '''Base class for all single/threaded objects'''
-    def start(self):
+    def start(self, daemon=None):
         log_info(f"Starting thread {self.runner.__qualname__}")
-        self.thread = threading.Thread(target=self.runner, args=())
+        self.thread = threading.Thread(target=self.runner, args=(), daemon=daemon)
         self.thread.start()
 
 class VCState(GlobalThread):
     '''The external thread, this also holds the vast majority of state'''
     def __init__(self):
         self.last_message_id = -1
-        self.last_message_timestamp = -1
+        self.last_message_timestamp = {
+            BEACON_ID: -1,
+            TRAJECTORY_ID: -1,
+            G920_ID: -1,
+            FRAME_METADATA_ID: -1,
+        }
         self.last_received_timestamp = 0
         self.last_applied_timestamp = 0
         self.request_enable = False
@@ -84,13 +107,14 @@ class VCState(GlobalThread):
         self.client_address = ('localhost', 0)
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.state = STATE_SAFETY_DRIVER
+        self.lock = threading.Lock ()
 
     def runner(self):
         '''
         Listen to socket, process messages that are recevied on it
         '''
         self.socket.bind(('', VC_PORT_NUMBER))
-        log_info(f"Socket bound: to {self.socket.getsockname()}")
+        log_critical(f"Socket bound: to {self.socket.getsockname()}")
         while running:
             #log_info(f"Waiting for input on socket {self.socket.getsockname()}")
             message, address = self.socket.recvfrom(1500)
@@ -98,21 +122,27 @@ class VCState(GlobalThread):
             if self.client_address != address:
                 log_info(f"New client found at {address}")
                 self.client_address = address
+
             try:
                 msg = json.loads(message)
+                msg['address'] = address; 
+                log_file (msg, direction='rx')
             except json.JSONDecodeError as e:
                 log_critical(f"Unparseable JSON received: {message}")
             else:
                 if isinstance(msg, dict):
                     try:
-                        self.process_message(msg)
+                        with self.lock:
+                            response_required = self.process_message(msg) # no response for duplicate ooo messages
                     except ValueError as e:
                         # Typically if you get here, you're missing a field in the JSON message that "process_message" consideres as not optional.
                         log_critical(f"Bad message contents: {message}")
                     else:
                         # Now that the message has been successfully validated, update the local state according.
-                        self.update_state()
-                        self.send_response(False)
+                        if response_required: # no response for duplicate or out-of-order message
+                            with self.lock:
+                                self.update_state()
+                            self.send_response(False)
                 else:
                     log_critical(f"Bad Message: Not Dictionary: {msg}")
     
@@ -121,37 +151,59 @@ class VCState(GlobalThread):
         js = self.generate_response(timeout)
         s = json.dumps(js).encode()
         self.socket.sendto(s, self.client_address)
+        js['address'] = self.client_address; 
+        log_file (js, 'tx')
     
     def process_message(self, msg):
         '''
-        Extract message components and update state
+            Extract message components and update state.
+            Returns True if a response needs to be generated for this message.
+            Reponses are not required for duplicate and out-of-order messages
         '''
-        if msg['timestamp'] <= self.last_message_timestamp or msg['message_id'] <= self.last_message_id:
+        if not 'message_id' in msg:
+            log_critical(f"Missing message id in {msg}. Ignoring this message")
+            raise ValueError (f"Missing message id field in {msg}" )
+
+        if not msg['message_id'] in (BEACON_ID, TRAJECTORY_ID, G920_ID, FRAME_METADATA_ID):
+            log_critical(f"Invalid message id in {msg}. Ignoring this message")
+            raise ValueError (f"Invalid message id field {msg['message_id']}")
+
+        if msg['timestamp'] <= self.last_message_timestamp[msg['message_id']]:
             log_info(f"Ignoring apparent late/duplicate message id: {msg['message_id']} timestamp: {msg['timestamp']}")
-            return
+            return False
+        self.last_message_timestamp[msg['message_id']] = msg['timestamp']
+
         self.last_received_timestamp = timestamp()
-        self.last_message_timestamp = msg['timestamp']
+
         self.last_message_id = msg['message_id']
+
         if 'request_enable' in msg:
             if not isinstance(msg['request_enable'], bool):
                 log_info("Ignoring non-boolean request_enable")
-                return
+                raise ValueError (f"Non-boolean request enable {msg['request_enable']}")
             self.request_enable = msg['request_enable']
+
         if 'acceleration' in msg:
             self.acceleration = msg['acceleration']
+
         if 'steering' in msg:
             self.steering = msg['steering']
+
         if 'wan_status' in msg:
             if msg['wan_status'] in (WAN_NORMAL, WAN_SHORT_OUTAGE, WAN_LONG_OUTAGE):
                 self.wan_status = msg['wan_status']
             else:
                 log_critical(f"Unknown value for wan_status: {msg['wan_status']}")
+                raise ValueError (f"Invalid wan_status f{msg['wan_status']}")
+
+        return True
+    # end of process_message
 
     def generate_response(self, timeout):
         ts = timestamp()
         return {
             'timestamp': ts,
-            'last_message_timestamp': self.last_message_timestamp,
+            'last_message_timestamp': self.last_message_timestamp[self.last_message_id],
             'last_message_id': self.last_message_id,
             'last_received_timestamp': self.last_received_timestamp,
             'last_applied_timestamp' : ts + APPLIED_TIMESTAMP_DELTA,
@@ -165,8 +217,8 @@ class VCState(GlobalThread):
             'steering_override': op.steering_override,
             'brake_override': op.brake_override,
             'timeout': timeout,
-            'state': self.state,
         }          
+    # end generate_response
 
     def update_state(self):
         '''
@@ -185,8 +237,8 @@ class VCState(GlobalThread):
         '''
         Vehicle is ready to enable remote operation
         '''
-        if not op.enabled or op.override():
-            log_info("Remove Ready -> Safety Driver, No OP Enable")
+        if not op.enabled or op.override() or self.wan_status != WAN_NORMAL:
+            log_info("Remove Ready -> Safety Driver")
             self.state = STATE_SAFETY_DRIVER
         elif self.request_enable:
             log_info("Remote Ready -> Remote Driver")
@@ -232,15 +284,18 @@ class TimerState(GlobalThread):
         log_info("In TimerState::runner")
         while running:
             time.sleep(1.0)
-            if (timestamp() - vc.last_received_timestamp) > LAN_TIMEOUT and vc.wan_status != LAN_TIMEOUT:
+            if (timestamp() - vc.last_received_timestamp) > LAN_TIMEOUT and vc.wan_status != WAN_LAN_OUTAGE:
                 log_critical("LAN TIMEOUT DETECTED")
-                vc.wan_status = WAN_LAN_OUTAGE
-                vc.state = STATE_SAFETY_DRIVER
+                with vc.lock:
+                    vc.wan_status = WAN_LAN_OUTAGE
+                    vc.state = STATE_SAFETY_DRIVER
                 self.last_timeout = timestamp()
                 self.first_timeout = self.last_timeout
-            if (timestamp() - self.last_timeout) > 5000 and vc.wan_status == LAN_TIMEOUT:
-                log_info(f"Continued LAN Outage for {(timestamp() - self.first_timeout)//1000} seconds")
+            if (timestamp() - self.last_timeout) > 5_000_000 and vc.wan_status == WAN_LAN_OUTAGE:
+                log_info(f"Continued LAN Outage for {(timestamp() - self.first_timeout)//1000_000} seconds")
                 self.last_timeout = timestamp()
+    # end of runner
+# end of TimerState
 
 class OPState(GlobalThread):
     def __init__(self):
@@ -273,6 +328,98 @@ class OPState(GlobalThread):
                 brk = "BrakePressed" if self.brake_override else ""
                 log_info(f"STATUS: State:{vc.state} WAN:{vc.wan_status} OP_Enabled:{self.enabled} Request:{vc.request_enabled} Speed:{self.speed} Steering:{self.steering} {gas} {brk}")
 
+###############################################################################################
+# Unit test bench code
+###############################################################################################
+class FileWriter ():
+    def __init__(self, file_path):
+        self.file_path = file_path
+
+    def save_message(self, message):
+        """Appends a message (dictionary format) to the file."""
+        with open(self.file_path, 'a') as file:
+            file.write(json.dumps(message) + '\n')
+    # end of save_message
+# end of FileWriter
+
+import random
+
+def time_based_state_generator(state_list, duration_in_s_list):
+    """Generator that rotates through the state_list spending time in each per
+        the duration_list
+    """
+    last_switch_time = time.time() + (offset:= random.uniform (1, 5))
+    current_state_index = 0
+    while True:
+        duration_in_current_state = time.time () - last_switch_time
+        # print (f'duration in current_state: {duration_in_current_state:.2f}')
+        duration_expired = duration_in_current_state > \
+            duration_in_s_list[min (current_state_index, len (duration_in_s_list)-1)] 
+        if duration_expired:
+            current_state_index = (current_state_index + 1) % len (state_list)
+            last_switch_time = time.time ()
+        yield state_list[current_state_index]
+# end of time_based_state_generator
+
+mph_to_MKS = lambda x: x*1609.34/3600
+
+class OPStateUnitTest(GlobalThread):
+    def __init__(self):
+        self.enabled = False
+        self.speed = 0
+        self.steering = 0
+        self.accelerator_override = False
+        self.steering_override = False
+        self.brake_override = False
+        self.last_enabled = False
+        self.last_status = timestamp()
+
+        self.speed_gen = time_based_state_generator (
+            [mph_to_MKS(20), mph_to_MKS(50)], duration_in_s_list=[5, 1])
+        self.current_enable_gen = time_based_state_generator (
+            [False, True], duration_in_s_list=[0.5, 5])
+        self.accelerator_override_gen = time_based_state_generator (
+            [True, False], duration_in_s_list=[0.5, 5])
+        self.brake_override_gen = time_based_state_generator (
+            [True, False], duration_in_s_list=[0.5, 5])
+        self.steering_override_gen = time_based_state_generator (
+            [True, False], duration_in_s_list=[0.5, 5])
+    # end of __init__
+
+    def override(self):
+        return self.accelerator_override or self.steering_override or self.brake_override
+    
+    def runner(self):
+        log_info("OpState: runner")
+        while running:
+            # wake up ever 10Hz and mostly randomly update states
+            time.sleep (0.1)
+
+            self.speed = round (next (self.speed_gen), 2)
+            self.steering = vc.steering
+            self.enabled = next (self.current_enable_gen)
+            self.accelerator_override = next (self.accelerator_override_gen)
+            self.brake_override = next (self.brake_override_gen)
+            self.steering_override = next (self.steering_override_gen)
+
+            if self.enabled != self.last_enabled:
+                log_info(f"OP.Enabled {self.last_enabled}->{self.enabled}")
+                self.last_enabled = self.enabled
+
+            if (timestamp() - self.last_status) > 5_000_000:
+                self.last_status = timestamp()
+                gas = "GasPressed" if self.accelerator_override else ""
+                brk = "BrakePressed" if self.brake_override else ""
+                log_info(f"STATUS: State:{vc.state} WAN:{vc.wan_status} OP_Enabled:{self.enabled} Request:{vc.request_enable} Speed:{self.speed} Steering:{self.steering} {gas} {brk}")
+        # end of while running
+    # end of runner
+# end of UnitTestOPstate
+
+def stop_tests ():
+    global running
+    running = False
+
+###############################################################################################
 
 # Wheelbase for Vehicle
 WHEELBASE = 2.78892 # 2018 Highlander
@@ -288,9 +435,9 @@ def curvature_to_steering(curvature):
 class RemnavHijacker:
     def __init__(self):
         log_info("Successfully initialized RemnavHijacker")
-        vc.start()
-        timer.start()   
-        op.start()
+        vc.start(daemon=True)
+        timer.start(daemon=True)
+        op.start(daemon=True)
    
     def hijack(self, accel, steer, curvature, CS):
         '''Openpilot calls this function on every iteration of the PID controller when enabled. '''
@@ -317,5 +464,14 @@ else:
     # Loaded, meaning this is production usage in OpenPilot
     vc = VCState()
     timer = TimerState()
-    op = OPState()
+    op = OPState() if 'VC_UNIT_TEST' not in os.environ else OPStateUnitTest ()
+    
+    # instantiate log file writer if running unit tests
+    if 'VC_UNIT_TEST' in os.environ:
+        tx_log_path = f'{os.environ["VC_UNIT_TEST"]}_vc_tx.json'
+        if os.path.exists (tx_log_path): os.remove (tx_log_path)
+        tx_file_writer = FileWriter (tx_log_path)
 
+        rx_log_path = f'{os.environ["VC_UNIT_TEST"]}_vc_rx.json'
+        if os.path.exists (rx_log_path): os.remove (rx_log_path)
+        rx_file_writer = FileWriter (rx_log_path)
