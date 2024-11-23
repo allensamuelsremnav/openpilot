@@ -1,4 +1,5 @@
 #include "selfdrive/modeld/models/driving.h"
+#include "selfdrive/modeld/models/dorkit.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -424,8 +425,9 @@ void model_publish(ModelState* s, PubMaster &pm, uint32_t vipc_frame_id, uint32_
   if (send_raw_pred) {
     framed.setRawPredictions((kj::ArrayPtr<const float>(s->output.data(), s->output.size())).asBytes());
   }
-  fill_model(s, framed, net_outputs);
-  pm.send("modelV2", msg);
+  //fill_model(s, framed, net_outputs);
+  //pm.send("modelV2", msg);
+  dorkit(s, pm, msg, framed, net_outputs);
 }
 
 void posenet_publish(PubMaster &pm, uint32_t vipc_frame_id, uint32_t vipc_dropped_frames,
