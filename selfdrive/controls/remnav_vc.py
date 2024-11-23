@@ -273,6 +273,7 @@ class VCState(GlobalThread):
                 log_info(f"Received: Steering: {self.last_steering}->{self.steering} Acceleration: {self.last_acceleration}->{self.acceleration}")
             self.last_steering = self.steering
             self.last_acceleration = self.acceleration
+            mpc.set_steering(self.steering)
 
 class TimerState(GlobalThread):
     def __init__(self):
@@ -438,8 +439,9 @@ class RemnavHijacker:
         vc.start(daemon=True)
         timer.start(daemon=True)
         op.start(daemon=True)
+        mpc.start(daemon=True)
    
-    def hijack(self, accel, steer, curvature, CS):
+    def hijack(self, accel, CS):
         '''Openpilot calls this function on every iteration of the PID controller when enabled. '''
         # Some car events show up in CS, not in messages...
         op.accelerator_override = CS.gasPressed
@@ -447,11 +449,80 @@ class RemnavHijacker:
         op.steering_override = CS.steeringPressed
 
         if vc.state != STATE_REMOTE_DRIVER:
-            # Reflect back the inputs, i.e., no change
-            return (accel, steer, curvature)
+            # Reflect back the input, i.e., no change
+            return accel
         else:
             # override the controls
-            return (vc.acceleration, vc.steering, curvature)
+            return vc.acceleration
+        
+class MPCController(GlobalThread):
+    '''Interface to legacy MPC controller'''
+    def __init__(self, unit_test):
+        self.curvature = None
+        self.socket = None
+        self.unit_test = unit_test
+        self.last_good_read_time = timestamp()
+        self.request_tag = 0
+
+    def runner(self):
+        if self.unit_test:
+            while running:
+                time.sleep(.5)
+            return
+        
+        while running:
+            if vc.wan_status != WAN_NORMAL:
+                if self.socket is not None:
+                    log_info(f"Closing MPC socket due to WAN State of {vc.wan_status}")
+                    self.socket.close()
+                self.socket = None
+                self.curvature = None
+            else:
+                try:
+                    if self.socket is None:
+                        log_info(f"Creating connection to MPC Controller")
+                        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        self.socket.setblocking(False)
+                        self.socket.connect(('127.0.0.1', 6388))
+                    result = self.socket.recv(1024)
+                    self.last_good_read_time = timestamp()
+                    if result:
+                        log_info(f"Got MPC Response {result.decode()}")
+                    else:
+                        log_critical("MPC Closed connection")
+                        self.socket = None
+                except BlockingIOError:
+                    '''Socket read timed out. ignore'''
+                    time.sleep(.25)
+                except ConnectionError:
+                    '''Probably the MPC got shutdown'''
+                    self.socket = None
+                except ConnectionRefusedError:
+                    if timestamp() - self.last_good_read_time > 10000:
+                        log_info(f"Connection Refused to MPC Controller for {(timestamp()-self.last_good_read_time)/1000} Secs")
+    
+    def set_steering(self, curvature):
+        if self.socket is not None and curvature != self.curvature:
+            if math.isinf(curvature):
+                radius = 0
+            elif curvature == 0:
+                radius = 10000000000000.0
+            else:
+                radius = 1 / curvature
+            #
+            # Make message in format for MPC controller
+            #
+            self.request_tag = self.request_tag + 1
+            mpc_msg = f"<{self.request_tag}>c {-radius}\r\n"
+            #print(f"Sending trajectory radius {-radius}")
+            try:
+                self.socket.send(mpc_msg.encode('utf-8'))
+                self.curvature = curvature
+            except:
+                log_critical(f"Unable to send to MPC controller")
+
+
+
 
 def do_unit_tests():
 
@@ -465,6 +536,7 @@ else:
     vc = VCState()
     timer = TimerState()
     op = OPState() if 'VC_UNIT_TEST' not in os.environ else OPStateUnitTest ()
+    mpc = MPCController('VC_UNIT_TEST' in os.environ)
     
     # instantiate log file writer if running unit tests
     if 'VC_UNIT_TEST' in os.environ:

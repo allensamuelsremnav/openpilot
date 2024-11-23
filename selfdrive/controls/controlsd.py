@@ -103,7 +103,6 @@ class Controls:
 
     self.joystick_mode = self.params.get_bool("JoystickDebugMode") or self.CP.notCar
     self.hijacker = RemnavHijacker()
-    print(f"Hijacker is {self.hijacker}")
 
     # set alternative experiences from parameters
     self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
@@ -624,9 +623,7 @@ class Controls:
                                                                              self.desired_curvature_rate, self.sm['liveLocationKalman'])
       actuators.curvature = self.desired_curvature
 
-      actuators.accel, \
-      actuators.steer, \
-      actuators.curvature = self.hijacker.hijack(actuators.accel, actuators.steer, actuators.curvature, CS)
+      actuators.accel = self.hijacker.hijack(actuators.accel, CS)
 
     else:
       lac_log = log.ControlsState.LateralDebugState.new_message()
