@@ -153,7 +153,7 @@ void TCPClient::make_connection() {
 
 void Socket::send(const std::string& message) {
     if (::send(m_socket, message.c_str(), message.length(), 0) < 0) {
-        throw send_err();
+        // throw send_err();
     }
 }
 

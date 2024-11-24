@@ -151,7 +151,10 @@ class VCState(GlobalThread):
         '''Generate a response message. '''
         js = self.generate_response(timeout)
         s = json.dumps(js).encode()
-        self.socket.sendto(s, self.client_address)
+        try:
+          self.socket.sendto(s, self.client_address)
+        except:
+          log_critical(f"Got socket error while sending response UDP message")
         js['address'] = self.client_address; 
         log_file (js, 'tx')
     
@@ -211,7 +214,7 @@ class VCState(GlobalThread):
             'state': self.state,
             'acceleration': self.acceleration,
             'steering': self.steering,
-            'current_steering': self.steering, # since there's no feedback from OP
+            'current_steering': op.steering,
             'current_speed': op.speed,
             'current_enable': op.enabled,
             'accelerator_override': op.accelerator_override,
@@ -507,6 +510,9 @@ class MPCController(GlobalThread):
                 except ConnectionRefusedError:
                     if timestamp() - self.last_good_read_time > 10000:
                         log_info(f"Connection Refused to MPC Controller for {(timestamp()-self.last_good_read_time)/1000} Secs")
+                except:
+                  log_info("Received Unknown Exception, ignoring")
+                  time.sleep(.5)
                 finally:
                     time.sleep(.5)
     
