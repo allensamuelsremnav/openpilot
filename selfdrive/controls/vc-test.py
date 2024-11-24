@@ -21,7 +21,7 @@ request_enable = False
 
 def timestamp():
     return int(time.time() * 1000)
-message_id = 0
+message_id = 3
 
 while True:
     line = input(">")
@@ -41,7 +41,6 @@ while True:
         pass
 
     # Build a message
-    message_id = message_id + 1
 
     msg = {
         'timestamp': timestamp(),

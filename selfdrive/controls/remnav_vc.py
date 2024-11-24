@@ -27,7 +27,7 @@ VC_PORT_NUMBER = 7777
 APPLIED_TIMESTAMP_DELTA = 10_000
 
 # Wall time without a receipt of a message before declaring a local communication failure
-LAN_TIMEOUT = 10_000_000
+LAN_TIMEOUT = 10_000_000_000
 
 import threading, socket, json, time, os
 if 'VC_UNIT_TEST' not in os.environ:
@@ -58,6 +58,7 @@ FRAME_METADATA_ID = 3
 #
 def log_info(msg):
     if 'VC_UNIT_TEST' not in os.environ:
+        print(">>>> ", msg)
         cloudlog.info(">>Remnav: %s", msg)
 
 def log_critical(msg):
@@ -232,6 +233,7 @@ class VCState(GlobalThread):
             self.state_remote_driver()
         else:
             assert(False)
+        mpc.set_steering(self.steering)
 
     def state_remote_ready(self):
         '''
@@ -273,7 +275,6 @@ class VCState(GlobalThread):
                 log_info(f"Received: Steering: {self.last_steering}->{self.steering} Acceleration: {self.last_acceleration}->{self.acceleration}")
             self.last_steering = self.steering
             self.last_acceleration = self.acceleration
-            mpc.set_steering(self.steering)
 
 class TimerState(GlobalThread):
     def __init__(self):
@@ -323,11 +324,11 @@ class OPState(GlobalThread):
             if self.enabled != self.last_enabled:
                 log_info(f"OP.Enabled {self.last_enabled}->{self.enabled}")
                 self.last_enabled = self.enabled
-            if (timestamp() - self.last_status) > 5000:
+            if (timestamp() - self.last_status) > 5_000_000:
                 self.last_status = timestamp()
                 gas = "GasPressed" if self.accelerator_override else ""
                 brk = "BrakePressed" if self.brake_override else ""
-                log_info(f"STATUS: State:{vc.state} WAN:{vc.wan_status} OP_Enabled:{self.enabled} Request:{vc.request_enabled} Speed:{self.speed} Steering:{self.steering} {gas} {brk}")
+                log_info(f"STATUS: State:{vc.state} WAN:{vc.wan_status} OP_Enabled:{self.enabled} Request:{vc.request_enable} Speed:{self.speed} Steering:{self.steering} {gas} {brk}")
 
 ###############################################################################################
 # Unit test bench code
@@ -463,13 +464,14 @@ class MPCController(GlobalThread):
         self.unit_test = unit_test
         self.last_good_read_time = timestamp()
         self.request_tag = 0
+        log_info("Create MPC Controller")
 
     def runner(self):
         if self.unit_test:
             while running:
                 time.sleep(.5)
             return
-        
+        log_info("MPC Running")
         while running:
             if vc.wan_status != WAN_NORMAL:
                 if self.socket is not None:
@@ -477,13 +479,14 @@ class MPCController(GlobalThread):
                     self.socket.close()
                 self.socket = None
                 self.curvature = None
+                time.sleep(.25)
             else:
                 try:
                     if self.socket is None:
                         log_info(f"Creating connection to MPC Controller")
                         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         self.socket.setblocking(False)
-                        self.socket.connect(('127.0.0.1', 6388))
+                        self.socket.connect(('127.0.0.1', 6382))
                     result = self.socket.recv(1024)
                     self.last_good_read_time = timestamp()
                     if result:
@@ -496,10 +499,13 @@ class MPCController(GlobalThread):
                     time.sleep(.25)
                 except ConnectionError:
                     '''Probably the MPC got shutdown'''
+                    log_info("MPC Connection error")
                     self.socket = None
                 except ConnectionRefusedError:
                     if timestamp() - self.last_good_read_time > 10000:
                         log_info(f"Connection Refused to MPC Controller for {(timestamp()-self.last_good_read_time)/1000} Secs")
+                finally:
+                    time.sleep(.5)
     
     def set_steering(self, curvature):
         if self.socket is not None and curvature != self.curvature:
@@ -520,8 +526,6 @@ class MPCController(GlobalThread):
                 self.curvature = curvature
             except:
                 log_critical(f"Unable to send to MPC controller")
-
-
 
 
 def do_unit_tests():
