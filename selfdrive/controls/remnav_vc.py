@@ -27,7 +27,7 @@ VC_PORT_NUMBER = 7777
 APPLIED_TIMESTAMP_DELTA = 10_000
 
 # Wall time without a receipt of a message before declaring a local communication failure
-LAN_TIMEOUT = 10_000_000_000
+LAN_TIMEOUT = 10_000_000
 
 import threading, socket, json, time, os
 if 'VC_UNIT_TEST' not in os.environ:
@@ -258,7 +258,8 @@ class VCState(GlobalThread):
                 log_info("SAFETY_DRIVER -> REMOTE_READY")
                 self.state = STATE_REMOTE_READY
         elif self.request_enable:
-            log_info(f"Enable Ignored: OpEnable:{op.enabled} Override:{op.override()} Wan:{self.wan_status}")
+            # log_info(f"Enable Ignored: OpEnable:{op.enabled} Override:{op.override()} Wan:{self.wan_status}")
+            pass
 
     def state_remote_driver(self):
         '''
@@ -272,7 +273,8 @@ class VCState(GlobalThread):
             self.state = STATE_REMOTE_READY
         else:
             if self.last_steering != self.steering or self.last_acceleration != self.acceleration:
-                log_info(f"Received: Steering: {self.last_steering}->{self.steering} Acceleration: {self.last_acceleration}->{self.acceleration}")
+                # log_info(f"Received: Steering: {self.last_steering}->{self.steering} Acceleration: {self.last_acceleration}->{self.acceleration}")
+                pass
             self.last_steering = self.steering
             self.last_acceleration = self.acceleration
 
@@ -473,7 +475,7 @@ class MPCController(GlobalThread):
             return
         log_info("MPC Running")
         while running:
-            if vc.wan_status != WAN_NORMAL:
+            if vc.state != STATE_REMOTE_DRIVER:
                 if self.socket is not None:
                     log_info(f"Closing MPC socket due to WAN State of {vc.wan_status}")
                     self.socket.close()
@@ -490,7 +492,8 @@ class MPCController(GlobalThread):
                     result = self.socket.recv(1024)
                     self.last_good_read_time = timestamp()
                     if result:
-                        log_info(f"Got MPC Response {result.decode()}")
+                        # log_info(f"Got MPC Response {result.decode()}")
+                        pass
                     else:
                         log_critical("MPC Closed connection")
                         self.socket = None

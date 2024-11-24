@@ -1,0 +1,2 @@
+sudo pkill -9 -f chronyd
+sudo chronyd -f /data/openpilot/tools/REMNAV/chrony.conf.openpilot
