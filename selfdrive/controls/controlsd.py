@@ -28,6 +28,7 @@ from selfdrive.controls.lib.alertmanager import AlertManager, set_offroad_alert
 from selfdrive.controls.lib.vehicle_model import VehicleModel
 from system.hardware import HARDWARE
 from selfdrive.controls.pedal_hijacker import Hijacker  #REMANV
+from selfdrive.controls.remnav_vc import RemnavHijacker #
 
 SOFT_DISABLE_TIME = 3  # seconds
 LDW_MIN_SPEED = 31 * CV.MPH_TO_MS
@@ -101,6 +102,7 @@ class Controls:
       self.CI, self.CP = CI, CI.CP
 
     self.joystick_mode = self.params.get_bool("JoystickDebugMode") or self.CP.notCar
+    self.vc_hijacker = RemnavHijacker()
 
     # set alternative experiences from parameters
     self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
