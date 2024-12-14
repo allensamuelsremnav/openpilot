@@ -116,6 +116,7 @@ class Hijacker:
     self.v_ego = v_ego
     if not self.isConnected() and not unit_test:
       return accel
+    return accel # Cripple PedalMapper.
     self.counter = self.counter + 1
     if (self.counter % 100) == 0:
       print(f"Current Accel: {self.accel:.02f}")
