@@ -86,9 +86,9 @@ class Hijacker:
           # self.gas = 0
         else:
           self.accel = self.gas
-        print(f">> Pedal Gas {self.gas:.02f} Brake:{self.brake:.02f}")
+        # print(f">> Pedal Gas {self.gas:.02f} Brake:{self.brake:.02f}")
       except ValueError:
-        result += b'Syntax error:' + sline[1].encode('utf-8') + ' ' + sline[2].encode('utf-8')
+        result += b'Syntax error:' + sline[1].decode('utf-8') + ' ' + sline[2].decode('utf-8')
     elif sline[0] == b'j':
       result += self.handle_920_json(b' '.join(sline[1:]))
     elif sline[0] == b'q':
@@ -116,10 +116,6 @@ class Hijacker:
     self.v_ego = v_ego
     if not self.isConnected() and not unit_test:
       return accel
-    return accel # Cripple PedalMapper.
-    self.counter = self.counter + 1
-    if (self.counter % 100) == 0:
-      print(f"Current Accel: {self.accel:.02f}")
     #
     # Convert to format used by pedal mapper
     #
@@ -132,7 +128,11 @@ class Hijacker:
     row['current_speed'] = v_ego * CV.MS_TO_MPH
     row['x_throttle'] = self.gas
     row['x_brake'] = self.brake
-    self.accel = self.mapper.calc_from_row(row) * 4.0
+    accel = self.mapper.calc_from_row(row) * 4.0
+    self.counter = self.counter + 1
+    if accel != self.accel or (self.counter % 100) == 0:
+      print(f"Hijacker Changing Accel to {accel}")
+      self.accel = accel
     return self.accel
 
 if __name__ == '__main__':

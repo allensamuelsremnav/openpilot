@@ -496,6 +496,7 @@ class MPCController(GlobalThread):
                         log_info(f"Creating connection to MPC Controller")
                         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         self.socket.setblocking(False)
+                        self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                         self.socket.connect(('127.0.0.1', 6382))
                     result = self.socket.recv(1024)
                     self.last_good_read_time = timestamp()
@@ -571,6 +572,7 @@ class PIDController(GlobalThread):
                         log_info(f"Creating connection to PID Controller")
                         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         self.socket.setblocking(False)
+                        self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                         self.socket.connect(('127.0.0.1', 6381))
                     result = self.socket.recv(1024)
                     self.last_good_read_time = timestamp()
@@ -607,13 +609,23 @@ class PIDController(GlobalThread):
             else:
                 gas, brake = 0, -accel
 
-            pid_msg = f"<{self.request_tag}>p {gas} {brake}\r\n"
-            #print(f"Sending gas:{gas} brake:{brake} as:{pid_msg}")
+            pid_msg = f"<{self.request_tag}>p {brake} {gas}\r\n"
+            # print(f"Sending Accel:{accel} gas:{gas} brake:{brake} as:{pid_msg}")
             try:
                 self.socket.send(pid_msg.encode('utf-8'))
                 self.accel = accel
             except:
                 log_critical(f"Unable to send to PID controller")
+
+
+import signal, faulthandler
+
+def sigusr_handler(signum, frame):
+  print("*************Got Signal, dumping threads ******************")
+  faulthandler.dump_traceback(all_threads=True)
+  print("*************End Traceback ********************************")
+
+signal.signal(signal.SIGUSR1, sigusr_handler)
 
 
 def do_unit_tests():
