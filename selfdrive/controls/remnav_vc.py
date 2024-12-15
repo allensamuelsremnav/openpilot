@@ -109,6 +109,7 @@ class VCState(GlobalThread):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.state = STATE_SAFETY_DRIVER
         self.lock = threading.Lock ()
+        self.packets = 0
 
     def runner(self):
         '''
@@ -119,6 +120,7 @@ class VCState(GlobalThread):
         while running:
             #log_info(f"Waiting for input on socket {self.socket.getsockname()}")
             message, address = self.socket.recvfrom(1500)
+            self.packets = self.packets + 1
             #log_info(f"From:{address} : {message}")
             if self.client_address != address:
                 log_info(f"New client found at {address}")
@@ -334,7 +336,7 @@ class OPState(GlobalThread):
                 self.last_status = timestamp()
                 gas = "GasPressed" if self.accelerator_override else ""
                 brk = "BrakePressed" if self.brake_override else ""
-                log_info(f"STATUS: State:{vc.state} WAN:{vc.wan_status} OP_Enabled:{self.enabled} Request:{vc.request_enable} Speed:{self.speed} Steering:{self.steering} {gas} {brk}")
+                log_info(f"STATUS: State:{vc.state} WAN:{vc.wan_status} OP_Enabled:{self.enabled} Request:{vc.request_enable} Speed:{self.speed} Steering:{self.steering} {gas} {brk} Pkts:{vc.packets}")
 
 ###############################################################################################
 # Unit test bench code
