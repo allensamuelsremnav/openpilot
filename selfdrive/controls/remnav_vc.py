@@ -449,6 +449,7 @@ class RemnavHijacker:
         timer.start(daemon=True)
         op.start(daemon=True)
         mpc.start(daemon=True)
+        pid.start(daemon=True)
    
     def hijack(self, accel, CS):
         '''Openpilot calls this function on every iteration of the PID controller when enabled. '''
@@ -607,7 +608,7 @@ class PIDController(GlobalThread):
                 gas, brake = 0, -accel
 
             pid_msg = f"<{self.request_tag}>p {gas} {brake}\r\n"
-            #print(f"Sending gas:{gas} brake:{brake}")
+            #print(f"Sending gas:{gas} brake:{brake} as:{pid_msg}")
             try:
                 self.socket.send(pid_msg.encode('utf-8'))
                 self.accel = accel
