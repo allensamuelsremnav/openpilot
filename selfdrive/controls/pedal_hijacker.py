@@ -121,7 +121,7 @@ class Hijacker:
     #
     row={}
     if self.parameters is None:
-      return self.accel
+      return self.accel * 4.0
     for p in self.parameters:
       row[p['name']] = p['value']
 

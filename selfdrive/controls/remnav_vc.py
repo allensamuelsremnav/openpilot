@@ -24,7 +24,7 @@ Generally, objects are mutated only by their associated thread and are read-only
 VC_PORT_NUMBER = 7777
 
 # Estimated delay from receipt of a message and it's application to the local actuators
-APPLIED_TIMESTAMP_DELTA = 10_000
+APPLIED_TIMESTAMP_DELTA = 250_000 #10_000
 
 # Wall time without a receipt of a message before declaring a local communication failure
 LAN_TIMEOUT = 10_000_000
