@@ -497,7 +497,7 @@ class MPCController(GlobalThread):
                         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         self.socket.setblocking(False)
                         self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                        self.socket.connect(('127.0.0.1', 6382))
+                        self.socket.connect(('127.0.0.1', 6379)) #6382, henry 01_21_2025
                     result = self.socket.recv(1024)
                     self.last_good_read_time = timestamp()
                     if result:
